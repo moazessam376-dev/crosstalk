@@ -16,7 +16,7 @@ export const TASK_TRANSITIONS = {
 } as const satisfies Readonly<Record<TaskState, readonly TaskState[]>>;
 
 export function canTransition(from: TaskState, to: TaskState): boolean {
-  return TASK_TRANSITIONS[from].includes(to);
+  return (TASK_TRANSITIONS[from] as readonly TaskState[]).includes(to);
 }
 
 export function validateTransition(taskId: string, to: TaskState, state: HubState): void {

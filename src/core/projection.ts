@@ -24,10 +24,10 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
 
   switch (event.kind) {
     case 'participant_joined':
-      state.participants.set(event.participant, participantFor(event.participant));
+      state.participants.set(event.participant.id, { ...event.participant });
       return state;
     case 'participant_left':
-      state.participants.delete(event.participant);
+      state.participants.delete(event.participantId);
       return state;
     case 'message':
       state.messages.push({ ...event, ts: '' });
@@ -122,16 +122,6 @@ function emptyState(): HubState {
     decisions: new Map(),
     messages: [],
     lastSeq: 0,
-  };
-}
-
-function participantFor(id: ParticipantId): Participant {
-  return {
-    id,
-    role: 'observer',
-    harness: '',
-    lifecycle: 'attached',
-    workspace: '',
   };
 }
 

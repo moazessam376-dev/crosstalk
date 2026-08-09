@@ -66,17 +66,31 @@ describe('EventLog', () => {
       },
     });
 
+    if (appended.kind !== 'task_created') {
+      throw new Error('Expected task_created event');
+    }
     appended.seq = 999;
     appended.task.title = 'Mutated append result';
 
     const readEvents = await log.read();
-    readEvents[0]!.task.title = 'Mutated read result';
+    const readEvent = readEvents[0];
+    if (readEvent?.kind !== 'task_created') {
+      throw new Error('Expected task_created event in read result');
+    }
+    readEvent.task.title = 'Mutated read result';
 
     const readFromEvents = await log.readFrom(1);
-    readFromEvents[0]!.task.title = 'Mutated readFrom result';
+    const readFromEvent = readFromEvents[0];
+    if (readFromEvent?.kind !== 'task_created') {
+      throw new Error('Expected task_created event in readFrom result');
+    }
+    readFromEvent.task.title = 'Mutated readFrom result';
 
     const laterRead = await log.read();
     const taskCreated = laterRead[0];
+    if (taskCreated?.kind !== 'task_created') {
+      throw new Error('Expected task_created event in later read result');
+    }
     expect(taskCreated?.seq).toBe(1);
     expect(taskCreated?.kind).toBe('task_created');
     expect(taskCreated?.task.title).toBe('Original title');

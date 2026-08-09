@@ -26,7 +26,7 @@ export class EventLog {
     let offset = 0;
 
     for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index];
+      const line = lines[index] ?? '';
       const hasLineFeed = index < lines.length - 1;
       const lineBytes = Buffer.byteLength(line, 'utf8') + (hasLineFeed ? 1 : 0);
 

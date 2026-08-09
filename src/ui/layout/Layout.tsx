@@ -1,4 +1,4 @@
-﻿import { createElement } from 'react';
+import { createElement } from 'react';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { ChannelList } from './ChannelList.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -9,15 +9,18 @@ import { Rail } from './Rail.js';
 import { Stream } from './Stream.js';
 import type { HubState } from '../state/derive.js';
 
+type HumanAction = { type: 'propose_test' | 'intervene_human' };
+
 export interface LayoutProps {
   state: HubState;
   activeRoom?: string;
   onSelectRoom?: (roomId: string) => void;
+  onHumanAction?: (action: HumanAction) => void;
 }
 
 const GRID_TEMPLATE = 'minmax(180px, 220px) minmax(220px, 280px) minmax(0, 1fr) minmax(240px, 320px)';
 
-export function Layout({ state, activeRoom, onSelectRoom }: LayoutProps) {
+export function Layout({ state, activeRoom, onSelectRoom, onHumanAction }: LayoutProps) {
   return createElement(
     'div',
     {
@@ -37,7 +40,7 @@ export function Layout({ state, activeRoom, onSelectRoom }: LayoutProps) {
     },
     createElement(Rail, { participants: state.participants }),
     createElement(ChannelList, { rooms: state.rooms, activeRoom, onSelectRoom }),
-    createElement(Stream, { events: state.events, activeRoom }),
+    createElement(Stream, { events: state.events, activeRoom, onHumanAction }),
     createElement(Inspector, { activeRoom, rooms: state.rooms }),
   );
 }

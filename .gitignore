@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Crosstalk runtime state — the event log is per-project, never committed from here
+.crosstalk/daemon.json
+.crosstalk/state.json
+.crosstalk/token
+.crosstalk/worktrees/
+.crosstalk/inbox/
+.crosstalk/outbox/
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db

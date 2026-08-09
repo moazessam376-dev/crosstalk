@@ -14,6 +14,9 @@ export type ErrorCode =
   | 'GATE_NOT_SELF_REVIEWED'
   | 'ILLEGAL_TRANSITION'
   | 'UNRESOLVED_CLAIMS'
+  // Plan formation, spec §5.6: a plan is not frozen while claims against it
+  // are open, and work derived from a disputed plan inherits the dispute.
+  | 'PLAN_NOT_FROZEN'
   // Decisions.
   | 'NON_TERMINAL_LADDER'
   | 'NOT_ELIGIBLE_VOTER'

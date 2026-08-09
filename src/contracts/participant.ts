@@ -1,7 +1,13 @@
 /** Stable identifier for a participant, e.g. "leader", "codex", "@human". */
 export type ParticipantId = string;
 
-export type Role = 'leader' | 'worker' | 'observer' | 'human';
+/**
+ * `plan_reviewer` reads a plan before it is frozen and raises claims against
+ * it (spec §5.6). Distinct from `observer`, which watches a dispute it is not
+ * party to: a reviewer's whole purpose is to speak, and it needs its own brief
+ * telling it explicitly not to implement.
+ */
+export type Role = 'leader' | 'worker' | 'observer' | 'human' | 'plan_reviewer';
 
 /**
  * How a participant reaches the hub. Descending fidelity: `mcp` validates

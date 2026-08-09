@@ -46,7 +46,7 @@ The naive fix — "let workers push back" — introduces a third failure mode: *
 Explicitly out of scope, to keep v1 shippable:
 
 - Hosted/cloud mode, or agents on more than one machine.
-- Authentication beyond a localhost bearer token.
+- Authentication beyond per-participant localhost bearer tokens (§6.1) — no user accounts, no remote auth.
 - Supervised lifecycle for GUI harnesses (see §6.6 — technically impossible, not deferred).
 - Automatic merge-conflict resolution. The leader owns merge order; conflicts go back to the assignee.
 - A model-based judge for falsifier quality (§5.5 explains why the ladder covers this instead).
@@ -292,7 +292,10 @@ A required field invites `falsifier: "if it didn't work"`. Three options were co
 
 ### 6.1 Daemon
 
-- Loopback HTTP on an ephemeral port; port and bearer token written to `.crosstalk/daemon.json` (mode `0600` where the platform supports it).
+- Loopback HTTP on an ephemeral port; the port is written to `.crosstalk/daemon.json` (mode `0600` where the platform supports it).
+- **One bearer token per participant, not one shared token**, written to `.crosstalk/tokens/<id>`. The daemon keeps the token→participant map and **derives `from` on every event from the presenting token**. A client cannot set `from` itself; a payload that tries is rejected.
+
+  This is not about defending against a hostile local process — every participant here is cooperative. It is because `from` is the field the ledger attributes claims and concessions by, and the field the `third_agent` rung picks an adjudicator by. Under a single shared token `from` is self-asserted, so one buggy client silently corrupts the record of who said what, and nothing detects it. Identity has to be established by the transport, not claimed in the payload.
 - Chosen over unix sockets / named pipes deliberately: one code path across Windows, macOS and Linux, and it gives the web UI and HTTP-MCP transport for free.
 - Sole writer to `events.jsonl`. Assigns `seq`. Holds an advisory lock file so a second daemon refuses to start.
 - In-memory projection of log → state; periodic snapshot to `.crosstalk/state.json` for fast restart. The snapshot is a cache and is always rebuildable from the log.

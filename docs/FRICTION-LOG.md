@@ -91,3 +91,19 @@ It caught this only because it checked afterwards, then reposted through a diffe
 **Why it matters here.** `gh pr comment` exiting zero proves the request was accepted, not that the body survived. That is the same shape as every other entry: a green signal standing in for a claim it does not actually support.
 
 **Changed.** Nothing structural, and that is the honest answer — this is a transport failure of the hand-rolled setup, and a hub that owns its own append-only log does not have it. Recorded because it is a good argument for the log being the source of truth rather than a chat surface someone else operates: an event either appended or it did not, and the writer finds out.
+
+---
+
+## 9 · Every participant was the same person
+
+**What happened.** A worker sat in a polling loop for roughly forty minutes, re-issuing the same request for PR comments and never acting on any of them. The leader's review had been posted the whole time.
+
+The worker was not confused. It was blind. Every participant — leader, all three workers, the human — posts through one GitHub account, so a watch predicate of the form *"comments by someone other than me"* can never match. It polled, saw only its own identity, concluded nothing was new, and polled again.
+
+The leader's own monitor had the identical defect. It was noticed there only in its harmless direction — the leader's notifications occasionally echoed its own comments back — and the dangerous direction, that nobody can tell participants apart, went unexamined until a worker stalled on it.
+
+**Why the design permitted it.** `from: ParticipantId` on every event exists precisely so a message carries who sent it independently of whatever moved the bytes. GitHub-as-transport cannot supply that: the account is the identity, and every participant shares one.
+
+**Changed.** Nothing in the protocol — the protocol was already right, which is the point. But the question *"will Crosstalk have this problem?"* exposed a real gap in the daemon design: a single shared bearer token would have made `from` self-asserted, reintroducing the same collapse one layer down. §6.1 now specifies one token per participant with the daemon deriving `from` from the presenting token, and a payload that sets `from` itself being rejected.
+
+Identity has to be established by the transport. When it isn't, everything downstream that attributes anything — the ledger, adjudicator selection, who owes a rebuttal — is quietly reading fiction.

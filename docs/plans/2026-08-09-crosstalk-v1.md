@@ -1272,15 +1272,23 @@ git commit -m "Add doctor with reject/warn split and a remedy on every finding"
 
 ## Phase D — Converge
 
-Runs after A, B and C merge. Assigned one task at a time to whichever agent is free; these tasks touch shared ground and must not run in parallel.
+Runs after A, B and C merge. Sequence is **D1, then D2 ∥ D3, then D4** — not four-way, and not fully serial either.
+
+D1 comes first because a frozen wire contract is not a substitute for a running server at test time. That distinction was learned here: Tracks A and B built independent projections of the same event log, each passed its own tests, and they disagreed with each other about whether a claim was `contested` or `resolved` (finding B-005). Fixtures let components be self-consistently wrong. D2 and D3 then parallelise cleanly — they share `src/daemon/` with D1 but never a file — and D4 is last because its end-to-end test needs all three alive at once.
 
 ### Task D1: Daemon — sole writer, loopback HTTP, token
 
 **Files:** Create `src/daemon/server.ts`, `src/daemon/lock.ts` · Test `tests/daemon/server.test.ts`
 
-**Interfaces:** Produces `function startDaemon(opts: { repo: string; port?: number }): Promise<{ url: string; token: string; close(): Promise<void> }>`
+**Interfaces:** Produces `function startDaemon(opts: { repo: string; port?: number }): Promise<{ url: string; tokens: ReadonlyMap<ParticipantId, string>; close(): Promise<void> }>`
 
-- [ ] **Step 1: Failing test** — a second `startDaemon` on the same repo rejects with `DAEMON_ALREADY_RUNNING` and reports the live URL; a request without the bearer token gets 401; `POST /events` appends and returns the stamped event; `GET /events?since=N` returns the tail.
+One token **per participant**, not one shared token — spec §6.1. A single token makes `from` self-asserted, which is friction-log entry 9 reintroduced one layer down, where it is far harder to see.
+
+- [ ] **Step 1: Failing test** — a second `startDaemon` on the same repo rejects with `DAEMON_ALREADY_RUNNING` and reports the live URL; a request without a bearer token gets 401; a request whose payload sets `from` is rejected; `GET /events?since=N` returns the tail, exclusive of `since`.
+
+**`POST /events` is not a general append.** Protocol-bearing kinds get typed routes — `POST /claims`, `POST /claims/:id/response`, `POST /tasks/:id/state`, `POST /tasks/:id/ack`, `POST /decisions`, `POST /decisions/:id/vote` — which take the validators' own input types and let the daemon construct the event. `POST /events` accepts only kinds with no invariants to violate (`message`), and rejects any other `kind` with a named error naming the correct route.
+
+A generic append endpoint would be a back door around every rule in the project: `claim_raised` carries a whole `Claim`, so a client could hand-build one and never touch `validateRaise`, and `task_state` could move a task to `submitted` without passing `validateTransition`. Spec §4.1 puts validators at the API boundary precisely so they cannot be skipped — a transport that lets clients append raw events makes every falsifier requirement and every gate advisory.
 - [ ] **Step 2: Run — FAIL**
 - [ ] **Step 3: Implement** — `node:http` on port 0. Write `{url, token}` to `.crosstalk/daemon.json` with mode `0o600` where supported. `lock.ts` uses exclusive `fs.open(path, 'wx')` on `.crosstalk/daemon.lock` containing the pid; a stale lock whose pid is gone is reclaimed. All writes funnel through one `EventLog` instance.
 - [ ] **Step 4: Run — PASS**

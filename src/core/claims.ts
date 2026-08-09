@@ -87,7 +87,8 @@ export function validateResponse(input: ClaimResponseInput, state: HubState): vo
 function validateResponseAuthority(input: ClaimResponseInput, claim: Claim, state: HubState): void {
   if (claim.state === 'open') {
     if (input.verdict !== 'accept' && input.verdict !== 'contest' && input.verdict !== 'clarify') {
-      throw new ClaimResponseError(
+      throw new ProtocolError(
+        'ILLEGAL_CLAIM_RESPONSE',
         'Claim ' + claim.id + ' is open and cannot accept a ' + input.verdict + ' response',
       );
     }
@@ -97,7 +98,8 @@ function validateResponseAuthority(input: ClaimResponseInput, claim: Claim, stat
         ? briefOwner(state)
         : claim.against;
     if (input.from !== expectedResponder) {
-      throw new ClaimResponseError(
+      throw new ProtocolError(
+        'NOT_CLAIM_RESPONDER',
         'Participant ' + input.from + ' is not authorized to respond to claim ' + claim.id,
       );
     }
@@ -106,12 +108,14 @@ function validateResponseAuthority(input: ClaimResponseInput, claim: Claim, stat
 
   if (claim.state === 'contested') {
     if (input.verdict !== 'concede' && input.verdict !== 'amend' && input.verdict !== 'uphold') {
-      throw new ClaimResponseError(
+      throw new ProtocolError(
+        'ILLEGAL_CLAIM_RESPONSE',
         'Claim ' + claim.id + ' is contested and cannot accept a ' + input.verdict + ' response',
       );
     }
     if (input.from !== claim.raisedBy) {
-      throw new ClaimResponseError(
+      throw new ProtocolError(
+        'NOT_CLAIM_RESPONDER',
         'Participant ' + input.from + ' is not authorized to respond to claim ' + claim.id,
       );
     }
@@ -127,12 +131,16 @@ function validateResponseAuthority(input: ClaimResponseInput, claim: Claim, stat
       return;
     }
 
-    throw new ClaimResponseError(
+    throw new ProtocolError(
+      'NOT_CLAIM_RESPONDER',
       'Participant ' + input.from + ' is not authorized to resolve clarified claim ' + claim.id,
     );
   }
 
-  throw new ClaimResponseError('Claim ' + claim.id + ' is ' + claim.state + ' and cannot receive responses');
+  throw new ProtocolError(
+    'ILLEGAL_CLAIM_RESPONSE',
+    'Claim ' + claim.id + ' is ' + claim.state + ' and cannot receive responses',
+  );
 }
 
 function briefOwner(state: HubState): ParticipantId {
@@ -142,13 +150,6 @@ function briefOwner(state: HubState): ParticipantId {
     }
   }
   return 'leader';
-}
-
-class ClaimResponseError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ClaimResponseError';
-  }
 }
 
 function validateFalsifier(falsifier: string, assertion: string): void {

@@ -113,4 +113,3 @@ describe('doctor GitHub credential probing', () => {
     }
   }, 60_000);
 });
-

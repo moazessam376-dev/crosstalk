@@ -1,4 +1,4 @@
-import type { Claim, ClaimVerdict } from '../contracts/claim.js';
+import type { Claim, ClaimResolution, ClaimVerdict } from '../contracts/claim.js';
 import type { Decision } from '../contracts/decision.js';
 import type { CrosstalkEvent } from '../contracts/events.js';
 import type { Participant, ParticipantId } from '../contracts/participant.js';
@@ -55,11 +55,13 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
     case 'claim_response': {
       const claim = state.claims.get(event.claimId);
       if (claim) {
+        const resolution = resolutionForVerdict(event.verdict);
         state.claims.set(event.claimId, {
           ...claim,
           evidence: [...claim.evidence, ...event.evidence],
           rounds: claim.rounds + 1,
           state: stateForVerdict(event.verdict),
+          ...(resolution === undefined ? {} : { resolution }),
         });
       }
       return state;
@@ -146,6 +148,23 @@ function stateForVerdict(verdict: ClaimVerdict): Claim['state'] {
       return 'resolved';
     case 'amend':
       return 'resolved';
+  }
+
+  throw new Error(`Unknown claim verdict: ${verdict satisfies never}`);
+}
+
+function resolutionForVerdict(verdict: ClaimVerdict): ClaimResolution | undefined {
+  switch (verdict) {
+    case 'accept':
+      return 'upheld';
+    case 'concede':
+      return 'withdrawn';
+    case 'amend':
+      return 'superseded';
+    case 'clarify':
+    case 'contest':
+    case 'uphold':
+      return undefined;
   }
 
   throw new Error(`Unknown claim verdict: ${verdict satisfies never}`);

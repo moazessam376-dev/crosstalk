@@ -118,6 +118,20 @@ function validateResponseAuthority(input: ClaimResponseInput, claim: Claim, stat
     return;
   }
 
+  if (claim.state === 'clarify') {
+    const isOwnerAcceptance = input.from === briefOwner(state) && input.verdict === 'accept';
+    const isClaimantResolution =
+      input.from === claim.raisedBy && (input.verdict === 'concede' || input.verdict === 'amend');
+
+    if (isOwnerAcceptance || isClaimantResolution) {
+      return;
+    }
+
+    throw new ClaimResponseError(
+      'Participant ' + input.from + ' is not authorized to resolve clarified claim ' + claim.id,
+    );
+  }
+
   throw new ClaimResponseError('Claim ' + claim.id + ' is ' + claim.state + ' and cannot receive responses');
 }
 

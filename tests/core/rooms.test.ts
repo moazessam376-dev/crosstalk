@@ -28,6 +28,11 @@ describe('rooms', () => {
     expect(membersOf('dispute:C-2', s)).toEqual(['leader', 'cursor', 'codex', '@human']);
   });
 
+  it('includes the brief owner when a worker raises a brief dispute', () => {
+    const s = stateWithNonParticipantDispute('C-3', 'codex', 'brief', ['cursor']);
+    expect(membersOf('dispute:C-3', s)).toEqual(['codex', 'leader', 'cursor', '@human']);
+  });
+
   it('includes all leaders plus the assignee in a task room', () => {
     const s = stateWithTaskRoom('T-1', ['leader', 'review-leader'], 'codex');
     expect(membersOf('task:T-1', s)).toEqual(['leader', 'review-leader', 'codex', '@human']);
@@ -77,7 +82,7 @@ function stateWithNonParticipantDispute(
   against: 'brief' | 'spec',
   uninvolvedWorkers: ParticipantId[],
 ): HubState {
-  const state = stateWith([raisedBy, ...uninvolvedWorkers]);
+  const state = stateWith(['leader', raisedBy, ...uninvolvedWorkers]);
   state.claims.set(claimId, claim(claimId, raisedBy, against));
   return state;
 }

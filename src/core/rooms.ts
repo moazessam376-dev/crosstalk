@@ -54,6 +54,11 @@ export function membersOf(id: RoomId, state: HubState): ParticipantId[] {
       const parties: ParticipantId[] = [claim.raisedBy];
       if (claim.against !== 'brief' && claim.against !== 'spec') {
         parties.push(claim.against);
+      } else {
+        const briefOwner = [...state.participants.values()].find((participant) => participant.role === 'leader');
+        if (briefOwner !== undefined && !parties.includes(briefOwner.id)) {
+          parties.push(briefOwner.id);
+        }
       }
 
       const observers = [...state.participants.values()]

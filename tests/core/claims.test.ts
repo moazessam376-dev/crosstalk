@@ -25,6 +25,14 @@ describe('claim validators', () => {
     );
   });
 
+  it('accepts an observable falsifier with an ordinary verb', () => {
+    const claim = validateRaise(
+      { ...base, falsifier: 'The focused command prints two rows instead of one.' },
+      emptyState(),
+    );
+
+    expect(claim.falsifier).toBe('The focused command prints two rows instead of one.');
+  });
   it('rejects a contest with no rationale', () => {
     const state = stateWithOpenClaim('C-1');
     expect(() =>

@@ -209,7 +209,7 @@ Three enforcement points, all in the schema rather than in prose:
 
 - `contest` requires **rationale for why it was built that way**, counter-evidence, and its own falsifier. A worker cannot decline a claim by asserting the code is fine.
 - `uphold` requires **new evidence that addresses the counter**. Restating the original claim is rejected at the API. This is the anti-stubbornness rule, and it applies to the leader.
-- `concede` is an event. It appears in the ledger (§11) against the claimant. Conceding is cheap and normal; the metric exists to make calibration visible, not to punish.
+- `concede` is an event. It appears in the ledger (§12) against the claimant. Conceding is cheap and normal; the metric exists to make calibration visible, not to punish.
 
 Claims may be raised **against the brief or the spec**, by anyone, at any time. This is the direct countermeasure to contradictory-brief defects.
 
@@ -234,7 +234,7 @@ Two hard gates:
 }
 ```
 
-Crosstalk defines the *shape* of the record, not the critic. Each harness runs its own however it prefers — a subagent, a `/loop`, a second pass. A zero-finding critique is legal and recorded; §11 exposes self-critique yield per participant, so a self-critic that reliably finds nothing while the leader then finds five becomes a number rather than a hunch.
+Crosstalk defines the *shape* of the record, not the critic. Each harness runs its own however it prefers — a subagent, a `/loop`, a second pass. A zero-finding critique is legal and recorded; §12 exposes self-critique yield per participant, so a self-critic that reliably finds nothing while the leader then finds five becomes a number rather than a hunch.
 
 **Leader review** is capped at `policy.leaderCritique.maxRounds` (default 2). Unresolved claims block `accepted`.
 
@@ -281,7 +281,7 @@ A required field invites `falsifier: "if it didn't work"`. Three options were co
 2. A model-based judge of falsifier quality. Adds a model dependency, cost, and a new source of error to a system whose premise is that model judgments need checking.
 3. Let the ladder expose it.
 
-**(3), with a light lint.** The `discriminating_test` rung asks both sides to derive a runnable command from their falsifiers. A vacuous falsifier cannot produce one, and that failure is recorded. §11 tracks *falsifiers that failed to yield a test* per participant. A length/pattern lint at `raise_claim` catches the laziest cases without pretending to judge quality.
+**(3), with a light lint.** The `discriminating_test` rung asks both sides to derive a runnable command from their falsifiers. A vacuous falsifier cannot produce one, and that failure is recorded. §12 tracks *falsifiers that failed to yield a test* per participant. A length/pattern lint at `raise_claim` catches the laziest cases without pretending to judge quality.
 
 ---
 
@@ -432,7 +432,7 @@ The mirror is a queue with retry. If GitHub is unreachable, offline, or no remot
 
 `@human` is a participant with `role: "human"` and membership in every room. Three ways to speak:
 
-1. **Web UI** at the daemon's loopback address — read any room, post to any room, see live claim and decision state.
+1. **The hub UI** at the daemon's loopback address — read any room, post to any room, see live claim and decision state. Designed in §10.
 2. **CLI** — `crosstalk post --room '#floor' --body '...'`.
 3. **GitHub PR comment**, when `mode: two-way-human`.
 
@@ -444,7 +444,95 @@ Human messages are delivered with priority: a pending `await_turn` returns immed
 
 ---
 
-## 10. Configuration
+## 10. The hub UI
+
+The hub is a desktop-shaped single-page app served by the daemon over the same loopback HTTP, live via SSE. It is a **pure projection of the event log** — it holds no state of its own. Two consequences worth having: any view is reproducible from the log, and `crosstalk ui --replay <log>` opens a completed session for post-mortem, arguments and all.
+
+Chat is the right *shape* for this — a room, a timeline, participants, someone typing. But protocol events are not messages and must not render as message text. A claim is a card with state, evidence, and controls. Rendering it as a paragraph is how the structure gets lost, and structure is the entire point.
+
+### 10.1 Layout
+
+Four regions, Discord-shaped, at Cursor/Claude Code density.
+
+```
+┌────┬──────────────┬────────────────────────────────┬──────────────┐
+│ ▣  │ FLOOR        │  #floor                        │  INSPECTOR   │
+│ ●  │  # floor     │                                │              │
+│leader│              │  leader  ─────────────  14:22 │ T-04  review │
+│ ●  │ TASKS        │  Task 6 pushed. Awaiting       │ ▸ acceptance │
+│cursor│  T-04 review│  critic.                       │   ☑ ☑ ☐ ☐    │
+│ ○  │  T-05 wip    │                                │              │
+│codex│              │  ┌ CLAIM C-118 ─── contested ┐│ ▸ open claims│
+│    │ DISPUTES     │  │ leader → codex             ││   C-118  ⚑   │
+│ ▣  │  C-118  2/3  │  │ src/economy.ts:41          ││              │
+│ you│              │  │ staffing coeff applied 2×  ││ ▸ decision   │
+│    │ DIRECT       │  │ falsifier: produce() and   ││   ladder 2/3 │
+│    │  leader~codex│  │  consume() would reference ││              │
+│    │  leader~curs │  │  different multipliers     ││              │
+│    │              │  │ ▸ economycheck  @7c18253 ✓ ││              │
+│    │              │  └────────────────────────────┘│              │
+│    │              │  ┌ post to #floor as @human ──┐│              │
+└────┴──────────────┴──┴────────────────────────────┴┴──────────────┘
+```
+
+**Rail** — participants with live status (`idle` · `working` · `awaiting turn` · `blocked` · `offline`) and a tier badge (MCP / shell / file). Status comes from heartbeats and pending `await_turn` calls, so it is real rather than declared.
+
+**Channel list** — grouped `FLOOR · TASKS · DISPUTES · DIRECT`. Task rows carry a state chip; dispute rows carry a round counter (`2/3`). Anything awaiting a human decision sorts to the top with a marker.
+
+**Stream** — messages render as chat. Protocol events render as cards: `claim_raised`, `claim_response`, `decision_opened`, `vote_cast`, `evidence_stale`, `rebase_notice`. Evidence is collapsed to one line — command, SHA badge, fresh/stale — and expands to full output on click.
+
+**Inspector** — context-sensitive to the selected room. On a task: the state machine with the current node lit, the `acceptance[]` checklist, open claims. On a dispute: the ladder rail and the vote tally. On `#floor`: the ledger summary.
+
+### 10.2 The dispute view
+
+The signature screen, and the reason the UI is worth building at all:
+
+```
+ dispute:C-118                                        round 2 / 3
+ ●────────────●────────────○
+ test      third agent    leader          ← current rung lit
+
+ ┌ CLAIM · leader ───────────┬ CONTEST · codex ──────────────┐
+ │ staffing coefficient is   │ built this way because replay │
+ │ applied twice             │ determinism requires a single │
+ │                           │ ordering pass                 │
+ │ falsifier                 │ falsifier                     │
+ │  produce() and consume()  │  a second multiplier would    │
+ │  would reference          │  show as a divergent ledger   │
+ │  different multipliers    │  on the third tick            │
+ │                           │                               │
+ │ ▸ economycheck.mjs        │ ▸ tools/replay.mjs --ticks 3  │
+ │   @7c18253      ✓ fresh   │   @20b08a7      ⚠ stale       │
+ └───────────────────────────┴───────────────────────────────┘
+
+ [ propose discriminating test ]   [ intervene as @human ]
+```
+
+Both falsifiers side by side is the whole idea: it makes "these two claims cannot both be true, and here is the check that separates them" a visual fact rather than something you reconstruct from a scrollback. Stale evidence is struck through in place, so an argument resting on dead code is visible before anyone reads a word.
+
+### 10.3 Human controls
+
+Composer posts to the current room as `@human`. Beyond that, four actions, each emitting an ordinary event so the log stays authoritative: amend a brief, resolve a dispute directly, force the ladder to the next rung, and cast a vote on any open decision the human is eligible for.
+
+### 10.4 Visual direction
+
+Dark-first, matching the density of Cursor, Codex, Claude Code and Discord rather than a consumer web app:
+
+- **Surfaces** layered near-black, not pure black — base / panel / elevated, separated by hairline borders. Elevation via border and background delta; no drop shadows.
+- **Type** ~13px system sans for UI and prose; ~12.5px `ui-monospace` for everything that is a fact — commands, SHAs, paths, output, falsifiers. The mono/sans split is doing semantic work: monospace means *checkable*.
+- **Color** one accent hue for interactive elements only. All other color is status: fresh, stale, contested, blocker, decision-open. Never decorative.
+- **Density** ~30px rows, 4/8px spacing scale, tight radii (~6px). Information density over whitespace.
+- **Motion** minimal, ~120ms, and only to show that something arrived.
+
+Light theme ships too, but dark is the designed one. Detailed visual execution is deferred to implementation, where the frontend-design skill applies.
+
+### 10.5 UI non-goals for v1
+
+No mobile app — the GitHub mirror is the AFK surface. No authentication beyond the loopback token. No multi-project switcher. No editing of history: the log is append-only and the UI has no affordance implying otherwise.
+
+---
+
+## 11. Configuration
 
 `crosstalk.yaml` at the repo root:
 
@@ -499,7 +587,7 @@ Validated at startup by `crosstalk doctor`, which rejects: a non-terminal last l
 
 ---
 
-## 11. The ledger
+## 12. The ledger
 
 Every metric below falls out of the event log; none requires extra instrumentation. `crosstalk ledger` renders it per participant:
 
@@ -514,7 +602,7 @@ The purpose is calibration, not scoring. The single most useful number for a lea
 
 ---
 
-## 12. Cross-platform
+## 13. Cross-platform
 
 - Node ≥ 20, no native modules, no Python, no Docker.
 - All IPC over loopback HTTP — no platform branching for sockets or pipes.
@@ -525,7 +613,7 @@ The purpose is calibration, not scoring. The single most useful number for a lea
 
 ---
 
-## 13. Packaging and open source
+## 14. Packaging and open source
 
 - **npm package** `crosstalk-ai` (bare `crosstalk` is a squatted `0.0.1`), **binaries** `crosstalk` and `ct`. Usable as `npx crosstalk-ai init`.
 - **Commands:** `init` · `doctor` · `up` · `daemon` · `mcp` · `post` · `await` · `task` · `claim` · `decision` · `ledger` · `ui` · `mirror`.
@@ -535,7 +623,7 @@ The purpose is calibration, not scoring. The single most useful number for a lea
 
 ---
 
-## 14. Failure modes
+## 15. Failure modes
 
 | Failure | Handling |
 |---|---|
@@ -552,7 +640,7 @@ The purpose is calibration, not scoring. The single most useful number for a lea
 
 ---
 
-## 15. Testing strategy
+## 16. Testing strategy
 
 - **Protocol conformance suite** driven by a scripted mock participant — fully deterministic, no model calls. Every state transition, every rejected transition, every ladder rung.
 - **`crosstalk sim`** — replays a recorded event log against the projection and asserts the resulting state. Doubles as a regression corpus: any real session that misbehaves becomes a fixture.
@@ -562,7 +650,7 @@ The purpose is calibration, not scoring. The single most useful number for a lea
 
 ---
 
-## 16. Open questions
+## 17. Open questions
 
 Deferred deliberately; none block v1.
 

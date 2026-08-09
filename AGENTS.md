@@ -37,6 +37,8 @@ It catches a failure the "can this assertion fail?" question misses: a test that
 
 Tests touching git build a real throwaway repo under `os.tmpdir()` — don't mock git.
 
+**For UI, `npm test` is not the end of verification. Build it, serve it, open it, and look.** A component test that passes its props in proves the component draws correctly *given* data — never that anything hands it data. That seam is invisible from inside the test runner: this project shipped a handoff with 28 green tests, clean typecheck and a clean build, over a signature screen that rendered empty.
+
 ## Review is a conversation
 
 Findings you receive are **claims, not instructions**. Verify each against the source before acting, then reply `accept` (fix + evidence), `contest` (why you built it that way + counter-evidence + what would show you wrong), or `clarify` (the brief conflicts with itself).

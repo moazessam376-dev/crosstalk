@@ -31,6 +31,10 @@ TDD: write the failing test, run it and confirm it fails for the reason you expe
 
 **Assertions must be able to fail.** Before writing one, ask: *what would this print if the feature were broken?* If the answer is "the same thing", it's not a test. `expect(errors).toEqual([])` proves the code didn't throw. A suite that passes on zero rows proves nothing about one row.
 
+**When you're unsure whether a test is real, break the code on purpose.** Invert the condition, hard-code the return, delete the branch — then re-run. If the suite stays green, it was never testing that code. This beats re-reading a test and judging whether it *looks* strict, and it takes a minute. Restore the file afterwards.
+
+It catches a failure the "can this assertion fail?" question misses: a test that proves a branch *can* fire while proving nothing about whether it fires *at the right time*. A guard mutated to `return true` that keeps every test green is a guard nobody is checking. **Test both sides of any discrimination** — the case that should trigger and the neighbouring case that shouldn't.
+
 Tests touching git build a real throwaway repo under `os.tmpdir()` — don't mock git.
 
 ## Review is a conversation

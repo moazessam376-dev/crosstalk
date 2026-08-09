@@ -173,3 +173,38 @@ Both decisions were right. Together they left no test anywhere that asked whethe
 It earned its place immediately. The first fixture was repaired by hand; on the next run the guard failed on the second fixture with the identical defect, which no one had thought to look for.
 
 **The pattern this log keeps finding, stated at its most general:** a review that examines artifacts one at a time cannot see a defect that lives *between* two artifacts. Nothing was wrong with the validator. Nothing was wrong with the projection. Nothing was wrong with the fixtures on their own terms. The defect was in the agreement they were all assumed to have and none of them checked.
+
+---
+
+## 14 · Three predicates for one job, all wrong, each written after diagnosing the last
+
+**What happened.** Agents need to recognise the leader's comments on a shared PR. Three filters were written for that. Every one failed, and every one was written by the leader immediately after diagnosing the previous failure.
+
+| Filter | Failure |
+|---|---|
+| author is not me | Never fires. Every participant posts through one GitHub account, so nothing is "not me". Cost one agent forty idle minutes. |
+| `endswith("— leader")` | Never fires. GitHub returns bodies with a trailing newline. An agent ran it on schedule for an hour reporting "no new leader comment" while two rulings sat unread. |
+| `contains("— leader")` | **Fires on the wrong participant.** Matches the marker anywhere, including a worker comment quoting a ruling — so `last` returns the worker's own text and a fresh session acts on its own words believing they are the leader's. |
+
+The third is the worst. The first two produce silence, which is at least ambiguous. The third produces a confident wrong answer.
+
+The fix that works — `test("— leader[[:space:]]*$")`, anchored, no escape sequences to mangle through a shell and a markdown fence — was proposed by a worker, not the leader, and was the first one anybody ran against a real comment before writing it down.
+
+**Why the design permitted it.** Nothing distinguishes participants at the transport layer, which is friction entry 9 again. But the sharper lesson is about the leader rather than the transport: **three times, a filter was reasoned about and shipped to three agents without once being executed against live data.** Reasoning about a predicate is not testing it, and the project's own rule — *break it on purpose and re-run* — was never applied to the one-line commands that carry every other rule.
+
+**Changed.** The anchored filter, verified on two PRs first. And the general form: a predicate handed to another agent is code, and gets the same standard as code.
+
+---
+
+## 15 · The leader reviewed code against itself, never against its own plan
+
+**What happened.** An independent audit filed nine findings against merged work. All nine were upheld. Two were spec sections the leader had personally reviewed and declared clean; two more were cases where the plan specified one behaviour, the implementation shipped another, and the leader approved it in review.
+
+- §5.4's consequences were entirely unimplemented. The leader had mutation-tested that track's concurrency fix and its `uphold` guard, written *"no findings, I looked hard"*, and never compared the spec section to the transition table.
+- The plan required the card switch to refuse an unknown event kind so a new protocol event could not silently become message-like text. The shipped switch rendered a plausible generic card. The leader passed it twice — and then added a new event kind to the contract, which rendered through that branch immediately.
+
+**Why the design permitted it.** The leader's review method was: is this internally coherent, and can its tests fail? Both are good questions. Neither can detect **a correct implementation of the wrong thing.** Nothing in the process compared a task's output against the document that commissioned it, so a plan requirement that quietly went unimplemented left no trace anywhere.
+
+**Changed.** Nothing structural yet, and that is the honest answer — the fix is a habit rather than a mechanism, and habits are what this log exists because of. What did change is where the reviewer looks: for each task, name the plan clause, then find the code that satisfies it.
+
+The auditor's method was one sentence long and caught what the leader's could not: **read the documents against the code, not the code against itself.**

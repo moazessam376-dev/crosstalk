@@ -24,6 +24,7 @@ Everything is an npm script. No `.sh`, no `.bat`, no `Makefile` — PowerShell a
 6. **`node:path` always, `execFile` never `exec`.** Details in `docs/CROSS-PLATFORM.md`.
 7. **Green on one platform is not done.** CI is Windows, macOS and Linux.
 8. **Don't edit `src/contracts/` or `tests/fixtures/`** — frozen. Raise a claim instead.
+9. **Scratch worktrees and probe files go under `.crosstalk/`**, never the repo root and never outside the repo. Anything you create, `crosstalk down` has to be able to find and remove — and a reviewer shouldn't have to guess whether a stray directory is yours or abandoned.
 
 ## Testing
 

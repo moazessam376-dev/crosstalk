@@ -3,10 +3,14 @@ dist/
 coverage/
 *.tsbuildinfo
 
+# Agent scratch at the repo root. Worktrees and probes belong under .crosstalk/,
+# but a stray `git add -A` should never be able to commit them either way.
+/_*
+
 # Crosstalk runtime state — the event log is per-project, never committed from here
 .crosstalk/daemon.json
 .crosstalk/state.json
-.crosstalk/token
+.crosstalk/tokens/
 .crosstalk/worktrees/
 .crosstalk/inbox/
 .crosstalk/outbox/

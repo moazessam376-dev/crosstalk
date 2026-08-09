@@ -147,7 +147,7 @@ describe('B5 dispute view', () => {
     expect(tally).toHaveTextContent(/once\s*0/);
   });
 
-  it('marks a claim resolved after its linked decision resolves', () => {
+  it('keeps a claim contested after its linked decision resolves', () => {
     const decisionResolved: CrosstalkEvent = {
       seq: 7,
       ts: '2026-08-09T00:00:07Z',
@@ -160,6 +160,6 @@ describe('B5 dispute view', () => {
 
     render(createElement(DisputeView, { roomId: 'dispute:C-118', events: [...events, decisionResolved] }));
 
-    expect(screen.getByTestId('dispute-claim-C-118')).toHaveAttribute('data-claim-state', 'resolved');
+    expect(screen.getByTestId('dispute-claim-C-118')).toHaveAttribute('data-claim-state', 'contested');
   });
 });

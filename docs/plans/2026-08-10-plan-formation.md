@@ -108,6 +108,20 @@ it('says nothing about planning when the policy is absent', async () => {
   expect(f.filter((x) => x.code.startsWith('PLANNING_'))).toHaveLength(0);
 });
 
+// solo ignores `agents` and `selection` (contract comment on PolicyConfig).
+// Without this case an implementation can apply the review/panel checks
+// unconditionally and still pass every other test here.
+it('produces no planning findings in solo mode, whatever agents and selection say', async () => {
+  for (const planning of [
+    { mode: 'solo', agents: 0, selection: 'leader' },
+    { mode: 'solo', agents: 1, selection: 'majority' },
+    { mode: 'solo', agents: 9, selection: 'unanimous' },
+  ] as const) {
+    const f = await doctor(cfg({ planning }), repo);
+    expect(f.filter((x) => x.code.startsWith('PLANNING_')), JSON.stringify(planning)).toHaveLength(0);
+  }
+});
+
 // The existing "every finding carries a remedy" test only asserts length > 0,
 // so one generic string satisfies it for all three. Each remedy must name the
 // thing to change, and they must differ from each other.
@@ -124,8 +138,20 @@ it('gives each planning finding its own actionable remedy', async () => {
 });
 ```
 
-- [ ] **Step 2: Run — FAIL**
-- [ ] **Step 3: Implement.** `planning` is optional; absent means the default and produces no finding. Every finding carries a remedy naming the capability lost — the existing "every finding carries a remedy" test covers these automatically, and must keep passing.
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `npx vitest run tests/harness/doctor.test.ts -t planning`
+Expected: FAIL — the four planning cases find no matching finding, because `doctor` emits none. **Confirm that is the reason.** A full-suite run is not a substitute: it can pass while never exercising a new case at all.
+
+- [ ] **Step 3: Implement.** Validation is **mode-specific**, not unconditional:
+
+| mode | checked | ignored |
+|---|---|---|
+| `solo` | nothing | `agents`, `selection` |
+| `review` | `agents ≥ 1`, and `agents ≤` available non-leader participants | `selection` |
+| `panel` | `agents ≥ 2`, `selection` is a valid `DecisionMethod` | — |
+
+`planning` is optional; absent means the default and produces no finding. Every finding carries a remedy naming the capability lost — the existing "every finding carries a remedy" test covers these automatically, and must keep passing.
 - [ ] **Step 4: Run — PASS**
 - [ ] **Step 5:** `git commit -m "Check the planning policy is coherent before a run starts"`
 
@@ -169,7 +195,11 @@ it('changes version when the planning policy changes', () => {
 });
 ```
 
-- [ ] **Step 2: Run — FAIL**
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `npx vitest run tests/harness/brief.test.ts -t plan-reviewer`
+Expected: FAIL — `renderBrief` has no `plan_reviewer` arm, so the reviewer output is byte-identical to the worker's and both `not.toContain` assertions fail. **Confirm that is the reason**, not a missing-module error.
+
 - [ ] **Step 3: Implement.** The template states: the reviewer reads the plan and raises claims against it; it does not implement; independence from the author is the point, so it must not "improve" a section it would then be unable to question.
 - [ ] **Step 4: Run — PASS**
 - [ ] **Step 5:** `git commit -m "Add the plan-reviewer role brief"`
@@ -192,7 +222,7 @@ Wiring `validatePlanFrozen` into the daemon's `POST /tasks`, so a task cannot be
 
 ## Review record
 
-Reviewed under spec §5.6 `review` mode by an independent reader (lens: misleading brief), PR #5. **Five claims raised, five upheld, none contested.** All are fixed above:
+Reviewed under spec §5.6 `review` mode by an independent reader (lens: misleading brief), PR #5, across two rounds. **Seven claims raised, seven upheld, none contested.** All are fixed above:
 
 | | |
 |---|---|
@@ -201,5 +231,7 @@ Reviewed under spec §5.6 `review` mode by an independent reader (lens: misleadi
 | E-03 `defect` | E3's test rendered only the reviewer, so putting reviewer text in the *shared* worker template would pass while giving every worker reviewer instructions |
 | E-04 `risk` | E2 required remedies that "name the capability lost" while its test only checked non-empty |
 | E-05 | the goal claimed §5.6 enforcement that E1–E3 do not deliver |
+| E-06 `risk` | E2 and E3 said only "Run — FAIL" with no command and no expected reason, so the required *confirm it fails for the reason you expect* check was not performable |
+| E-07 `defect` | the self-review claimed all three §5.6 modes were covered while no test exercised `solo`; unconditional review/panel checks would have passed everything |
 
 E-03 is worth singling out: it is a one-sided discrimination test, the exact defect this project's own `AGENTS.md` warns about, in a plan written by the person who wrote that warning.

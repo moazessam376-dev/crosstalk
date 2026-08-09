@@ -52,6 +52,8 @@ export function validateResponse(input: ClaimResponseInput, state: HubState): vo
     throw new ProtocolError('UNKNOWN_CLAIM', `Unknown claim: ${input.claimId}`);
   }
 
+  validateResponseAuthority(input, claim, state);
+
   switch (input.verdict) {
     case 'contest':
       requireText(input.rationale, 'CONTEST_WITHOUT_RATIONALE', 'contest requires a rationale');
@@ -80,6 +82,59 @@ export function validateResponse(input: ClaimResponseInput, state: HubState): vo
   }
 
   throw new Error(`Unknown claim verdict: ${input.verdict satisfies never}`);
+}
+
+function validateResponseAuthority(input: ClaimResponseInput, claim: Claim, state: HubState): void {
+  if (claim.state === 'open') {
+    if (input.verdict !== 'accept' && input.verdict !== 'contest' && input.verdict !== 'clarify') {
+      throw new ClaimResponseError(
+        'Claim ' + claim.id + ' is open and cannot accept a ' + input.verdict + ' response',
+      );
+    }
+
+    const expectedResponder =
+      claim.against === 'brief' || claim.against === 'spec'
+        ? briefOwner(state)
+        : claim.against;
+    if (input.from !== expectedResponder) {
+      throw new ClaimResponseError(
+        'Participant ' + input.from + ' is not authorized to respond to claim ' + claim.id,
+      );
+    }
+    return;
+  }
+
+  if (claim.state === 'contested') {
+    if (input.verdict !== 'concede' && input.verdict !== 'amend' && input.verdict !== 'uphold') {
+      throw new ClaimResponseError(
+        'Claim ' + claim.id + ' is contested and cannot accept a ' + input.verdict + ' response',
+      );
+    }
+    if (input.from !== claim.raisedBy) {
+      throw new ClaimResponseError(
+        'Participant ' + input.from + ' is not authorized to respond to claim ' + claim.id,
+      );
+    }
+    return;
+  }
+
+  throw new ClaimResponseError('Claim ' + claim.id + ' is ' + claim.state + ' and cannot receive responses');
+}
+
+function briefOwner(state: HubState): ParticipantId {
+  for (const [id, participant] of state.participants) {
+    if (participant.role === 'leader') {
+      return id;
+    }
+  }
+  return 'leader';
+}
+
+class ClaimResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ClaimResponseError';
+  }
 }
 
 function validateFalsifier(falsifier: string, assertion: string): void {

@@ -95,4 +95,37 @@ describe('EventLog', () => {
     expect(taskCreated?.kind).toBe('task_created');
     expect(taskCreated?.task.title).toBe('Original title');
   });
+  it('serializes concurrent appends and resumes seq after reopening', async () => {
+    for (let round = 0; round < 25; round += 1) {
+    const dir = await mkdtemp(join(tmpdir(), 'ct-'));
+    const path = join(dir, 'events.jsonl');
+    const log = await EventLog.open(path);
+    const count = 100;
+
+    const appended = await Promise.all(
+      Array.from({ length: count }, (_, index) =>
+        log.append({
+          kind: 'message',
+          from: 'leader',
+          room: '#floor',
+          body: 'message-' + index + '-' + 'x'.repeat(16_384),
+        }),
+      ),
+    );
+
+    const expected = Array.from({ length: count }, (_, index) => index + 1);
+    expect(appended.map((event) => event.seq)).toEqual(expected);
+
+    const reopened = await EventLog.open(path);
+    expect((await reopened.read()).map((event) => event.seq)).toEqual(expected);
+
+    const next = await reopened.append({
+      kind: 'message',
+      from: 'leader',
+      room: '#floor',
+      body: 'after-reopen',
+    });
+    expect(next.seq).toBe(count + 1);
+    }
+  });
 });

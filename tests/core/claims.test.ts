@@ -66,6 +66,47 @@ describe('claim validators', () => {
     ).toThrowError(/not authorized/i);
   });
 
+  it('allows the brief owner to resolve a clarified brief claim', () => {
+    const state = emptyState();
+    state.participants.set('leader', {
+      id: 'leader',
+      role: 'leader',
+      harness: '',
+      lifecycle: 'attached',
+      workspace: '',
+    });
+    state.claims.set('C-1', {
+      ...claim('C-1', 'clarify', []),
+      raisedBy: 'codex',
+      against: 'brief',
+    });
+
+    expect(() =>
+      validateResponse(
+        { claimId: 'C-1', from: 'leader', verdict: 'accept', evidence: [ev('sha-new')] },
+        state,
+      ),
+    ).not.toThrow();
+  });
+
+  it('allows the claimant to withdraw a clarified claim', () => {
+    const state = emptyState();
+    state.claims.set('C-1', claim('C-1', 'clarify', []));
+
+    expect(() =>
+      validateResponse(
+        {
+          claimId: 'C-1',
+          from: 'leader',
+          verdict: 'concede',
+          rationale: 'The brief was amended and the claim is withdrawn.',
+          evidence: [],
+        },
+        state,
+      ),
+    ).not.toThrow();
+  });
+
   it('rejects responses after a claim is resolved', () => {
     const state = emptyState();
     state.claims.set('C-1', claim('C-1', 'resolved', []));

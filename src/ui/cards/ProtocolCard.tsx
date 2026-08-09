@@ -53,11 +53,33 @@ export function ProtocolCard({ event, testId = defaultTestId(event) }: ProtocolC
       );
       break;
     default:
-      content = createElement(
-        'div',
-        null,
-        createElement('span', { className: 'fact-label' }, 'protocol event'),
-        createElement('p', null, event.kind),
+      // An event this build does not know must look wrong, not plausible.
+      // The plan said throw; throwing blanks the whole stream for one
+      // unrecognised frame, which is worse than the problem. An explicit
+      // unsupported card surfaces the incompatibility and keeps the rest of
+      // the log readable.
+      //
+      // Not hypothetical: `self_review` was added to the contract after this
+      // switch was written and rendered through the old generic branch.
+      return createElement(
+        'article',
+        {
+          className: 'protocol-card protocol-card-unsupported',
+          'data-card-kind': 'unsupported',
+          'data-event-kind': event.kind,
+          'data-unsupported': 'true',
+          'data-testid': testId,
+        },
+        createElement(
+          'div',
+          { className: 'unsupported-event' },
+          createElement('span', { className: 'fact-label' }, 'unsupported event'),
+          createElement(
+            'p',
+            null,
+            `This build does not know how to display "${event.kind}". It may be newer than this hub.`,
+          ),
+        ),
       );
   }
 

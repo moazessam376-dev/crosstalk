@@ -96,12 +96,16 @@ Dependencies point one way. The daemon may be killed at any time; the log surviv
 
 | Room | Members | Created |
 |---|---|---|
-| `#floor` | every participant, including `@human` | at init |
+| `#floor` | every participant, including `@human` | **seeded from the `FLOOR` constant** — see below |
 | `dm:<a>~<b>` | the two named, plus `@human` | on first use |
 | `task:<id>` | leader + assignee + invited | on task creation |
 | `dispute:<claim-id>` | disputants + uninvolved peers as silent observers | on contest |
 
 `@human` is a member of every room by construction. Uninvolved peers observe disputes deliberately: it keeps them qualified to adjudicate at the `third_agent` rung, and it cross-pollinates lessons between workers.
+
+**`#floor` is seeded, not derived.** Every other room comes into being because an event referenced it, so a reader of the log can discover them all. `#floor` cannot work that way: it must exist before anyone has spoken, and a log whose participants happen never to have posted there would otherwise contain no evidence it exists at all. So consumers seed it from the `FLOOR` constant in `src/contracts/room.ts` and derive everything else from events.
+
+The distinction matters for anyone building a view: seeding one known constant is not the same as inventing state the log doesn't support, and a projection is right to refuse the second.
 
 **Event** — one JSONL line.
 
@@ -487,6 +491,8 @@ Four regions, Discord-shaped, at Cursor/Claude Code density.
 ```
 
 **Rail** — participants with live status (`idle` · `working` · `awaiting turn` · `blocked` · `offline`) and a tier badge (MCP / shell / file). Status comes from heartbeats and pending `await_turn` calls, so it is real rather than declared.
+
+**When `transport` is undefined, render no tier badge at all** — not the lowest tier. `Tier` has no *unknown* member, so a defaulted `file` is indistinguishable from a probed `file`. Absence of a badge says "not probed"; `file` says "probed, and it is the worst tier". Those are different claims and only one of them is true.
 
 **Channel list** — grouped `FLOOR · TASKS · DISPUTES · DIRECT`. Task rows carry a state chip; dispute rows carry a round counter (`2/3`). Anything awaiting a human decision sorts to the top with a marker.
 

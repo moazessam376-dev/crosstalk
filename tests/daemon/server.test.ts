@@ -3,6 +3,8 @@ import { mkdtemp, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { CrosstalkEvent } from '../../src/contracts/events.js';
+import type { EventsResponse, WireError, WriteResponse } from '../../src/daemon/contract.js';
 import { startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
 
 const CONFIG = `version: 1
@@ -39,11 +41,24 @@ async function withDaemon<T>(repo: string, fn: (d: DaemonHandle) => Promise<T>):
   }
 }
 
+/**
+ * Typed against the contract's own response types, so a change to the wire
+ * shape stops this file compiling rather than failing at runtime somewhere else.
+ */
+async function readJson<T>(response: Response): Promise<T> {
+  return (await response.json()) as T;
+}
+
 function auth(daemon: DaemonHandle, id: string): Record<string, string> {
   return { authorization: `Bearer ${daemon.tokens.get(id)!}` };
 }
 
-async function post(daemon: DaemonHandle, path: string, body: unknown, headers: Record<string, string>) {
+async function post(
+  daemon: DaemonHandle,
+  path: string,
+  body: unknown,
+  headers: Record<string, string>,
+): Promise<Response> {
   return fetch(`${daemon.url}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
@@ -51,13 +66,19 @@ async function post(daemon: DaemonHandle, path: string, body: unknown, headers: 
   });
 }
 
+async function allEvents(daemon: DaemonHandle, id: string): Promise<CrosstalkEvent[]> {
+  const response = await fetch(`${daemon.url}/events`, { headers: auth(daemon, id) });
+  return (await readJson<EventsResponse>(response)).events;
+}
+
+const seqsOf = (events: CrosstalkEvent[]): number[] => events.map((event) => event.seq);
+
 describe('daemon', () => {
   it('mints one token per participant, not one shared token', async () => {
     const repo = await tempRepo();
     await withDaemon(repo, async (daemon) => {
       expect([...daemon.tokens.keys()].sort()).toEqual(['codex', 'leader']);
       expect(daemon.tokens.get('leader')).not.toBe(daemon.tokens.get('codex'));
-      // The token file is what a client reads; @human strips its '@'.
       const onDisk = await readFile(join(repo, '.crosstalk', 'tokens', 'codex'), 'utf8');
       expect(onDisk.trim()).toBe(daemon.tokens.get('codex'));
     });
@@ -69,6 +90,7 @@ describe('daemon', () => {
       expect(daemon.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
       const raw = await readFile(join(repo, '.crosstalk', 'daemon.json'), 'utf8');
       expect(JSON.parse(raw)).toMatchObject({ version: 1, url: daemon.url, pid: process.pid });
+      // Discovery must not hand a reader everyone's identity.
       for (const token of daemon.tokens.values()) expect(raw).not.toContain(token);
     });
   });
@@ -88,7 +110,7 @@ describe('daemon', () => {
     await withDaemon(repo, async (daemon) => {
       const response = await fetch(`${daemon.url}/events`);
       expect(response.status).toBe(401);
-      const payload = await response.json();
+      const payload = await readJson<WireError>(response);
       expect(payload.error).toMatchObject({ domain: 'daemon', code: 'UNAUTHENTICATED' });
       // The refusal must not leak which tokens exist.
       for (const token of daemon.tokens.values()) {
@@ -117,21 +139,30 @@ describe('daemon', () => {
         auth(daemon, 'codex'),
       );
       expect(response.status).toBe(201);
-      const { events } = await response.json();
-      const message = events.find((e: { kind: string }) => e.kind === 'message');
-      expect(message).toMatchObject({ from: 'codex', room: '#floor', body: 'hello' });
+      const { events } = await readJson<WriteResponse>(response);
+      expect(events.find((event) => event.kind === 'message')).toMatchObject({
+        from: 'codex',
+        room: '#floor',
+        body: 'hello',
+      });
     });
   });
 
   it('does not let a token speak as another participant', async () => {
     const repo = await tempRepo();
     await withDaemon(repo, async (daemon) => {
-      const asCodex = await post(daemon, '/events', { kind: 'message', room: '#floor', body: 'a' }, auth(daemon, 'codex'));
-      const asLeader = await post(daemon, '/events', { kind: 'message', room: '#floor', body: 'b' }, auth(daemon, 'leader'));
-      const from = async (r: Response) =>
-        (await r.json()).events.find((e: { kind: string }) => e.kind === 'message').from;
-      expect(await from(asCodex)).toBe('codex');
-      expect(await from(asLeader)).toBe('leader');
+      const author = async (id: string): Promise<string | undefined> => {
+        const response = await post(
+          daemon,
+          '/events',
+          { kind: 'message', room: '#floor', body: id },
+          auth(daemon, id),
+        );
+        const { events } = await readJson<WriteResponse>(response);
+        return events.find((event) => event.kind === 'message')?.from;
+      };
+      expect(await author('codex')).toBe('codex');
+      expect(await author('leader')).toBe('leader');
     });
   });
 
@@ -141,9 +172,8 @@ describe('daemon', () => {
       for (const body of ['one', 'two']) {
         await post(daemon, '/events', { kind: 'message', room: '#floor', body }, auth(daemon, 'codex'));
       }
-      const response = await fetch(`${daemon.url}/events`, { headers: auth(daemon, 'codex') });
-      const joins = (await response.json()).events.filter(
-        (e: { kind: string }) => e.kind === 'participant_joined',
+      const joins = (await allEvents(daemon, 'codex')).filter(
+        (event) => event.kind === 'participant_joined',
       );
       expect(joins).toHaveLength(1);
       expect(joins[0]).toMatchObject({ from: 'codex', participant: { id: 'codex', role: 'worker' } });
@@ -160,7 +190,7 @@ describe('daemon', () => {
         auth(daemon, 'codex'),
       );
       expect(response.status).toBe(403);
-      expect((await response.json()).error).toMatchObject({
+      expect((await readJson<WireError>(response)).error).toMatchObject({
         domain: 'daemon',
         code: 'FROM_NOT_ALLOWED',
       });
@@ -191,14 +221,12 @@ describe('daemon', () => {
         auth(daemon, 'codex'),
       );
       expect(response.status).toBe(422);
-      const { error } = await response.json();
+      const { error } = await readJson<WireError>(response);
       expect(error).toMatchObject({ domain: 'daemon', code: 'EVENT_KIND_NOT_APPENDABLE' });
       expect(error.message).toContain('POST /claims');
 
-      // And the forged claim must not have reached the log.
-      const events = await fetch(`${daemon.url}/events`, { headers: auth(daemon, 'codex') });
-      const kinds = (await events.json()).events.map((e: { kind: string }) => e.kind);
-      expect(kinds).not.toContain('claim_raised');
+      // The forged claim — falsifier and all — must not have reached the log.
+      expect((await allEvents(daemon, 'codex')).map((event) => event.kind)).not.toContain('claim_raised');
     });
   });
 
@@ -208,18 +236,17 @@ describe('daemon', () => {
       for (const body of ['one', 'two', 'three']) {
         await post(daemon, '/events', { kind: 'message', room: '#floor', body }, auth(daemon, 'leader'));
       }
-      const all = await fetch(`${daemon.url}/events`, { headers: auth(daemon, 'leader') });
-      const seqs: number[] = (await all.json()).events.map((e: { seq: number }) => e.seq);
+      const seqs = seqsOf(await allEvents(daemon, 'leader'));
       expect(seqs.length).toBeGreaterThan(2);
 
       const pivot = seqs[1]!;
       const response = await fetch(`${daemon.url}/events?since=${pivot}`, {
         headers: auth(daemon, 'leader'),
       });
-      const payload = await response.json();
+      const payload = await readJson<EventsResponse>(response);
       // Exclusive: the pivot itself must not come back, or every SSE reconnect
       // redelivers one event forever.
-      expect(payload.events.map((e: { seq: number }) => e.seq)).toEqual(seqs.filter((s) => s > pivot));
+      expect(seqsOf(payload.events)).toEqual(seqs.filter((seq) => seq > pivot));
       expect(payload.lastSeq).toBe(seqs[seqs.length - 1]);
     });
   });
@@ -228,9 +255,7 @@ describe('daemon', () => {
     const repo = await tempRepo();
     await withDaemon(repo, async (daemon) => {
       await post(daemon, '/events', { kind: 'message', room: '#floor', body: 'x' }, auth(daemon, 'leader'));
-      const response = await fetch(`${daemon.url}/events`, { headers: auth(daemon, 'leader') });
-      const seqs = (await response.json()).events.map((e: { seq: number }) => e.seq);
-      expect(seqs[0]).toBe(1);
+      expect(seqsOf(await allEvents(daemon, 'leader'))[0]).toBe(1);
     });
   });
 
@@ -240,16 +265,17 @@ describe('daemon', () => {
       for (const body of ['a', 'b', 'c', 'd']) {
         await post(daemon, '/events', { kind: 'message', room: '#floor', body }, auth(daemon, 'leader'));
       }
-      const page = await fetch(`${daemon.url}/events?limit=2`, { headers: auth(daemon, 'leader') });
-      const payload = await page.json();
-      expect(payload.events).toHaveLength(2);
-      expect(payload.lastSeq).toBe(payload.events[1].seq);
+      const page = await readJson<EventsResponse>(
+        await fetch(`${daemon.url}/events?limit=2`, { headers: auth(daemon, 'leader') }),
+      );
+      expect(page.events).toHaveLength(2);
+      expect(page.lastSeq).toBe(page.events[1]!.seq);
 
       // Paging on with since=lastSeq must not skip anything.
-      const next = await fetch(`${daemon.url}/events?since=${payload.lastSeq}`, {
-        headers: auth(daemon, 'leader'),
-      });
-      expect((await next.json()).events[0].seq).toBe(payload.lastSeq + 1);
+      const next = await readJson<EventsResponse>(
+        await fetch(`${daemon.url}/events?since=${page.lastSeq}`, { headers: auth(daemon, 'leader') }),
+      );
+      expect(next.events[0]!.seq).toBe(page.lastSeq + 1);
     });
   });
 
@@ -257,21 +283,19 @@ describe('daemon', () => {
     const repo = await tempRepo();
     await withDaemon(repo, async (daemon) => {
       await Promise.all(
-        Array.from({ length: 20 }, (_, i) =>
+        Array.from({ length: 20 }, (_, index) =>
           post(
             daemon,
             '/events',
-            { kind: 'message', room: '#floor', body: `m${i}` },
-            auth(daemon, i % 2 === 0 ? 'leader' : 'codex'),
+            { kind: 'message', room: '#floor', body: `m${index}` },
+            auth(daemon, index % 2 === 0 ? 'leader' : 'codex'),
           ),
         ),
       );
-      const response = await fetch(`${daemon.url}/events`, { headers: auth(daemon, 'leader') });
-      const events = (await response.json()).events;
-      const seqs = events.map((e: { seq: number }) => e.seq);
+      const events = await allEvents(daemon, 'leader');
       // One writer, one sequence: contiguous from 1, no gaps and no duplicates.
-      expect(seqs).toEqual(Array.from({ length: seqs.length }, (_, i) => i + 1));
-      expect(events.filter((e: { kind: string }) => e.kind === 'message')).toHaveLength(20);
+      expect(seqsOf(events)).toEqual(Array.from({ length: events.length }, (_, i) => i + 1));
+      expect(events.filter((event) => event.kind === 'message')).toHaveLength(20);
     });
   });
 
@@ -280,9 +304,18 @@ describe('daemon', () => {
     await withDaemon(repo, async (daemon) => {
       const response = await fetch(`${daemon.url}/health`);
       expect(response.status).toBe(200);
-      const payload = await response.json();
+      const payload = await readJson<Record<string, unknown>>(response);
       expect(payload).toMatchObject({ ok: true, version: 1, pid: process.pid });
       expect(payload).not.toHaveProperty('lastSeq');
+    });
+  });
+
+  it('rejects an unknown route', async () => {
+    const repo = await tempRepo();
+    await withDaemon(repo, async (daemon) => {
+      const response = await fetch(`${daemon.url}/nope`, { headers: auth(daemon, 'leader') });
+      expect(response.status).toBe(404);
+      expect((await readJson<WireError>(response)).error.code).toBe('UNKNOWN_ROUTE');
     });
   });
 
@@ -300,23 +333,20 @@ describe('daemon', () => {
 
     await withDaemon(repo, async (daemon) => {
       await post(daemon, '/events', { kind: 'message', room: '#floor', body: 'first' }, auth(daemon, 'leader'));
-      const all = await fetch(`${daemon.url}/events`, { headers: auth(daemon, 'leader') });
-      const seqs: number[] = (await all.json()).events.map((e: { seq: number }) => e.seq);
+      const seqs = seqsOf(await allEvents(daemon, 'leader'));
       tailAfterFirstRun = seqs[seqs.length - 1]!;
     });
 
     await withDaemon(repo, async (daemon) => {
       await post(daemon, '/events', { kind: 'message', room: '#floor', body: 'second' }, auth(daemon, 'leader'));
-      const all = await fetch(`${daemon.url}/events`, { headers: auth(daemon, 'leader') });
-      const events = (await all.json()).events;
-      const seqs: number[] = events.map((e: { seq: number }) => e.seq);
+      const events = await allEvents(daemon, 'leader');
 
       // Seq continues past the first run rather than restarting at 1, and the
-      // whole log stays contiguous across the restart — a reset would silently
-      // overwrite history in an append-only file.
-      expect(seqs).toEqual(Array.from({ length: seqs.length }, (_, i) => i + 1));
-      expect(seqs.length).toBeGreaterThan(tailAfterFirstRun);
-      expect(events.filter((e: { kind: string }) => e.kind === 'message')).toHaveLength(2);
+      // whole log stays contiguous — a reset would silently overwrite history
+      // in a file that is supposed to be append-only.
+      expect(seqsOf(events)).toEqual(Array.from({ length: events.length }, (_, i) => i + 1));
+      expect(events.length).toBeGreaterThan(tailAfterFirstRun);
+      expect(events.filter((event) => event.kind === 'message')).toHaveLength(2);
     });
   });
 

@@ -4,7 +4,9 @@
 
 **Status: DRAFT — not frozen.** Under `review` mode per spec §5.6: independent readers raise claims against this plan before it is frozen. Do not implement it yet.
 
-**Goal:** Make spec §5.6 enforceable rather than aspirational — a plan cannot be treated as frozen while claims against it are unresolved, and `doctor` catches an incoherent planning policy before a run starts.
+**Goal:** Build the pieces spec §5.6 enforcement needs — the freeze predicate, the policy checks, and the reviewer role — and prove each in isolation.
+
+**E1–E3 are explicitly preparatory, not the feature.** Nothing calls `validatePlanFrozen` until E4 wires it into the daemon's `POST /tasks`, so **§5.6 is not enforced when E1–E3 merge** and this track must not be described as delivering it. E4 is the acceptance boundary; E1–E3 are its prerequisites. Corrected after review claim E-05 — the original wording claimed enforcement that the tasks do not deliver, which is the misleading-brief failure this plan exists to reduce.
 
 **Architecture:** Pure logic in `src/core/plan.ts` over the existing projection, plus `doctor` validation and a brief template for the reviewer role. No new machinery: a claim can already target `'brief' | 'spec'`, so a plan reviewer uses `raise_claim` exactly as a code critic does.
 
@@ -73,7 +75,9 @@ it('reports every open plan claim, not just the first', () => {
 - [ ] **Step 4: Run to verify it passes** — PASS, 4 tests
 - [ ] **Step 5:** `git commit -m "Refuse to treat a plan as frozen while claims against it are open"`
 
-**Note for the reviewer:** `PLAN_NOT_FROZEN` is not in the frozen `ErrorCode` union. Raise a claim asking the leader to add it — do not add it yourself.
+**`PLAN_NOT_FROZEN` is already in `ErrorCode` on `main`** — the leader added it. Use it directly; do not edit `src/contracts/`.
+
+*(Was a blocker: the task required throwing a code that did not exist while forbidding the worker from adding it, so a literal implementation had to either fail typecheck or violate the freeze. Raised as E-01.)*
 
 ---
 
@@ -103,6 +107,21 @@ it('says nothing about planning when the policy is absent', async () => {
   const f = await doctor(cfg({}), repo);
   expect(f.filter((x) => x.code.startsWith('PLANNING_'))).toHaveLength(0);
 });
+
+// The existing "every finding carries a remedy" test only asserts length > 0,
+// so one generic string satisfies it for all three. Each remedy must name the
+// thing to change, and they must differ from each other.
+it('gives each planning finding its own actionable remedy', async () => {
+  const remedy = async (planning: object, code: string) =>
+    (await doctor(cfg({ planning }), repo)).find((f) => f.code === code)!.remedy;
+
+  const noReviewers = await remedy({ mode: 'review', agents: 0, selection: 'leader' }, 'PLANNING_NO_REVIEWERS');
+  const smallPanel = await remedy({ mode: 'panel', agents: 1, selection: 'majority' }, 'PLANNING_PANEL_TOO_SMALL');
+
+  expect(noReviewers).toMatch(/agents/i);
+  expect(smallPanel).toMatch(/agents|participant/i);
+  expect(noReviewers).not.toBe(smallPanel);
+});
 ```
 
 - [ ] **Step 2: Run — FAIL**
@@ -118,16 +137,29 @@ it('says nothing about planning when the policy is absent', async () => {
 
 - [ ] **Step 1: Write the failing test**
 
+**The selector is `role: 'plan_reviewer'`**, added to the frozen `Role` union on `main` by the leader. `renderBrief` currently branches leader-vs-everything-else; it gains a third arm. Do not invent a heuristic and do not reuse `observer` — an observer watches a dispute it is not party to, while a reviewer's entire purpose is to speak.
+
 ```ts
-it('renders a plan-reviewer brief distinct from a worker brief', () => {
-  const a = renderBrief(reviewer(), descriptor(), policy(), 'mcp');
-  expect(a).toContain('raise a claim against the plan');
-  expect(a).not.toContain('open a draft PR');
+// Both participants differ ONLY in role, so any difference in output is
+// attributable to the selector and nothing else.
+const reviewer = () => ({ ...base, id: 'planrev', role: 'plan_reviewer' as const });
+const worker   = () => ({ ...base, id: 'planrev', role: 'worker' as const });
+
+it('gives the reviewer instructions the worker does not get', () => {
+  const r = renderBrief(reviewer(), descriptor(), policy(), 'mcp');
+  const w = renderBrief(worker(), descriptor(), policy(), 'mcp');
+
+  expect(r).toContain('raise a claim against the plan');
+  expect(w).not.toContain('raise a claim against the plan');   // ← the half that matters
+
+  expect(r).toContain('You do not implement');
+  expect(w).not.toContain('You do not implement');
 });
 
-it('tells the reviewer it may not implement', () => {
-  expect(renderBrief(reviewer(), descriptor(), policy(), 'mcp'))
-    .toContain('You do not implement');
+it('still gives the worker its own instructions', () => {
+  const w = renderBrief(worker(), descriptor(), policy(), 'mcp');
+  expect(w).toContain('open a draft PR');
+  expect(renderBrief(reviewer(), descriptor(), policy(), 'mcp')).not.toContain('open a draft PR');
 });
 
 it('changes version when the planning policy changes', () => {
@@ -144,9 +176,11 @@ it('changes version when the planning policy changes', () => {
 
 ---
 
-## Task E4 — deferred
+## Task E4 — deferred, and the acceptance boundary
 
 Wiring `validatePlanFrozen` into the daemon's `POST /tasks`, so a task cannot be created while the plan is disputed. **Blocked on Phase D**, which owns `src/daemon/**` and is in flight. Named here so it is not forgotten and not attempted.
+
+**E1–E3 are a prerequisite for E4, not a substitute.** Until this task lands, `validatePlanFrozen` has no caller and §5.6 is not enforced anywhere. Track E is complete when E4 passes an integration test at the daemon boundary: a `POST /tasks` while an unresolved claim targets `'brief'` or `'spec'` is refused with `PLAN_NOT_FROZEN`, and the same request succeeds once that claim resolves. Anything short of that is preparatory work, and describing it otherwise is the failure this plan is meant to reduce.
 
 ---
 
@@ -154,4 +188,18 @@ Wiring `validatePlanFrozen` into the daemon's `POST /tasks`, so a task cannot be
 
 **Spec coverage.** §5.6's three modes → E2 validates their coherence. "The freeze is a gate, not a moment" → E1. "Reviewers must be independent of the author" → E3's template. The enforcement point that would actually block work → E4, deferred with a reason.
 
-**Known gap, stated rather than hidden:** E1–E3 make the gate *available*; nothing calls it until E4. A reviewer should ask whether that is worth shipping, or whether Track E should wait for Phase D entirely. I think it is worth shipping — the logic and its tests are the part most likely to be wrong, and having them settled before the daemon needs them is the same argument Phase 0 made. But it is a real question and I would rather be argued out of it than have it go unnoticed.
+**Known gap, stated rather than hidden:** E1–E3 make the gate *available*; nothing calls it until E4. Ship them as preparatory work — the logic and its tests are the part most likely to be wrong, and settling them before the daemon needs them is the same argument Phase 0 made. But **the goal statement and E4 now say plainly that this is not §5.6 enforcement**, because the original wording claimed it was.
+
+## Review record
+
+Reviewed under spec §5.6 `review` mode by an independent reader (lens: misleading brief), PR #5. **Five claims raised, five upheld, none contested.** All are fixed above:
+
+| | |
+|---|---|
+| E-01 `blocker` | E1 required throwing a code that did not exist while forbidding the worker from adding it — unimplementable either way |
+| E-02 `defect` | E3 called `renderBrief(reviewer(), …)` with no definition of what makes a participant a reviewer |
+| E-03 `defect` | E3's test rendered only the reviewer, so putting reviewer text in the *shared* worker template would pass while giving every worker reviewer instructions |
+| E-04 `risk` | E2 required remedies that "name the capability lost" while its test only checked non-empty |
+| E-05 | the goal claimed §5.6 enforcement that E1–E3 do not deliver |
+
+E-03 is worth singling out: it is a one-sided discrimination test, the exact defect this project's own `AGENTS.md` warns about, in a plan written by the person who wrote that warning.

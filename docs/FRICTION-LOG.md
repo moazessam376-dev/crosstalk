@@ -107,3 +107,17 @@ The leader's own monitor had the identical defect. It was noticed there only in 
 **Changed.** Nothing in the protocol — the protocol was already right, which is the point. But the question *"will Crosstalk have this problem?"* exposed a real gap in the daemon design: a single shared bearer token would have made `from` self-asserted, reintroducing the same collapse one layer down. §6.1 now specifies one token per participant with the daemon deriving `from` from the presenting token, and a payload that sets `from` itself being rejected.
 
 Identity has to be established by the transport. When it isn't, everything downstream that attributes anything — the ledger, adjudicator selection, who owes a rebuttal — is quietly reading fiction.
+
+---
+
+## 10 · The document forbidding the mistake contained the mistake
+
+**What happened.** The maintainer ran the first command handed to them after the merge and it failed immediately: Windows PowerShell 5.1 rejects `&&` as a statement separator.
+
+`docs/CROSS-PLATFORM.md` §2 already said not to do that. The leader wrote that rule, then wrote a `&&` chain into the chat. Checking the repository afterwards found the same pattern in `AGENTS.md` — as the very first command a new contributor is told to run, directly above the sentence *"PowerShell and zsh run the same command."*
+
+**Why the design permitted it.** Nothing verifies documentation against the platforms it claims to support. Tests run in CI on three operating systems; the shell snippets a human copies out of a markdown file run nowhere. Every other check in this project asks whether evidence could distinguish working from broken — the docs had no such check at all.
+
+**Changed.** The commands are unchained, with the reason written next to them so nobody re-chains them for tidiness. `&&` inside `package.json` scripts is left alone: npm runs those through `cmd.exe` and it is correct there. The distinction is that a script is executed by a tool that was told how to run it, and a code block in a document is executed by whatever shell the reader happens to have.
+
+Worth stating plainly, since this is entry ten and the pattern has held every time: **a rule you wrote is not a rule you follow.** This one had been in the repository for hours, was cited by the leader in review of another track's code, and was still violated by the leader in the same session.

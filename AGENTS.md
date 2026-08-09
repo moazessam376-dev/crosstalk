@@ -9,10 +9,15 @@ Your task brief names which plan tasks are yours. The plan holds the context —
 ## Commands
 
 ```bash
-npm ci && npm test && npm run typecheck && npm run build
+npm ci
+npm test
+npm run typecheck
+npm run build
 ```
 
 Everything is an npm script. No `.sh`, no `.bat`, no `Makefile` — PowerShell and zsh run the same command.
+
+**Not chained with `&&`**, deliberately: Windows PowerShell 5.1 rejects `&&` as a statement separator, and it ships on every Windows 10 box. Inside `package.json` scripts `&&` is fine — npm runs those through `cmd.exe` — but anything a human copies out of a document has to work in the shell they actually have.
 
 ## Hard rules
 

@@ -1,3 +1,4 @@
+import './theme.css';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 // The repository typecheck intentionally omits the JSX compiler option; Vite

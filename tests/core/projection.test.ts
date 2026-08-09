@@ -30,11 +30,26 @@ describe('project', () => {
     expect(claim.evidence.some((e) => e.stale === true)).toBe(true);
   });
 
-  it('ignores ts entirely — reordering by ts does not change state', async () => {
+  it('orders by seq while preserving message timestamps', async () => {
     const events = await loadFixture('session-dispute');
-    const scrambled = events.map((e, i) => ({ ...e, ts: new Date(2000, 0, events.length - i).toISOString() }));
-    expect(JSON.stringify(project(scrambled), replacer))
-      .toEqual(JSON.stringify(project(events), replacer));
+    const scrambled = events.map((event, i) => ({
+      ...event,
+      ts: new Date(2000, 0, events.length - i).toISOString(),
+    }));
+
+    const actual = project(scrambled);
+    const expectedMessages = scrambled
+      .filter((event): event is Extract<CrosstalkEvent, { kind: 'message' }> => event.kind === 'message')
+      .sort((a, b) => a.seq - b.seq);
+
+    expect(actual.messages).toEqual(expectedMessages);
+
+    const baseline = project(events);
+    expect(actual.lastSeq).toBe(baseline.lastSeq);
+    expect([...actual.participants.keys()]).toEqual([...baseline.participants.keys()]);
+    expect([...actual.tasks.keys()]).toEqual([...baseline.tasks.keys()]);
+    expect([...actual.claims.keys()]).toEqual([...baseline.claims.keys()]);
+    expect([...actual.decisions.keys()]).toEqual([...baseline.decisions.keys()]);
   });
 
   it.each([

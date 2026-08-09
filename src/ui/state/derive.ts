@@ -44,7 +44,12 @@ function statusForEvent(event: CrosstalkEvent): ParticipantStatus {
 function latestParticipantEvents(events: readonly CrosstalkEvent[]): Map<string, CrosstalkEvent> {
   const latest = new Map<string, CrosstalkEvent>();
   for (const event of events) {
-    const participantId = event.kind === 'participant_left' ? event.participantId : event.from;
+    const participantId =
+      event.kind === 'participant_joined'
+        ? event.participant.id
+        : event.kind === 'participant_left'
+          ? event.participantId
+          : event.from;
     latest.set(participantId, event);
   }
   return latest;
@@ -69,7 +74,8 @@ function projectParticipants(events: readonly CrosstalkEvent[]): ParticipantView
 
 function projectRooms(events: readonly CrosstalkEvent[]): ChannelRoom[] {
   const rooms = new Map<string, ChannelRoom>();
-  const decisions = new Map<string, string | undefined>();
+  const decisionRooms = new Map<string, string | undefined>();
+  const pendingHumanByRoom = new Map<string, Set<string>>();
 
   for (const event of events) {
     if (event.room && !rooms.has(event.room)) {
@@ -95,18 +101,27 @@ function projectRooms(events: readonly CrosstalkEvent[]): ChannelRoom[] {
     if (event.kind === 'decision_opened') {
       const decision = event.decision;
       const awaitingHuman = decision.method === 'human' || decision.ladder?.[decision.currentRung ?? 0] === 'human';
-      decisions.set(decision.id, event.room);
+      decisionRooms.set(decision.id, event.room);
       if (event.room) {
+        if (awaitingHuman) {
+          let pending = pendingHumanByRoom.get(event.room);
+          if (!pending) {
+            pending = new Set<string>();
+            pendingHumanByRoom.set(event.room, pending);
+          }
+          pending.add(decision.id);
+        }
         const room = rooms.get(event.room);
-        if (room) room.awaitingHuman = awaitingHuman;
+        if (room) room.awaitingHuman = (pendingHumanByRoom.get(event.room)?.size ?? 0) > 0;
       }
     }
 
     if (event.kind === 'decision_resolved') {
-      const roomId = decisions.get(event.decisionId);
+      const roomId = decisionRooms.get(event.decisionId);
       if (roomId) {
+        pendingHumanByRoom.get(roomId)?.delete(event.decisionId);
         const room = rooms.get(roomId);
-        if (room) room.awaitingHuman = false;
+        if (room) room.awaitingHuman = (pendingHumanByRoom.get(roomId)?.size ?? 0) > 0;
       }
     }
   }

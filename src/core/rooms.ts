@@ -47,16 +47,21 @@ export function membersOf(id: RoomId, state: HubState): ParticipantId[] {
     case 'dispute': {
       const claimId = room.parts[0] ?? '';
       const claim = state.claims.get(claimId);
-      if (claim === undefined || claim.against === 'brief' || claim.against === 'spec') {
+      if (claim === undefined) {
         return withHuman([]);
+      }
+
+      const parties: ParticipantId[] = [claim.raisedBy];
+      if (claim.against !== 'brief' && claim.against !== 'spec') {
+        parties.push(claim.against);
       }
 
       const observers = [...state.participants.values()]
         .filter((participant) => participant.role === 'worker')
         .map((participant) => participant.id)
-        .filter((participantId) => participantId !== claim.raisedBy && participantId !== claim.against);
+        .filter((participantId) => !parties.includes(participantId));
 
-      return withHuman([claim.raisedBy, claim.against, ...observers]);
+      return withHuman([...parties, ...observers]);
     }
   }
 }

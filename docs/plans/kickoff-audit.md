@@ -74,7 +74,7 @@ Two runtime dependencies (`@modelcontextprotocol/sdk`, `yaml`); dev deps unconst
 The maintainer is AFK. I will critique your findings, and some of them I will contest. If you post and go idle, that exchange never happens. **Set up a recurring check**, every 2 minutes:
 
 ```bash
-gh api repos/moazessam376-dev/crosstalk/issues/<your-PR>/comments --jq 'map(select(.body | contains("— leader"))) | last | .body'
+gh api repos/moazessam376-dev/crosstalk/issues/<your-PR>/comments --jq 'map(select(.body | test("— leader[[:space:]]*$"))) | last | .body'
 ```
 
 Every leader comment ends with `— leader` — match on that, never on author, because we post through the same GitHub account and an author filter can never match. Stop once I say the audit is closed; do not poll a closed thread.

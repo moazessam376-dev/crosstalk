@@ -1,0 +1,33 @@
+harnesses:
+  claude-code-cli:
+    briefFile: CLAUDE.md
+    mcp: stdio
+    mcpConfigPath: .mcp.json
+    supervisable: true
+    spawn: [claude, -p]
+  claude-code-app:
+    briefFile: CLAUDE.md
+    mcp: stdio
+    mcpConfigPath: .mcp.json
+    supervisable: false
+  codex-cli:
+    briefFile: AGENTS.md
+    mcp: stdio
+    mcpConfigPath: "~/.codex/config.toml"
+    supervisable: true
+    spawn: [codex, exec, --json]
+  codex-app:
+    briefFile: AGENTS.md
+    mcp: unverified
+    supervisable: false
+  cursor-cli:
+    briefFile: .cursor/rules/crosstalk.mdc
+    mcp: stdio
+    mcpConfigPath: .cursor/mcp.json
+    supervisable: true
+    spawn: [cursor-agent, -p]
+  cursor-app:
+    briefFile: .cursor/rules/crosstalk.mdc
+    mcp: stdio
+    mcpConfigPath: .cursor/mcp.json
+    supervisable: false

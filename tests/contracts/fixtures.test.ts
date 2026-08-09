@@ -3,13 +3,15 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { CrosstalkEvent } from '../../src/contracts/events.js';
+import { project } from '../../src/core/projection.js';
+import { validateTransition } from '../../src/core/tasks.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 const NAMES = ['session-basic', 'session-dispute'] as const;
 
 const KINDS = new Set([
   'participant_joined', 'participant_left', 'message',
-  'task_created', 'task_state', 'brief_ack',
+  'task_created', 'task_state', 'brief_ack', 'self_review',
   'claim_raised', 'claim_response', 'evidence_added', 'evidence_stale',
   'rebase_notice', 'decision_opened', 'vote_cast', 'decision_resolved',
   'brief_updated',
@@ -20,6 +22,26 @@ async function load(name: string): Promise<{ raw: string; events: CrosstalkEvent
   const events = raw.split('\n').filter(Boolean).map((l) => JSON.parse(l) as CrosstalkEvent);
   return { raw, events };
 }
+
+// The fixtures are folded by `project`, which does not validate — and the
+// validators are tested against hand-built state, which is not a fixture.
+// The two never met, so a golden fixture sat for a day encoding a transition
+// the validators forbid: nothing could set Task.critique, so `submitted` was
+// unreachable and session-basic reached it anyway. This is the seam.
+describe.each(NAMES)('fixture %s is legal per the validators', (name) => {
+  it('every task_state transition passes validateTransition', async () => {
+    const { events } = await load(name);
+    for (let i = 0; i < events.length; i += 1) {
+      const event = events[i]!;
+      if (event.kind !== 'task_state') continue;
+      const before = project(events.slice(0, i));
+      expect(
+        () => validateTransition(event.taskId, event.state, before),
+        `${name} seq ${event.seq}: ${event.taskId} -> ${event.state}`,
+      ).not.toThrow();
+    }
+  });
+});
 
 describe.each(NAMES)('fixture %s', (name) => {
   it('is LF-only', async () => {

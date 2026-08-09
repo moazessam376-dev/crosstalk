@@ -11,6 +11,11 @@ coverage/
 .crosstalk/inbox/
 .crosstalk/outbox/
 
+# Agent instruction files are committed; personal overrides are not.
+CLAUDE.local.md
+AGENTS.local.md
+.claude/settings.local.json
+
 .env
 .env.*
 !.env.example

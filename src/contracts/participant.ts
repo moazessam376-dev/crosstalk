@@ -17,6 +17,12 @@ export interface Participant {
   role: Role;
   /** Key into the harness registry, e.g. "codex-cli", "cursor-app". */
   harness: string;
+  /**
+   * The model behind the harness, e.g. "grok-4.5", "composer-1", "luna-5.6".
+   * A harness does not identify a model — several models run on `cursor-app`
+   * and they do not behave alike, so the ledger aggregates by this field.
+   */
+  model?: string;
   lifecycle: Lifecycle;
   /** Repo-relative path to this participant's worktree. Resolved at runtime. */
   workspace: string;

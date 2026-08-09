@@ -78,6 +78,35 @@ describe('fixtures obey the falsifiability rules', () => {
     }
   });
 
+  // The roster must be derivable from the log alone. An agent replaying it
+  // needs to know that `cursor` is a worker running grok-4.5, not merely that
+  // an id called `cursor` exists.
+  it('every participant_joined carries a full participant, not a bare id', async () => {
+    for (const name of NAMES) {
+      const { events } = await load(name);
+      const joins = events.filter((e) => e.kind === 'participant_joined');
+      expect(joins.length).toBeGreaterThan(0);
+      for (const e of joins) {
+        if (e.kind !== 'participant_joined') continue;
+        expect(typeof e.participant).toBe('object');
+        expect(e.participant.id.length).toBeGreaterThan(0);
+        expect(e.participant.role).toBeTruthy();
+        expect(e.participant.harness).toBeTruthy();
+      }
+    }
+  });
+
+  // Several models run on one harness and they do not behave alike, so the
+  // harness alone cannot identify a participant.
+  it('distinguishes two participants that share a harness', async () => {
+    const { events } = await load('session-dispute');
+    const models = events
+      .filter((e) => e.kind === 'participant_joined')
+      .map((e) => (e.kind === 'participant_joined' ? e.participant.model : undefined));
+    expect(models.every((m) => typeof m === 'string' && m.length > 0)).toBe(true);
+    expect(new Set(models).size).toBe(models.length);
+  });
+
   it('every vote carries a rationale', async () => {
     const { events } = await load('session-dispute');
     const votes = events.filter((e) => e.kind === 'vote_cast');

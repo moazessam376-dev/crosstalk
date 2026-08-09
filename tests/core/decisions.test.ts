@@ -40,6 +40,25 @@ describe('dispute ladder', () => {
   });
 
 
+  it.each(['leader', 'human'] as const)('does not resolve %s from an unlisted vote', (method) => {
+    const d = decision({
+      method,
+      voters: ['leader'],
+      votes: { worker: 'yes' },
+    });
+
+    expect(tally(d)).toBeNull();
+  });
+
+  it.each(['leader', 'human'] as const)('uses the listed authority vote for %s', (method) => {
+    const d = decision({
+      method,
+      voters: ['leader'],
+      votes: { worker: 'yes', leader: 'no' },
+    });
+
+    expect(tally(d)).toBe('no');
+  });
 });
 
 function decision({ method, ...overrides }: Partial<Decision> & { method: DecisionMethod }): Decision {

@@ -85,5 +85,5 @@ function authoritativeVote(decision: Decision): string | null {
     }
   }
 
-  return Object.values(decision.votes)[0] ?? null;
+  return null;
 }

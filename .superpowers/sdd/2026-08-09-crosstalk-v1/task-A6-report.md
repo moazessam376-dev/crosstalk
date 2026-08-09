@@ -82,7 +82,7 @@ Concerns
    - `tests/core/log.test.ts`
 2. The A6 briefâ€™s required verification command passed cleanly, but I did not alter out-of-scope files to make the whole branch typecheck green.
 
-Fix round 1 — review defect follow-up
+Fix round 1 ï¿½ review defect follow-up
 
 Review finding verified:
 - membersOf('dispute:C-1', state) incorrectly returned only @human when claim.against was 'brief' or 'spec'.
@@ -125,3 +125,65 @@ Scope of fix:
 - Updated dispute-room membership so the claimant always remains a party.
 - Non-participant targets ('brief', 'spec') are omitted from the party list, not treated as an empty room.
 - Added the requested coverage test that a task room includes all leaders plus the task assignee.
+
+## Fix round 1 evidence correction
+
+This correction supersedes the malformed command/output formatting in the preceding section.
+
+Reviewed fix commit: 283a420e7b87ff243503fa620d02a71273493ee7
+
+RED
+
+Command: npx.cmd vitest run tests/core/rooms.test.ts
+
+SHA: 02d6c1259318a0a684134f6486d419e8a2a8d642 plus the uncommitted regression test.
+
+Output:
+
+    FAIL rooms > keeps the claimant and uninvolved workers in a brief dispute room
+    expected [ '@human' ] to deeply equal [ 'leader', 'cursor', 'codex', '@human' ]
+
+Reason: the new regression test failed because the parent implementation returned only @human for a claim against brief or spec.
+
+GREEN
+
+Command: npx.cmd vitest run tests/core/rooms.test.ts
+
+SHA: 283a420e7b87ff243503fa620d02a71273493ee7
+
+Output:
+
+    tests/core/rooms.test.ts (6 tests)
+    Test Files 1 passed (1)
+    Tests 6 passed (6)
+
+The committed fix retains the claimant, omits only non-participant targets (brief and spec), includes uninvolved workers as observers, and covers task-room leaders plus the assignee.
+
+## Post-rebase verification
+
+The earlier A6 evidence used pre-rebase commit 283a420e7b87ff243503fa620d02a71273493ee7. After rebasing onto origin/main at bfdeb764b2de9d5fec402e284396f3a0e05d158c, the A6 implementation is present in f84dac70c556b75bf2b56c7741f92acaed8f0755. The contract-aware typecheck fix is committed at cd66aef.
+
+Focused A6 command: npx.cmd vitest run tests/core/rooms.test.ts
+SHA: cd66aef
+Output:
+  tests/core/rooms.test.ts (6 tests)
+  Test Files 1 passed (1)
+  Tests 6 passed (6)
+
+Typecheck command: npm.cmd run typecheck
+SHA: cd66aef
+Output:
+  crosstalk-ai@0.1.0 typecheck
+  tsc -p tsconfig.test.json
+
+Build command: npm.cmd run build
+SHA: cd66aef
+Output:
+  crosstalk-ai@0.1.0 build
+  tsc -p tsconfig.json
+
+Full test command: npm.cmd test
+SHA: cd66aef
+Output:
+  Test Files 7 passed (7)
+  Tests 47 passed (47)

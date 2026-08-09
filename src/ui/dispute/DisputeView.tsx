@@ -85,13 +85,21 @@ function roundFor(claims: readonly ClaimView[]): number {
   return Math.min(3, Math.max(authoredRounds, observedResponses));
 }
 
-function displayState(view: ClaimView): Claim['state'] {
+/**
+ * Must agree with `stateForVerdict` in src/core/projection.ts for every
+ * verdict. The two are independent implementations of one protocol — that
+ * boundary is deliberate, but it has now produced two divergences (a claim
+ * shown `resolved` while the core said `contested`, and `accept` shown
+ * `triaged` while the core said `resolved`). `tests/ui/verdict-parity.test.ts`
+ * asserts they agree across the whole verdict union.
+ */
+export function displayState(view: ClaimView): Claim['state'] {
   if (view.claim.resolution) return 'resolved';
   const response = view.responses.at(-1);
   if (!response) return view.claim.state;
   switch (response.verdict) {
     case 'accept':
-      return 'triaged';
+      return 'resolved';
     case 'clarify':
       return 'clarify';
     case 'concede':

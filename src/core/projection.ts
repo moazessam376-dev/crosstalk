@@ -132,7 +132,8 @@ function emptyState(): HubState {
   };
 }
 
-function stateForVerdict(verdict: ClaimVerdict): Claim['state'] {
+/** Exported so tests can assert the UI's independent mapping agrees. */
+export function stateForVerdict(verdict: ClaimVerdict): Claim['state'] {
   switch (verdict) {
     case 'accept':
       return 'resolved';

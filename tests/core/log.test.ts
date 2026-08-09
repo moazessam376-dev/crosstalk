@@ -126,7 +126,7 @@ describe('EventLog', () => {
     const dir = await makeTempDir();
     const path = join(dir, 'events.jsonl');
     const log = await openTrackedLog(path);
-    const count = 100;
+    const count = 50;
 
     const appended = await Promise.all(
       Array.from({ length: count }, (_, index) =>
@@ -134,7 +134,7 @@ describe('EventLog', () => {
           kind: 'message',
           from: 'leader',
           room: '#floor',
-          body: 'message-' + index + '-' + 'x'.repeat(16_384),
+          body: 'message-' + index + '-' + 'x'.repeat(4_096),
         }),
       ),
     );

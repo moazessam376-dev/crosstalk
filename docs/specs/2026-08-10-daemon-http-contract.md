@@ -2,11 +2,13 @@
 
 Phase D's Phase 0. Freezing types before three tracks started produced zero interface churn across ~50 commits; this does the same one level up, so the four Phase D consumers — the server, the SSE client in the hub, the MCP server and the CLI — assert against the same wire examples rather than against each other's implementations.
 
-**Status:** proposed, not frozen. Awaiting leader review.
+**Status:** proposed, not frozen. Drafted against `main` at `0b16176`, which carries the leader's rulings on all thirteen acknowledgement items and the `ErrorCode` fix from `40b5360`.
 **Consumes (frozen):** `src/contracts/**`, `src/core/**`, `src/workspace/**`.
-**Produces:** this document, `src/daemon/contract.ts` (types + status map), `tests/daemon/fixtures/**` (golden wire examples).
+**Produces:** this document, `src/daemon/contract.ts` (types + status map), `src/daemon/errors.ts` (`DaemonErrorCode`), `tests/daemon/fixtures/**` (golden wire examples).
 
 Spec references: §6.1 daemon, §6.2 MCP tools, §6.3 shell floor, §9 human participation, §10 hub UI, §15 failure modes.
+
+One thing is still open and it blocks a route: **no event kind can carry a `CritiqueRecord`**, so task gate 2 cannot be satisfied through the daemon and `POST /tasks/:id/submit` cannot be built. Claim CT-D-1, §7.
 
 ---
 
@@ -30,7 +32,7 @@ Two consequences run through every route below:
 | Port | `0` (ephemeral) unless `opts.port` is given |
 | Discovery | `.crosstalk/daemon.json`, mode `0o600` where supported |
 | Lock | `.crosstalk/daemon.lock` via `fs.open(path, 'wx')`, contents = pid; a lock whose pid is gone is reclaimed |
-| Tokens | one file per participant under `.crosstalk/tokens/`, mode `0o600` where supported |
+| Tokens | one file per participant under `.crosstalk/tokens/`, mode `0o600` where supported, §2.3 |
 | Shutdown | `SIGINT`, `SIGTERM`, **and** `POST /shutdown` — CROSS-PLATFORM §3: `SIGTERM` is not delivered on Windows the way it is elsewhere, so the daemon must not rely on a signal arriving at all |
 
 `.crosstalk/daemon.json`:
@@ -56,7 +58,7 @@ export interface DaemonHandle {
 export function startDaemon(opts: { repo: string; port?: number }): Promise<DaemonHandle>;
 ```
 
-**Deviation from `plan:1281`, flagged for ruling.** The plan's signature returns `token: string`. A single token is the shape friction-log entry 9 identifies as making `from` self-asserted, so I read the plan's signature as predating the §6.1 amendment rather than overruling it. D1's acceptance criterion — a request without the bearer token gets 401 — holds either way.
+The plan originally returned `token: string`; a single token is the shape friction-log entry 9 identifies as making `from` self-asserted. Corrected in `plan:1281` at `40b5360`.
 
 A second `startDaemon` against the same repo rejects with a `DaemonError` carrying `code: 'DAEMON_ALREADY_RUNNING'` and `url` set to the live daemon's address, read from `daemon.json` (spec §15: "second process refuses and prints the live address").
 
@@ -65,6 +67,12 @@ A second `startDaemon` against the same repo rejects with a `DaemonError` carryi
 The daemon appends `participant_joined` the first time a participant authenticates within a daemon lifetime, taking the whole `Participant` from `crosstalk.yaml`. On clean shutdown it appends `participant_left` for each participant that joined.
 
 Clients never post either kind. Membership is configuration the daemon reads, not a claim a client makes — the same reasoning as `from`.
+
+### 2.3 Token filenames
+
+Spec §6.1 puts tokens at `.crosstalk/tokens/<id>`, but `HUMAN_ID` is `'@human'` and `PARTICIPANT_ID_PATTERN` — `/^[a-z0-9][a-z0-9-]{0,23}$/` — rejects it.
+
+**Token files are named by the id with a leading `@` stripped**, so `@human` writes to `.crosstalk/tokens/human`, and **`doctor` reserves the plain id `human`.** Without the reservation a participant literally named `human` shares the human's token file, and two participants behind one credential is friction-log entry 9 in a new costume.
 
 ---
 
@@ -85,14 +93,16 @@ Every route requires authentication except `GET /health` and the static UI shell
 
 ## 4. Write routes
 
-**`POST /events` is not a general append.** This is the largest decision in the contract and the one most worth disagreeing with.
+**`POST /events` is not a general append.** Ratified in `plan:1275`–D1 at `40b5360` and recorded as friction-log entry 12.
 
-`plan:1283` asks for `POST /events` that "appends and returns the stamped event". Taken literally that is a hole straight through Track A: `claim_raised` carries a whole `Claim` — `id`, `state`, `rounds`, `falsifier` — so a client posting that kind builds its own claim and never reaches `validateRaise`; `task_state` posted directly never reaches `validateTransition`. Every falsifier rule and both task gates would be enforced only by clients choosing to be polite, which inverts spec §4.1's reason for putting validators at the API boundary instead of in prompts.
+The plan originally asked for `POST /events` that "appends and returns the stamped event". Taken literally that is a hole straight through Track A: `claim_raised` carries a whole `Claim` — `id`, `state`, `rounds`, `falsifier` — so a client posting that kind builds its own claim and never reaches `validateRaise`; `task_state` posted directly never reaches `validateTransition`. Every falsifier rule and both task gates would be enforced only by clients choosing to be polite, which inverts spec §4.1's reason for putting validators at the API boundary instead of in prompts.
 
 So:
 
-- **`POST /events` accepts `kind: "message"` and nothing else.** `message` carries no invariant a validator defends. Any other `kind` → `422 EVENT_KIND_NOT_APPENDABLE` naming the route that owns it.
+- **`POST /events` accepts `kind: "message"` and nothing else.** `message` carries no invariant a validator defends.
 - **Every protocol-bearing kind gets a typed route** taking the validator's own input type, minus author fields. The daemon assembles the event. Id assignment stays server-side where `nextClaimId` already lives.
+
+**The rejection names the route.** Any other `kind` returns `422 EVENT_KIND_NOT_APPENDABLE` whose message is `"claim_raised is not directly appendable — use POST /claims"`, resolved from a table that has an entry for every `EventKind`. A generic 400 would leave an agent that has drifted onto the general endpoint guessing, and the failure mode worth defending against is not a hostile client but a capable one that found the wrong door and got an unhelpful answer. The mapping is one exported record, **total over `EventKind`**, so a kind added to the contract without a route fails typecheck.
 
 ### 4.1 Route table
 
@@ -218,7 +228,7 @@ Heartbeat every 15 s, as a comment line that `EventSource` ignores:
 | `.crosstalk/state.json` snapshot (spec §6.1) | **Out of v1.** A pure cache the log rebuilds. A cache that can disagree with its source eventually lies to somebody, and restart cost is not yet a problem worth a second source of truth. |
 | Heartbeat route (implied by spec §10.1's "status comes from heartbeats") | **Out of v1.** `status` derives from a pending `GET /await` plus last-event time. Where that is not enough the badge says nothing rather than guessing — spec §10.1 line 495 already makes that argument for the tier badge. |
 | `evidence_stale` emission (`plan:1102`, `plan:1336`) | **In D1**, triggered on daemon start and on `rebase_notice`, not on a timer. Spec §15 says "SHA ancestry check on every merge"; a periodic sweep spends `git merge-base` calls to discover nothing on a quiet repo. |
-| `POST /tasks/:id/submit` | **Blocked** on claim CT-D-1 — the log has no event that can carry a `CritiqueRecord`, so gate 2 is unsatisfiable through the daemon. Full statement and evidence on the PR. The route is specified above and cannot be implemented until the contract gains a kind that sets `Task.critique`. |
+| `POST /tasks/:id/submit` | **Blocked** on claim CT-D-1 — the log has no event that can carry a `CritiqueRecord`, so gate 2 is unsatisfiable through the daemon. Full statement and evidence on the PR. The route is specified above and cannot be implemented until the contract gains a kind that sets `Task.critique`. Once it does, the route appends that kind and then the `task_state` transitions the critique unblocks. |
 
 ---
 
@@ -230,9 +240,9 @@ One envelope, two namespaces. This avoids editing frozen `src/contracts/errors.t
 { "error": { "domain": "protocol", "code": "MISSING_FALSIFIER", "message": "claim requires a falsifier" } }
 ```
 
-`domain: "protocol"` → `code` is an `ErrorCode` from the frozen contract. `domain: "daemon"` → `code` is a `DaemonErrorCode`, defined in `src/daemon/contract.ts`, which Phase D owns.
+`domain: "protocol"` → `code` is an `ErrorCode` from the frozen contract. `domain: "daemon"` → `code` is a `DaemonErrorCode`, defined in `src/daemon/errors.ts`, which Phase D owns. Ruled at acknowledgement item 3.
 
-`ProtocolError` is the protocol's own vocabulary — the ladder, the ledger and the agent-facing error text all read it. A 401 is not a protocol event: a participant that cannot authenticate has not made a claim about anything. Alternative (a) from the acknowledgement — adding transport codes to the frozen `ErrorCode` — remains open if you prefer it.
+`ProtocolError` is the protocol's own vocabulary — the ladder, the ledger and the agent-facing error text all read it. A 401 is not a protocol event: a participant that cannot authenticate has not made a claim about anything.
 
 ### 8.1 Protocol codes → HTTP status
 
@@ -246,10 +256,13 @@ The rule: **422 means the payload is not acceptable; 409 means the payload is fi
 | `NON_TERMINAL_LADDER`, `VOTE_WITHOUT_RATIONALE` | 422 |
 | `GATE_NOT_ACKNOWLEDGED`, `GATE_NOT_SELF_REVIEWED` | 409 |
 | `ILLEGAL_TRANSITION`, `UNRESOLVED_CLAIMS` | 409 |
-| `NOT_ELIGIBLE_VOTER` | 403 |
+| `ILLEGAL_CLAIM_RESPONSE` | 409 |
+| `NOT_ELIGIBLE_VOTER`, `NOT_CLAIM_RESPONDER` | 403 |
 | `UNKNOWN_CLAIM`, `UNKNOWN_TASK`, `UNKNOWN_DECISION`, `UNKNOWN_PARTICIPANT` | 404 |
 
-The map is one exported `Record<ErrorCode, number>`, and **a test asserts it is total over `ErrorCode`**. A code added to the frozen contract without a status then fails typecheck rather than falling through to 500 in production.
+The two codes added at `40b5360` land on either side of the rule and demonstrate why it is worth having: `NOT_CLAIM_RESPONDER` is the wrong participant answering — an authorisation failure, 403, alongside `NOT_ELIGIBLE_VOTER`. `ILLEGAL_CLAIM_RESPONSE` is the right participant with a verdict the claim's current state does not permit — the payload is fine and the world is not ready for it, 409, alongside `ILLEGAL_TRANSITION`. Collapsing them into one code, as `ClaimResponseError` did, would have forced one status onto two different failures.
+
+The map is one exported `Record<ErrorCode, number>`, and **a test asserts it is total over `ErrorCode`**. A code added to the frozen contract without a status then fails typecheck rather than falling through to 500 in production. Both codes above arrived after this contract was drafted, which is the case the totality check exists for.
 
 ### 8.2 Daemon codes
 
@@ -261,18 +274,13 @@ The map is one exported `Record<ErrorCode, number>`, and **a test asserts it is 
 | `NOT_A_ROOM_MEMBER` | 403 | read or post to a room `isMember` denies |
 | `ROLE_NOT_PERMITTED` | 403 | non-leader on a leader-only route |
 | `UNKNOWN_ROUTE` | 404 | no route matched |
-| `CLAIM_RESPONSE_NOT_AUTHORIZED` | 409 | `ClaimResponseError` — **provisional**, §8.3 |
 | `DAEMON_ALREADY_RUNNING` | 409 | lock held by a live pid; carries `url` |
 | `PAYLOAD_TOO_LARGE` | 413 | body over 1 MiB |
-| `EVENT_KIND_NOT_APPENDABLE` | 422 | `POST /events` with a kind other than `message` |
+| `EVENT_KIND_NOT_APPENDABLE` | 422 | `POST /events` with a kind other than `message`; message names the owning route |
 
-### 8.3 One provisional mapping
+`DAEMON_ALREADY_RUNNING` is the one code D1's step 1 names by hand, and it is a daemon code rather than a protocol one: a process that could not take the lock has not violated the protocol, it has failed to start.
 
-`src/core/claims.ts:147` throws `ClaimResponseError`, a plain `Error` subclass with no `ErrorCode`, when the wrong participant responds to a claim (`validateResponseAuthority`, lines 87–136). Every other Track A refusal carries a code. The daemon's only way to recognise it is `error.name === 'ClaimResponseError'` — a string match on a class name, which survives no refactor.
-
-Mapped to `409 CLAIM_RESPONSE_NOT_AUTHORIZED` in the daemon namespace, flagged as provisional. It looks like a Track A gap rather than a Phase D one.
-
-### 8.4 Consumers
+### 8.3 Consumers
 
 **MCP (D3).** Any non-2xx becomes an MCP tool **error** — never a successful result containing an error string — with message `"<CODE>: <message>"`. D3's criterion, that an empty `falsifier` returns an error naming `MISSING_FALSIFIER`, falls out of the mapping rather than being special-cased.
 
@@ -346,12 +354,27 @@ Every fixture below was chosen because it can fail. Listed with what a broken im
 
 ---
 
-## 11. Open for ruling
+## 11. Decision record
 
-1. `startDaemon` returning `tokens` rather than one `token` (§2.1) — edits a published interface in the plan.
-2. Daemon error namespace vs. adding transport codes to frozen `ErrorCode` (§8).
-3. `POST /events` restricted to `message` (§4) — the validator-bypass fix.
-4. Uniform `{ events: [...] }` on writes (§4.2) — generalises `plan:1283`.
-5. Golden fixtures under `tests/daemon/fixtures/` rather than frozen `tests/fixtures/` (§10).
-6. Phase D parallelism: the plan forbids it, the brief invites it. Proposed shape: **D1, then D2 ∥ D3, then D4** — D2 and D3 both need a running daemon at test time, which a contract cannot substitute for.
-7. Claim CT-D-1 (§7) — no event kind can carry a `CritiqueRecord`, so gate 2 is unsatisfiable through the daemon and `submit` cannot be built.
+Settled before this draft, on the acknowledgement:
+
+| # | Decision | Where it landed |
+|---|---|---|
+| 1 | Phase D runs **D1, then D2 ∥ D3, then D4** | `plan:1275` at `40b5360` |
+| 2 | `startDaemon` returns `tokens: ReadonlyMap<…>` | `plan:1281` at `40b5360`, §2.1 |
+| 3 | Transport failures get a `DaemonErrorCode` namespace, not new `ErrorCode`s | §8 |
+| 4 | `ClaimResponseError` → `NOT_CLAIM_RESPONDER` + `ILLEGAL_CLAIM_RESPONSE` | `src/core/claims.ts` at `40b5360`, §8.1 |
+| 5 | `POST /events` restricted to `message`, rejection names the owning route | D1 step 1 at `40b5360`, §4 |
+| 6 | `since` is exclusive on both paths | §5.1 |
+| 7 | SSE auth is a cookie; no `event:` name; heartbeats are `:` comments | §3, §6 |
+| 8 | Token filenames strip `@`; `doctor` reserves the id `human` | §2.3 |
+| 9 | Golden wire fixtures live under `tests/daemon/fixtures/` | §10 |
+| 10 | "Addresses me" excludes the caller's own events | §5.3 |
+| 11 | `evidence_stale` fires on start and `rebase_notice`, never on a timer | §7 |
+| 12 | No `state.json` snapshot in v1 | §7 |
+| 13 | `down` matches participant ids from `crosstalk.yaml`, never directory contents | D4 |
+
+Open, and raised by this draft rather than by the acknowledgement:
+
+- **Uniform `{ events: [...] }` on every write route** (§4.2). Generalises the plan's "returns the stamped event", because `ack`, `vote` and `shutdown` each legitimately produce more than one event in one request. Flagged rather than assumed.
+- **Claim CT-D-1** (§7). No event kind can carry a `CritiqueRecord`, so `Task.critique` is unreachable from the log, task gate 2 rejects every submission, and both golden fixtures contain a transition the validated write path could not have produced. `POST /tasks/:id/submit` and the MCP `submit` tool cannot be built until this is resolved.

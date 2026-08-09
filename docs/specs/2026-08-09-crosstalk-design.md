@@ -81,11 +81,14 @@ Dependencies point one way. The daemon may be killed at any time; the log surviv
   id: string                 // "leader" | "cursor" | "codex" | ...
   role: "leader" | "worker" | "observer" | "human"
   harness: string            // key into the harness registry
+  model?: string             // "grok-4.5" | "luna-5.6" | ... — see below
   lifecycle: "attached" | "supervised"
-  workspace: string          // absolute or repo-relative path (a git worktree)
+  workspace: string          // repo-relative path to a git worktree, never the repo root
   transport?: "mcp" | "shell" | "file"   // auto-detected by `doctor`; set only to override
 }
 ```
+
+**A harness does not identify a model.** Several models run on `cursor-app`, and they do not behave alike — one may be fast and inventive with weak self-verification while another is slow and reliably honest. That difference decides whether you re-run an agent's evidence, so `model` is a separate field and the ledger (§12) aggregates by it. `participant_joined` carries the whole `Participant`, not just an id, so the roster is derivable from the log alone.
 
 `transport` is normally omitted from config. `crosstalk doctor` probes the harness — MCP registration writable and accepted → tier 1, shell reachable → tier 2, otherwise tier 3 — and records the result. Setting it explicitly pins the tier and skips the probe.
 
@@ -297,7 +300,7 @@ A required field invites `falsifier: "if it didn't work"`. Three options were co
 
 ### 6.2 MCP tools
 
-Ten tools. The surface is small on purpose — large tool surfaces degrade selection accuracy.
+Twelve tools. The surface is small on purpose — large tool surfaces degrade selection accuracy.
 
 | Tool | Notes |
 |---|---|
@@ -311,6 +314,10 @@ Ten tools. The surface is small on purpose — large tool surfaces degrade selec
 | `respond_to_claim(claim_id, verdict, ...)` | required fields vary by verdict |
 | `open_decision({...})` | generic resolver |
 | `cast(decision_id, option, rationale)` | rationale required |
+| `roster()` | who is here: id, role, harness, model, live status |
+| `board()` | every task: id, title, assignee, state, branch — **metadata only** |
+
+`roster` and `board` answer "who is working on what" without giving every agent read access to every room. At three participants that distinction hardly matters; at a dozen, full message visibility is a noise flood while the metadata stays useful. `board` deliberately returns no message bodies.
 
 `await_turn` returns after at most ~50s with `{idle:true}` regardless of the requested timeout, to stay inside harness tool timeouts. The agent's brief instructs it to call again. An idle cycle costs roughly a tool call's worth of tokens, which is far cheaper than the equivalent `gh pr view` poll.
 
@@ -408,7 +415,8 @@ MCP availability in desktop builds varies by vendor and version and **must be ve
 
 ## 7. Git model
 
-- **One stable worktree per participant** at `.crosstalk/worktrees/<id>`, created by `crosstalk init`. Per-task worktrees were rejected: a warm attached agent — and every GUI agent — is pinned to a working directory and cannot follow one.
+- **One stable worktree per worker** at `.crosstalk/worktrees/<id>`, created by `crosstalk init` for **every** worker including the first. Per-task worktrees were rejected: a warm attached agent — and every GUI agent — is pinned to a working directory and cannot follow one.
+- **The primary checkout is the leader's and no worker may occupy it.** This is stated explicitly because it is not inferable: told only "one worktree per participant", a worker that branches in place in the repo root has followed the instruction and still produced the wrong outcome — observed on the first day of building Crosstalk with Crosstalk. Two agents in one checkout means each sees the other's uncommitted edits as its own, and neither can switch branches without yanking the tree out from under the other.
 - Crosstalk owns branch checkout within each worktree: `ct/<task-id>-<slug>`.
 - The leader owns merge order. Merges to the main branch are serial.
 - Conflicts are not auto-resolved. A conflicting merge emits `rebase_notice` to the assignee's task room and returns the task to `in_progress`, with prior evidence marked stale (§5.4).
@@ -585,7 +593,7 @@ mirror:
 
 Validated at startup by `crosstalk doctor`.
 
-**Rejects** — a non-terminal last ladder rung; `supervised` on a GUI harness; a worktree path outside the repo; an unwritable `briefFile`; duplicate participant ids; zero or multiple participants with `role: leader`.
+**Rejects** — a non-terminal last ladder rung; `supervised` on a GUI harness; a worktree path outside the repo; **a worker whose `workspace` resolves to the repo root**; an unwritable `briefFile`; duplicate participant ids, including ids differing only by case; zero or multiple participants with `role: leader`.
 
 **Warns** — fewer than two workers, so `third_agent` will be skipped (§5.3); mirror enabled with no remote or no GitHub credential; a brief file whose version is stale or hand-edited; a harness whose `mcp` probe failed, naming the tier it fell back to.
 

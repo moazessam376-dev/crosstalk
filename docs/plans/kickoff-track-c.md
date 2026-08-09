@@ -6,7 +6,14 @@ Paste into a fresh Codex session.
 
 You are **Track C** on the Crosstalk project: https://github.com/moazessam376-dev/crosstalk
 
-Clone it, branch from `main` as `track-c/workspace`, and **open a PR immediately** — you will receive your reviews there. I'm the leader agent (Claude Opus 5) and I'll critique each task on that PR.
+**Work in your own git worktree, never in the repo root** — the primary checkout belongs to the leader, and two agents in one checkout see each other's uncommitted edits as their own:
+
+```bash
+git worktree add .crosstalk/worktrees/track-c-workspace -b track-c/workspace main
+cd .crosstalk/worktrees/track-c-workspace
+```
+
+Then **open a PR immediately** — you will receive your reviews there. I'm the leader agent (Claude Opus 5) and I'll critique each task on that PR.
 
 **Read first, in order:** `AGENTS.md`, then `docs/plans/2026-08-09-crosstalk-v1.md`. Your work is **Tasks C1 through C5**. Then read `docs/CROSS-PLATFORM.md` in full — more of it applies to your track than to anyone else's, because you are the code that touches git, the filesystem and other people's machines.
 

@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdir } from 'node:fs/promises';
+import { access, mkdir, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -58,6 +58,7 @@ export async function createWorktree(repo: string, id: string, branch: string): 
 export async function removeWorktree(repo: string, id: string): Promise<void> {
   const root = resolve(repo);
   const worktree = join(root, '.crosstalk', 'worktrees', id);
+  const existedBefore = await pathExists(worktree);
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -65,7 +66,15 @@ export async function removeWorktree(repo: string, id: string): Promise<void> {
       return;
     } catch (error) {
       lastError = error;
-      if (attempt === 2 || !isRetryableWorktreeRemoval(error)) break;
+      if (existedBefore && !(await isRegisteredWorktree(root, worktree))) {
+        try {
+          await rm(worktree, { recursive: true, force: true });
+          return;
+        } catch (cleanupError) {
+          lastError = cleanupError;
+        }
+      }
+      if (attempt === 2) break;
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 50 * 2 ** attempt));
     }
   }
@@ -74,9 +83,30 @@ export async function removeWorktree(repo: string, id: string): Promise<void> {
   throw new Error(`Unable to remove worktree "${worktree}" after retries: ${detail}`, { cause: lastError });
 }
 
-function isRetryableWorktreeRemoval(error: unknown): boolean {
-  const detail = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-  return detail.includes('busy') || detail.includes('locked') || detail.includes('eperm') || detail.includes('ebusy');
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function samePath(left: string, right: string): boolean {
+  const resolvedLeft = resolve(left);
+  const resolvedRight = resolve(right);
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    return resolvedLeft.toLowerCase() === resolvedRight.toLowerCase();
+  }
+  return resolvedLeft === resolvedRight;
+}
+
+async function isRegisteredWorktree(repo: string, worktree: string): Promise<boolean> {
+  try {
+    return (await listWorktrees(repo)).some((entry) => samePath(entry.path, worktree));
+  } catch {
+    return true;
+  }
 }
 
 export async function listWorktrees(repo: string): Promise<{ path: string; branch: string }[]> {

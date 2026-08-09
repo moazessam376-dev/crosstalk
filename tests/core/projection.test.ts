@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { project } from '../../src/core/projection.js';
 import type { CrosstalkEvent } from '../../src/contracts/events.js';
+import type { ClaimVerdict } from '../../src/contracts/claim.js';
 
 async function loadFixture(name: string): Promise<CrosstalkEvent[]> {
-  const raw = await readFile(`tests/fixtures/${name}.jsonl`, 'utf8');
+  const raw = await readFile(join('tests', 'fixtures', `${name}.jsonl`), 'utf8');
   return raw.split('\n').filter(Boolean).map((l) => JSON.parse(l) as CrosstalkEvent);
 }
 
@@ -34,8 +36,52 @@ describe('project', () => {
     expect(JSON.stringify(project(scrambled), replacer))
       .toEqual(JSON.stringify(project(events), replacer));
   });
+
+  it.each([
+    ['accept', 'upheld'],
+    ['concede', 'withdrawn'],
+    ['amend', 'superseded'],
+  ] as const)('resolves %s claim responses as %s', (verdict, resolution) => {
+    const claim = project(claimResponseEvents(verdict)).claims.get('C-1');
+    expect(claim?.state).toBe('resolved');
+    expect(claim?.resolution).toBe(resolution);
+  });
 });
 
 function replacer(_k: string, v: unknown) {
   return v instanceof Map ? Object.fromEntries([...v.entries()].sort()) : v;
+}
+
+function claimResponseEvents(verdict: ClaimVerdict): CrosstalkEvent[] {
+  return [
+    {
+      seq: 1,
+      ts: '2026-08-09T00:00:00.000Z',
+      kind: 'claim_raised',
+      from: 'leader',
+      claim: {
+        id: 'C-1',
+        raisedBy: 'leader',
+        against: 'codex',
+        target: 'src/example.ts:1',
+        assertion: 'Example claim',
+        severity: 'defect',
+        falsifier: 'If wrong, the focused projection test shows a different resolution.',
+        evidence: [],
+        state: 'open',
+        rounds: 0,
+      },
+    },
+    {
+      seq: 2,
+      ts: '2026-08-09T00:00:01.000Z',
+      kind: 'claim_response',
+      from: 'codex',
+      claimId: 'C-1',
+      verdict,
+      rationale: 'Focused projection response.',
+      falsifier: 'If wrong, this event will not project to the expected terminal resolution.',
+      evidence: [],
+    },
+  ];
 }

@@ -13,6 +13,8 @@
   },
   "files": [
     "dist",
+    "src/harness/harnesses.yaml",
+    "src/harness/templates",
     "README.md",
     "LICENSE"
   ],

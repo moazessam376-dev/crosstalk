@@ -98,6 +98,25 @@ describe('doctor', () => {
     expect(findings).toContainEqual(expect.objectContaining({ level: 'reject', code: 'SUPERVISED_GUI_HARNESS' }));
   }, 60_000);
 
+  it('rejects a worker whose workspace resolves to the repo root', async () => {
+    const findings = await doctor(cfg({
+      participants: [
+        participant('leader', 'leader'),
+        participant('codex', 'worker', { workspace: '.' }),
+      ],
+    }), repo);
+
+    expect(findings).toContainEqual(expect.objectContaining({ level: 'reject', code: 'WORKER_IN_REPO_ROOT' }));
+  }, 60_000);
+
+  it('allows the leader to occupy the repo root', async () => {
+    const findings = await doctor(cfg({
+      participants: [participant('leader', 'leader', { workspace: '.' })],
+    }), repo);
+
+    expect(findings.filter((finding) => finding.code === 'WORKER_IN_REPO_ROOT')).toHaveLength(0);
+  }, 60_000);
+
   it('rejects zero or multiple leaders', async () => {
     expect(await doctor(cfg({ leaders: 0 }), repo))
       .toContainEqual(expect.objectContaining({ code: 'LEADER_COUNT' }));

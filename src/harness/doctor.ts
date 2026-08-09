@@ -1,7 +1,7 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, readFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import {
   PARTICIPANT_ID_PATTERN,
@@ -142,8 +142,41 @@ async function originConfigured(repoRoot: string): Promise<boolean> {
   }
 }
 
-function githubCredentialConfigured(): boolean {
-  return Boolean(process.env.GITHUB_TOKEN || process.env.GH_TOKEN);
+async function findExecutable(name: string): Promise<string | undefined> {
+  const pathValue = process.env.PATH ?? process.env.Path ?? '';
+  const extensions = process.platform === 'win32'
+    ? ['', ...(process.env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';')]
+    : [''];
+
+  for (const directory of pathValue.split(delimiter)) {
+    for (const extension of extensions) {
+      const candidate = join(directory || '.', `${name}${extension}`);
+      try {
+        await access(candidate, constants.F_OK);
+        return candidate;
+      } catch {
+        // Keep looking on PATH.
+      }
+    }
+  }
+  return undefined;
+}
+
+async function githubCredentialConfigured(cwd: string): Promise<boolean> {
+  if (process.env.GITHUB_TOKEN || process.env.GH_TOKEN) return true;
+
+  const gh = await findExecutable('gh');
+  if (gh === undefined) return false;
+  try {
+    await execFile(gh, ['auth', 'status'], {
+      cwd,
+      shell: process.platform === 'win32' && gh.toLowerCase().endsWith('.cmd'),
+      windowsHide: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function checkPrerequisites(
@@ -362,7 +395,7 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
         'Add a GitHub origin remote or disable mirror.github.enabled; the local protocol will continue without mirroring.',
       ));
     }
-    if (!githubCredentialConfigured()) {
+    if (!(await githubCredentialConfigured(repoRoot))) {
       findings.push(finding(
         'warn',
         'MIRROR_NO_CREDENTIAL',

@@ -1,12 +1,14 @@
 import type { CrosstalkEvent } from '../../contracts/events.js';
 import type { Participant, Tier } from '../../contracts/participant.js';
+import { FLOOR } from '../../contracts/room.js';
 
 export type ParticipantStatus = 'awaiting_turn' | 'working' | 'offline';
 export type ChannelKind = 'floor' | 'task' | 'dispute' | 'direct';
 
 export interface ParticipantView extends Pick<Participant, 'id' | 'role'> {
   status: ParticipantStatus;
-  tier: Tier;
+  /** Absent when the participant's transport has not been probed. */
+  tier?: Tier;
 }
 
 export interface ChannelRoom {
@@ -67,13 +69,20 @@ function projectParticipants(events: readonly CrosstalkEvent[]): ParticipantView
       id: participant.id,
       role: participant.role,
       status: latest.has(participant.id) ? statusForEvent(latest.get(participant.id)!) : 'awaiting_turn',
-      tier: participant.transport ?? 'file',
+      // Undefined means "not probed" and must stay undefined — `Tier` has no
+      // unknown member, so a defaulted `file` is indistinguishable from a
+      // probed `file`. Spec §10.1; the rail omits the badge entirely.
+      tier: participant.transport,
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 function projectRooms(events: readonly CrosstalkEvent[]): ChannelRoom[] {
   const rooms = new Map<string, ChannelRoom>();
+  // #floor is seeded, not derived. It must exist before anyone has spoken, so
+  // a log whose participants never posted there would otherwise contain no
+  // evidence it exists at all. Spec §4.2. Every other room stays event-derived.
+  rooms.set(FLOOR, { id: FLOOR, kind: channelKind(FLOOR) });
   const decisionRooms = new Map<string, string | undefined>();
   const pendingHumanByRoom = new Map<string, Set<string>>();
 

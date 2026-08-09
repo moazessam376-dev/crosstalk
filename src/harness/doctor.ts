@@ -162,20 +162,29 @@ async function findExecutable(name: string): Promise<string | undefined> {
   return undefined;
 }
 
-async function githubCredentialConfigured(cwd: string): Promise<boolean> {
-  if (process.env.GITHUB_TOKEN || process.env.GH_TOKEN) return true;
+type GithubCredentialStatus = 'configured' | 'missing' | 'unknown';
 
+function isWindowsShellShimWithSpaces(executable: string): boolean {
+  const lower = executable.toLowerCase();
+  return process.platform === 'win32'
+    && (lower.endsWith('.cmd') || lower.endsWith('.bat'))
+    && executable.includes(' ');
+}
+
+async function githubCredentialStatus(cwd: string): Promise<GithubCredentialStatus> {
+  if (process.env.GITHUB_TOKEN || process.env.GH_TOKEN) return 'configured';
   const gh = await findExecutable('gh');
-  if (gh === undefined) return false;
+  if (gh === undefined) return 'missing';
+  if (isWindowsShellShimWithSpaces(gh)) return 'unknown';
   try {
     await execFile(gh, ['auth', 'status'], {
       cwd,
       shell: process.platform === 'win32' && gh.toLowerCase().endsWith('.cmd'),
       windowsHide: true,
     });
-    return true;
+    return 'configured';
   } catch {
-    return false;
+    return 'missing';
   }
 }
 
@@ -395,12 +404,20 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
         'Add a GitHub origin remote or disable mirror.github.enabled; the local protocol will continue without mirroring.',
       ));
     }
-    if (!(await githubCredentialConfigured(repoRoot))) {
+    const credentialStatus = await githubCredentialStatus(repoRoot);
+    if (credentialStatus === 'missing') {
       findings.push(finding(
         'warn',
         'MIRROR_NO_CREDENTIAL',
         'GitHub mirroring is enabled but no GITHUB_TOKEN or GH_TOKEN is configured.',
         'Authenticate the gh CLI or set GITHUB_TOKEN/GH_TOKEN; otherwise disable mirroring and use the local protocol.',
+      ));
+    } else if (credentialStatus === 'unknown') {
+      findings.push(finding(
+        'warn',
+        'MIRROR_CREDENTIAL_UNKNOWN',
+        'GitHub mirroring is enabled but the gh CLI credential could not be verified because its Windows command shim path contains spaces.',
+        'Set GITHUB_TOKEN/GH_TOKEN or use a gh.exe installation on PATH; otherwise disable mirroring and use the local protocol.',
       ));
     }
   }

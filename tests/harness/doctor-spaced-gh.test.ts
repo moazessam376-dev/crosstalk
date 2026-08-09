@@ -112,4 +112,39 @@ describe('doctor GitHub credential probing', () => {
       else process.env.GH_TOKEN = originalGhToken;
     }
   }, 60_000);
+  it.skipIf(process.platform !== 'win32')('verifies unspaced .cmd and .bat shims instead of reporting unknown credentials', async () => {
+    const originalPath = process.env.PATH;
+    const originalPathFallback = process.env.Path;
+    const originalPathExt = process.env.PATHEXT;
+    const originalGithubToken = process.env.GITHUB_TOKEN;
+    const originalGhToken = process.env.GH_TOKEN;
+    try {
+      for (const extension of ['cmd', 'bat']) {
+        const ghDirectory = join(repo, `GitHub-CLI-${extension}`);
+        await mkdir(ghDirectory, { recursive: true });
+        await writeFile(join(ghDirectory, `gh.${extension}`), '@echo off\\r\\necho gh-ok %*\\r\\n', 'utf8');
+        process.env.PATH = [ghDirectory, originalPath ?? originalPathFallback ?? ''].filter(Boolean).join(delimiter);
+        process.env.PATHEXT = ['.CMD', '.BAT', ...(originalPathExt ?? '.EXE').split(';')]
+          .filter((value, index, values) => values.indexOf(value) === index).join(';');
+        delete process.env.GITHUB_TOKEN;
+        delete process.env.GH_TOKEN;
+
+        const findings = await doctor(config(), repo);
+
+        expect(findings.some((finding) => finding.code === 'MIRROR_CREDENTIAL_UNKNOWN')).toBe(false);
+        expect(findings.some((finding) => finding.code === 'MIRROR_NO_CREDENTIAL')).toBe(false);
+      }
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalPathFallback === undefined) delete process.env.Path;
+      else process.env.Path = originalPathFallback;
+      if (originalPathExt === undefined) delete process.env.PATHEXT;
+      else process.env.PATHEXT = originalPathExt;
+      if (originalGithubToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = originalGithubToken;
+      if (originalGhToken === undefined) delete process.env.GH_TOKEN;
+      else process.env.GH_TOKEN = originalGhToken;
+    }
+  }, 60_000);
 });

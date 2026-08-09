@@ -164,11 +164,13 @@ async function findExecutable(name: string): Promise<string | undefined> {
 
 type GithubCredentialStatus = 'configured' | 'missing' | 'unknown';
 
-function isWindowsShellShimWithSpaces(executable: string): boolean {
+function isWindowsShellShim(executable: string): boolean {
   const lower = executable.toLowerCase();
-  return process.platform === 'win32'
-    && (lower.endsWith('.cmd') || lower.endsWith('.bat'))
-    && executable.includes(' ');
+  return process.platform === 'win32' && (lower.endsWith('.cmd') || lower.endsWith('.bat'));
+}
+
+function isWindowsShellShimWithSpaces(executable: string): boolean {
+  return isWindowsShellShim(executable) && executable.includes(' ');
 }
 
 async function githubCredentialStatus(cwd: string): Promise<GithubCredentialStatus> {
@@ -179,7 +181,7 @@ async function githubCredentialStatus(cwd: string): Promise<GithubCredentialStat
   try {
     await execFile(gh, ['auth', 'status'], {
       cwd,
-      shell: process.platform === 'win32' && gh.toLowerCase().endsWith('.cmd'),
+      shell: isWindowsShellShim(gh),
       windowsHide: true,
     });
     return 'configured';

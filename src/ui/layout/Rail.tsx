@@ -31,7 +31,11 @@ export function Rail({ participants }: RailProps) {
             'aria-label': formatStatus(participant.status),
             title: formatStatus(participant.status),
           }),
-          createElement('span', { className: 'tier-badge' }, participant.tier),
+          // No badge when transport is unprobed: absence says "not probed",
+          // whereas `file` would claim "probed, and it is the worst tier".
+          participant.tier
+            ? createElement('span', { className: 'tier-badge' }, participant.tier)
+            : null,
         ),
       ),
     ),

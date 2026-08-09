@@ -70,8 +70,36 @@ describe('deriveState', () => {
 
     const state = deriveState([resolved, openedDecision(2, 'D-2'), openedDecision(1, 'D-1')]);
 
-    expect(state.rooms).toEqual([
+    // #floor is always present — seeded from the FLOOR constant rather than
+    // derived from traffic (spec §4.2) — so assert on the dispute room rather
+    // than on the exact shape of the whole list.
+    expect(state.rooms).toContainEqual(
       expect.objectContaining({ id: 'dispute:C-1', awaitingHuman: true }),
-    ]);
+    );
+  });
+
+  it('always offers #floor, even in a log where nobody posted there', () => {
+    const state = deriveState([openedDecision(1, 'D-1')]);
+    expect(state.rooms).toContainEqual(expect.objectContaining({ id: '#floor', kind: 'floor' }));
+  });
+
+  it('omits the tier badge for a participant whose transport was never probed', () => {
+    const joined: CrosstalkEvent = {
+      seq: 1,
+      ts: '2026-08-09T00:00:01Z',
+      from: 'codex',
+      kind: 'participant_joined',
+      participant: {
+        id: 'codex',
+        role: 'worker',
+        harness: 'codex-app',
+        lifecycle: 'attached',
+        workspace: '.crosstalk/worktrees/codex',
+      },
+    };
+
+    // Undefined must stay undefined: `file` would claim doctor probed and
+    // found the lowest tier, which is a different and untrue statement.
+    expect(deriveState([joined]).participants[0]?.tier).toBeUndefined();
   });
 });

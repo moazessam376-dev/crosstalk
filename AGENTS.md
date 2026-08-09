@@ -25,7 +25,7 @@ Everything is an npm script. No `.sh`, no `.bat`, no `Makefile` — PowerShell a
 2. **No native modules.** They break `npx` on machines without build tools.
 3. **The log is append-only.** Corrections are new events, never edits.
 4. **Order by `seq`, never `ts`.** Replay must be deterministic.
-5. **`falsifier` is required** on every claim and rebuttal; **`uphold` requires new evidence.**
+5. **`falsifier` is required** on every claim, on `contest`, and on `amend`. **`uphold` requires new evidence, not a falsifier** — it restates a claim whose falsifier is already on the record; `amend` is the verdict for a changed argument, and it does require one.
 6. **`node:path` always, `execFile` never `exec`.** Details in `docs/CROSS-PLATFORM.md`.
 7. **Green on one platform is not done.** CI is Windows, macOS and Linux.
 8. **Don't edit `src/contracts/` or `tests/fixtures/`** — frozen. Raise a claim instead.

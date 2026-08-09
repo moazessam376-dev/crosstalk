@@ -49,6 +49,35 @@ describe('claim validators', () => {
     ).toThrowError(expect.objectContaining({ code: 'CONTEST_WITHOUT_RATIONALE' }));
   });
 
+  it('rejects a response from a participant who is not the claim target', () => {
+    const state = stateWithOpenClaim('C-1');
+    expect(() =>
+      validateResponse(
+        {
+          claimId: 'C-1',
+          from: 'cursor',
+          verdict: 'contest',
+          rationale: 'the implementation is intentional',
+          falsifier: 'a focused ledger check would show divergent multipliers',
+          evidence: [ev('sha-new')],
+        },
+        state,
+      ),
+    ).toThrowError(/not authorized/i);
+  });
+
+  it('rejects responses after a claim is resolved', () => {
+    const state = emptyState();
+    state.claims.set('C-1', claim('C-1', 'resolved', []));
+
+    expect(() =>
+      validateResponse(
+        { claimId: 'C-1', from: 'codex', verdict: 'accept', evidence: [ev('sha-new')] },
+        state,
+      ),
+    ).toThrowError(/resolved/i);
+  });
+
   it('rejects an uphold that carries no evidence newer than the contest', () => {
     const state = stateWithContestedClaim('C-1', 'sha-old');
     expect(() =>

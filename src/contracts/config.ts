@@ -10,7 +10,22 @@ export interface ProjectConfig {
 /** Durations are `"30m"`, `"4h"` — parsed by the consumer, not the contract. */
 export type Duration = string;
 
+/** How a plan is formed before it is frozen. See spec §5.6. */
+export type PlanningMode = 'solo' | 'review' | 'panel';
+
 export interface PolicyConfig {
+  /**
+   * Optional: absent means `DEFAULT_POLICY.planning`. Optional rather than
+   * required because no v1 code reads it yet, and a forward-looking field
+   * should not invalidate configs that predate it.
+   */
+  planning?: {
+    mode: PlanningMode;
+    /** `review`: independent readers. `panel`: independent drafters. Ignored for `solo`. */
+    agents: number;
+    /** How `panel` selects among drafts. Ignored otherwise. */
+    selection: DecisionMethod;
+  };
   selfCritique: {
     required: boolean;
     minRounds: number;
@@ -49,6 +64,10 @@ export interface CrosstalkConfig {
 }
 
 export const DEFAULT_POLICY: PolicyConfig = {
+  // `review` rather than `solo`: on this project's own construction one
+  // independent reader of the plan found the two most serious defects in it,
+  // both of which three implementing tracks had missed. See spec §5.6.
+  planning: { mode: 'review', agents: 1, selection: 'leader' },
   selfCritique: { required: true, minRounds: 1 },
   leaderCritique: { maxRounds: 2 },
   dispute: {

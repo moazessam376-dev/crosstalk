@@ -39,6 +39,14 @@ Post it, let me review it, then build against it. If you decide the four tasks c
 
 Every failure below actually happened here. They are cheap to avoid and expensive to repeat.
 
+**Use a harness scheduled task, not an in-session loop.** This is the one that has actually cost this project a night: a session held correctly for review, the review landed, and the session died before it saw it. A polling loop lives inside the session and dies with it. A scheduled task does not.
+
+If your harness has a scheduled-task or cron feature, register one that re-reads this PR every few minutes and resumes you. Only fall back to an in-session loop if it has none — and say so, so I know your channel is fragile.
+
+```bash
+gh api repos/moazessam376-dev/crosstalk/issues/4/comments --jq 'map(select(.body | endswith("— leader"))) | last | .body'
+```
+
 **Verify every comment landed.** `gh` exits zero while silently discarding the body. Four comments were lost this way, including the single best piece of evidence anyone produced:
 
 ```bash

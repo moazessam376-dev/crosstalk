@@ -85,26 +85,22 @@ function roundFor(claims: readonly ClaimView[]): number {
   return Math.min(3, Math.max(authoredRounds, observedResponses));
 }
 
-function resolvedClaimIds(events: readonly CrosstalkEvent[]): Set<string> {
-  const decisions = new Map<string, string>();
-  const resolved = new Set<string>();
-  for (const event of events) {
-    if (event.kind === 'decision_opened' && event.decision.claimId) {
-      decisions.set(event.decision.id, event.decision.claimId);
-    }
-    if (event.kind === 'decision_resolved') {
-      const claimId = decisions.get(event.decisionId);
-      if (claimId) resolved.add(claimId);
-    }
-  }
-  return resolved;
-}
-
-function displayState(view: ClaimView, resolved: ReadonlySet<string>): Claim['state'] {
-  if (resolved.has(view.claim.id)) return 'resolved';
+function displayState(view: ClaimView): Claim['state'] {
+  if (view.claim.resolution) return 'resolved';
   const response = view.responses.at(-1);
   if (!response) return view.claim.state;
-  return response.verdict === 'accept' || response.verdict === 'clarify' ? 'triaged' : 'contested';
+  switch (response.verdict) {
+    case 'accept':
+      return 'triaged';
+    case 'clarify':
+      return 'clarify';
+    case 'concede':
+    case 'amend':
+      return 'resolved';
+    case 'contest':
+    case 'uphold':
+      return 'contested';
+  }
 }
 
 function labelForRung(rung: string): string {
@@ -135,9 +131,8 @@ export function DisputeView({ roomId, events, onHumanAction }: DisputeViewProps)
   const round = roundFor(claims);
   const primary = claims[0];
   const latestResponse = primary?.responses.at(-1);
-  const resolved = resolvedClaimIds(scopedEvents);
   const evidence = primary ? [...primary.claim.evidence, ...primary.extraEvidence] : [];
-  const claimWithEvidence = primary ? { ...primary.claim, evidence, state: displayState(primary, resolved) } : undefined;
+  const claimWithEvidence = primary ? { ...primary.claim, evidence, state: displayState(primary) } : undefined;
 
   return createElement(
     'section',

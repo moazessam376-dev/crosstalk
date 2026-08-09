@@ -22,7 +22,7 @@ describe('rendered hub wiring', () => {
     render(createElement(App));
 
     const claimCard = await screen.findByTestId('dispute-claim-C-118');
-    expect(claimCard).toHaveAttribute('data-claim-state', 'resolved');
+    expect(claimCard).toHaveAttribute('data-claim-state', 'contested');
     expect(screen.getByText('round 3 / 3')).toBeInTheDocument();
     expect(screen.queryByText('No claim has been raised in this room.')).not.toBeInTheDocument();
   });

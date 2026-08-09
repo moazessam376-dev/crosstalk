@@ -5,6 +5,10 @@ export type ErrorCode =
   | 'CONTEST_WITHOUT_RATIONALE'
   | 'CONTEST_WITHOUT_COUNTER_EVIDENCE'
   | 'UPHOLD_WITHOUT_NEW_EVIDENCE'
+  // Who may answer a claim, and with what. Both were a bare Error subclass
+  // until Track D pointed out the daemon had nothing but a class name to map.
+  | 'NOT_CLAIM_RESPONDER'
+  | 'ILLEGAL_CLAIM_RESPONSE'
   // Task gates.
   | 'GATE_NOT_ACKNOWLEDGED'
   | 'GATE_NOT_SELF_REVIEWED'

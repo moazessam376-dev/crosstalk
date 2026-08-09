@@ -30,7 +30,7 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
       state.participants.delete(event.participantId);
       return state;
     case 'message':
-      state.messages.push({ ...event, ts: '' });
+      state.messages.push({ ...event });
       return state;
     case 'task_created':
       state.tasks.set(event.task.id, { ...event.task });

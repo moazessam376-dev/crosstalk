@@ -121,3 +121,31 @@ Identity has to be established by the transport. When it isn't, everything downs
 **Changed.** The commands are unchained, with the reason written next to them so nobody re-chains them for tidiness. `&&` inside `package.json` scripts is left alone: npm runs those through `cmd.exe` and it is correct there. The distinction is that a script is executed by a tool that was told how to run it, and a code block in a document is executed by whatever shell the reader happens to have.
 
 Worth stating plainly, since this is entry ten and the pattern has held every time: **a rule you wrote is not a rule you follow.** This one had been in the repository for hours, was cited by the leader in review of another track's code, and was still violated by the leader in the same session.
+
+---
+
+## 11 · A server nobody remembered starting broke an install hours later
+
+**What happened.** The maintainer ran `npm ci` in the shared checkout and it failed with `EPERM: operation not permitted, unlink 'rollup.win32-x64-msvc.node'`. Because `npm ci` deletes `node_modules` before reinstalling, the failure left the tree half-deleted: `tsc` vanished, and the next command pulled a different major version of the bundler from the registry and failed differently. Three errors, one cause, and none of them named it.
+
+The cause was a `vite preview` process a worker had started hours earlier while trying to verify its own UI, still running, still holding a file open.
+
+**Why the design permitted it.** `docs/CROSS-PLATFORM.md` §5 already said Windows will not let you delete a file another process holds — it predicted this failure exactly. But `crosstalk down` is specified to remove **worktrees**. Nothing in the design says anything about processes an agent started. A worker that binds a port or spawns a server has created state that outlives its task, and no part of the system knows the state exists.
+
+**Changed.** `AGENTS.md` requires agents to stop what they start. The deeper requirement is recorded rather than solved: teardown is specified in terms of files, and agents leave processes too.
+
+The shape is worth noticing. The failure surfaced hours later, in a different person's command, as an error mentioning a native module nobody had touched — the visible symptom shared no vocabulary with the cause.
+
+---
+
+## 12 · The validators had two front doors and only one was locked
+
+**What happened.** Reviewing its brief before writing any code, a worker found that the daemon's specified `POST /events` endpoint — *"appends and returns the stamped event"* — was a complete bypass of every validator in the project.
+
+`claim_raised` carries an entire `Claim`: id, state, rounds, falsifier. A client posting that kind directly builds its own claim and never reaches `validateRaise`. `task_state` carries a target state, so a client could move a task to `submitted` without ever passing `validateTransition`. Every falsifier requirement, every gate, enforced only by clients choosing to be polite.
+
+**Why the design permitted it.** The spec says validators live *at the API boundary* rather than in prompts, precisely so they cannot be forgotten around turn forty. That principle was then applied to exactly one of the two boundaries. The MCP layer was specified as rigorous — twelve tools, each delegating to the validators, errors surfacing in-band. The HTTP layer underneath it was specified as a generic append, and the generic append is reachable by anything holding a token.
+
+**Changed.** Protocol-bearing kinds get typed routes that take the validators' own input types and let the daemon construct the event; `POST /events` accepts only kinds with no invariants to violate, and rejects anything else with an error naming the correct route.
+
+The lesson generalises past this bug: **"at the API boundary" is not a location, it is every surface a client can reach.** A rule enforced at one entrance and not the other is not enforced — it is documented. And it was found by the cheapest review in the system, before a line of the implementation existed.

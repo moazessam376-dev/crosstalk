@@ -27,8 +27,6 @@ export const VACUITY_PATTERNS = [
   /^(if )?(it|this|that) (did ?n[o']?t|does ?n[o']?t|would ?n[o']?t) work/i,
 ] as const;
 
-const VERB_BEARING_CLAUSE =
-  /\b(?:am|is|are|was|were|be|being|been|do|does|did|would|will|should|could|can|cannot|fail|fails|failed|show|shows|showed|differ|differs|diverge|diverges|change|changes|reference|references|apply|applies)\b/i;
 
 export function validateRaise(input: RaiseClaimInput, state: HubState): Claim {
   validateFalsifier(input.falsifier, input.assertion);
@@ -99,7 +97,6 @@ function isVacuousFalsifier(falsifier: string, assertion: string): boolean {
   return (
     falsifier.length < 20 ||
     VACUITY_PATTERNS.some((pattern) => pattern.test(falsifier)) ||
-    !VERB_BEARING_CLAUSE.test(falsifier) ||
     normalize(falsifier) === normalize(assertion)
   );
 }

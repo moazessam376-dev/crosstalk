@@ -43,7 +43,10 @@ describe('daemon lock', () => {
     const lockPath = join(repo, '.crosstalk', 'daemon.lock');
     await writeFile(
       lockPath,
-      JSON.stringify({ pid: await deadPid(), startedAt: new Date().toISOString() }),
+      // Old enough that a recycled pid cannot make this look live. Without the
+      // age check this test is flaky on a busy machine, which is the same
+      // ambiguity the daemon itself has to resolve.
+      JSON.stringify({ pid: await deadPid(), startedAt: new Date(0).toISOString() }),
       'utf8',
     );
 
@@ -51,6 +54,38 @@ describe('daemon lock', () => {
     try {
       expect(daemon.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
       expect((await readLock(lockPath))?.pid).toBe(process.pid);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it('respects a lock that is still starting up', async () => {
+    const repo = await tempRepo();
+    const lockPath = join(repo, '.crosstalk', 'daemon.lock');
+    // Live pid, no url, written just now: a daemon between acquiring the lock
+    // and binding its port. Reclaiming this would give the repository two.
+    await writeFile(
+      lockPath,
+      JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+      'utf8',
+    );
+
+    await expect(startDaemon({ repo })).rejects.toMatchObject({ code: 'DAEMON_ALREADY_RUNNING' });
+  });
+
+  it('reclaims a lock stuck with no url long past startup', async () => {
+    const repo = await tempRepo();
+    const lockPath = join(repo, '.crosstalk', 'daemon.lock');
+    // Live pid, no url, but minutes old: a startup that died before binding.
+    await writeFile(
+      lockPath,
+      JSON.stringify({ pid: process.pid, startedAt: new Date(Date.now() - 600_000).toISOString() }),
+      'utf8',
+    );
+
+    const daemon = await startDaemon({ repo });
+    try {
+      expect(daemon.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     } finally {
       await daemon.close();
     }

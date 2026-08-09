@@ -8,6 +8,7 @@ import type { CrosstalkConfig } from '../contracts/config.js';
 import type { CrosstalkEvent, DraftEvent, EventKind } from '../contracts/events.js';
 import { ProtocolError } from '../contracts/errors.js';
 import type { ParticipantId } from '../contracts/participant.js';
+import { HUMAN_ID } from '../contracts/room.js';
 import { EventLog } from '../core/log.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
 
@@ -21,6 +22,23 @@ import {
   type WireError,
   type WriteResponse,
 } from './contract.js';
+import {
+  acknowledgeTask,
+  addEvidence,
+  addressesParticipant,
+  board,
+  castVote,
+  createTask,
+  myTasks,
+  openDecision,
+  raiseClaim,
+  requireRoomMembership,
+  respondToClaim,
+  roster,
+  setTaskState,
+  submitTask,
+  type HandlerContext,
+} from './handlers.js';
 import { loadConfig } from './config.js';
 import { acquireLock, recordLockUrl, releaseLock } from './lock.js';
 import { DaemonError } from './errors.js';
@@ -29,6 +47,8 @@ import { DaemonError } from './errors.js';
 const HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_LIMIT = 1000;
+/** Spec §6.2: return by ~50s regardless of the requested timeout, to stay inside harness tool timeouts. */
+const AWAIT_CAP_S = 50;
 
 export interface DaemonHandle {
   url: string;
@@ -93,13 +113,12 @@ function buildHandle(parts: {
 }): DaemonHandle {
   const { url, tokens, server, daemon, lockPath, daemonJsonPath } = parts;
 
-  // SIGTERM is not delivered on Windows the way it is elsewhere, so shutdown
-  // never relies on a signal arriving — POST /shutdown is the portable path.
   let closed: Promise<void> | undefined;
   const close = (): Promise<void> => {
     closed ??= (async () => {
       process.off('SIGINT', onSignal);
       process.off('SIGTERM', onSignal);
+      await daemon.drainWaiters();
       server.closeAllConnections();
       await new Promise<void>((done) => server.close(() => done()));
       await daemon.close();
@@ -108,11 +127,15 @@ function buildHandle(parts: {
     })();
     return closed;
   };
+
+  // SIGTERM is not delivered on Windows the way it is elsewhere, so shutdown
+  // handles signals *and* POST /shutdown, and relies on neither arriving.
   const onSignal = (): void => {
     void close();
   };
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
+  daemon.onShutdownRequest = close;
 
   return { url, tokens, close };
 }
@@ -140,8 +163,6 @@ async function mintTokens(
   for (const participant of config.participants) {
     const token = randomBytes(32).toString('hex');
     tokens.set(participant.id, token);
-    // `@human` is a legal ParticipantId but PARTICIPANT_ID_PATTERN rejects it,
-    // so the '@' is stripped for the filename and `doctor` reserves `human`.
     await writeFile(join(stateDir, 'tokens', tokenFilename(participant.id)), token, {
       encoding: 'utf8',
       // A no-op on Windows. `doctor` says so rather than claiming a protection we do not have.
@@ -151,16 +172,33 @@ async function mintTokens(
   return tokens;
 }
 
+/**
+ * `@human` is a legal ParticipantId but PARTICIPANT_ID_PATTERN rejects it, so
+ * the '@' is stripped for the filename and `doctor` reserves the plain id
+ * `human` — otherwise a participant named `human` silently shares the human's
+ * credential, which is two participants behind one token all over again.
+ */
 export function tokenFilename(id: ParticipantId): string {
   return id.startsWith('@') ? id.slice(1) : id;
 }
 
+interface Waiter {
+  who: ParticipantId;
+  resolve(events: CrosstalkEvent[]): void;
+  timer: NodeJS.Timeout;
+}
+
 class Daemon {
+  onShutdownRequest: (() => Promise<void>) | undefined;
+
   readonly #config: CrosstalkConfig;
   readonly #byToken: Map<string, ParticipantId>;
   readonly #log: EventLog;
   #state: HubState;
-  readonly #joined = new Set<ParticipantId>();
+  /** In-flight joins, not a done-set: concurrent first requests must all wait on the same append. */
+  readonly #joins = new Map<ParticipantId, Promise<CrosstalkEvent[]>>();
+  readonly #waiters = new Set<Waiter>();
+  readonly #delivered = new Map<ParticipantId, number>();
   #writeTail: Promise<unknown> = Promise.resolve();
 
   constructor(config: CrosstalkConfig, tokens: Map<ParticipantId, string>, log: EventLog) {
@@ -172,6 +210,15 @@ class Daemon {
 
   async init(): Promise<void> {
     this.#state = project(await this.#log.read());
+  }
+
+  /** Resolves every pending long poll so close() cannot hang on a 50s timer. */
+  async drainWaiters(): Promise<void> {
+    for (const waiter of [...this.#waiters]) {
+      clearTimeout(waiter.timer);
+      this.#waiters.delete(waiter);
+      waiter.resolve([]);
+    }
   }
 
   async close(): Promise<void> {
@@ -190,26 +237,107 @@ class Daemon {
   async #route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', `http://${HOST}`);
     const path = url.pathname;
+    const method = request.method ?? 'GET';
 
-    if (path === '/health' && request.method === 'GET') {
+    if (path === '/health' && method === 'GET') {
       // The only unauthenticated route, and it carries no log data.
       send(response, 200, { ok: true, version: 1, pid: process.pid });
       return;
     }
 
     const who = this.#authenticate(request);
+    const joined = await this.#ensureJoined(who);
+    const ctx = this.#context(who);
 
-    if (path === '/events' && request.method === 'GET') {
+    // Reads first: none of them append.
+    if (path === '/events' && method === 'GET') {
       send(response, 200, await this.#readEvents(url));
       return;
     }
-
-    if (path === '/events' && request.method === 'POST') {
-      send(response, 201, await this.#appendMessage(request, who));
+    if (path === '/await' && method === 'GET') {
+      send(response, 200, await this.#awaitTurn(who, url));
+      return;
+    }
+    if (path === '/roster' && method === 'GET') {
+      send(response, 200, roster(ctx, this.#pendingWaiters()));
+      return;
+    }
+    if (path === '/board' && method === 'GET') {
+      send(response, 200, board(this.#state));
+      return;
+    }
+    if (path === '/tasks/mine' && method === 'GET') {
+      send(response, 200, myTasks(ctx));
+      return;
+    }
+    const roomParams = matchPath(path, '/rooms/:room/events');
+    if (roomParams !== undefined && method === 'GET') {
+      send(response, 200, await this.#readRoom(ctx, decodeURIComponent(roomParams[0]!), url));
       return;
     }
 
-    throw new DaemonError('UNKNOWN_ROUTE', `No route for ${request.method ?? 'GET'} ${path}`);
+    if (path === '/shutdown' && method === 'POST') {
+      requireShutdownAuthority(this.#config, who);
+      send(response, 200, { events: joined } satisfies WriteResponse);
+      // Answer first: a caller that never gets a reply cannot tell a clean stop
+      // from a crash.
+      setImmediate(() => void this.onShutdownRequest?.());
+      return;
+    }
+
+    const handler = this.#writeHandler(path, method);
+    if (handler === undefined) {
+      throw new DaemonError('UNKNOWN_ROUTE', `No route for ${method} ${path}`);
+    }
+
+    const body = await readJsonBody(request);
+    rejectDerivedAuthorFields(body);
+    send(response, 201, { events: [...joined, ...(await handler(ctx, body))] } satisfies WriteResponse);
+  }
+
+  #writeHandler(
+    path: string,
+    method: string,
+  ): ((ctx: HandlerContext, body: Record<string, unknown>) => Promise<CrosstalkEvent[]>) | undefined {
+    if (method !== 'POST') return undefined;
+
+    if (path === '/events') return (ctx, body) => this.#appendMessage(ctx, body);
+    if (path === '/claims') return raiseClaim;
+    if (path === '/tasks') return createTask;
+    if (path === '/decisions') return openDecision;
+
+    const claimResponse = matchPath(path, '/claims/:id/response');
+    if (claimResponse) return (ctx, body) => respondToClaim(ctx, claimResponse[0]!, body);
+
+    const claimEvidence = matchPath(path, '/claims/:id/evidence');
+    if (claimEvidence) return (ctx, body) => addEvidence(ctx, claimEvidence[0]!, body);
+
+    const ack = matchPath(path, '/tasks/:id/ack');
+    if (ack) return (ctx, body) => acknowledgeTask(ctx, ack[0]!, body);
+
+    const submit = matchPath(path, '/tasks/:id/submit');
+    if (submit) return (ctx, body) => submitTask(ctx, submit[0]!, body);
+
+    const state = matchPath(path, '/tasks/:id/state');
+    if (state) return (ctx, body) => setTaskState(ctx, state[0]!, body);
+
+    const vote = matchPath(path, '/decisions/:id/vote');
+    if (vote) return (ctx, body) => castVote(ctx, vote[0]!, body);
+
+    return undefined;
+  }
+
+  #context(who: ParticipantId): HandlerContext {
+    // `state` is a getter so a handler that appends and then reads sees its own write.
+    const daemon = this;
+    return {
+      who,
+      config: this.#config,
+      get state(): HubState {
+        return daemon.#state;
+      },
+      append: (draft: DraftEvent) => this.#append(draft),
+    };
   }
 
   #authenticate(request: IncomingMessage): ParticipantId {
@@ -229,7 +357,10 @@ class Daemon {
 
   async #readEvents(url: URL): Promise<EventsResponse> {
     const since = readNonNegativeInt(url.searchParams.get('since'), 0, 'since');
-    const limit = Math.min(readNonNegativeInt(url.searchParams.get('limit'), MAX_LIMIT, 'limit'), MAX_LIMIT);
+    const limit = Math.min(
+      readNonNegativeInt(url.searchParams.get('limit'), MAX_LIMIT, 'limit'),
+      MAX_LIMIT,
+    );
 
     // `since` is exclusive on both this path and SSE resume, so one word means
     // one thing and a reconnect can neither duplicate nor skip an event.
@@ -244,10 +375,62 @@ class Daemon {
     };
   }
 
-  async #appendMessage(request: IncomingMessage, who: ParticipantId): Promise<WriteResponse> {
-    const body = await readJsonBody(request);
-    rejectDerivedAuthorFields(body);
+  async #readRoom(ctx: HandlerContext, room: string, url: URL): Promise<EventsResponse> {
+    requireRoomMembership(ctx, room);
+    const since = readNonNegativeInt(url.searchParams.get('since'), 0, 'since');
+    const events = (await this.#log.readFrom(since + 1)).filter((event) => event.room === room);
+    return {
+      events,
+      lastSeq: events.length > 0 ? events[events.length - 1]!.seq : since,
+    };
+  }
 
+  async #awaitTurn(
+    who: ParticipantId,
+    url: URL,
+  ): Promise<{ events: CrosstalkEvent[] } | { idle: true }> {
+    const requested = readNonNegativeInt(url.searchParams.get('timeout_s'), AWAIT_CAP_S, 'timeout_s');
+    const timeoutMs = Math.min(requested, AWAIT_CAP_S) * 1000;
+    const mark = readNonNegativeInt(
+      url.searchParams.get('since'),
+      this.#delivered.get(who) ?? 0,
+      'since',
+    );
+
+    const ready = (await this.#log.readFrom(mark + 1)).filter((event) =>
+      addressesParticipant(event, who, this.#state),
+    );
+    if (ready.length > 0) return this.#deliver(who, ready);
+
+    const events = await new Promise<CrosstalkEvent[]>((done) => {
+      const waiter: Waiter = {
+        who,
+        resolve: (value) => {
+          clearTimeout(waiter.timer);
+          this.#waiters.delete(waiter);
+          done(value);
+        },
+        timer: setTimeout(() => {
+          this.#waiters.delete(waiter);
+          done([]);
+        }, timeoutMs),
+      };
+      this.#waiters.add(waiter);
+    });
+
+    return events.length > 0 ? this.#deliver(who, events) : { idle: true };
+  }
+
+  #deliver(who: ParticipantId, events: CrosstalkEvent[]): { events: CrosstalkEvent[] } {
+    this.#delivered.set(who, events[events.length - 1]!.seq);
+    return { events };
+  }
+
+  #pendingWaiters(): Set<ParticipantId> {
+    return new Set([...this.#waiters].map((waiter) => waiter.who));
+  }
+
+  async #appendMessage(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
     const kind = body['kind'];
     if (typeof kind !== 'string' || !(kind in EVENT_KIND_ROUTE)) {
       throw new DaemonError('MALFORMED_BODY', `Unknown event kind: ${String(kind)}`);
@@ -275,16 +458,17 @@ class Daemon {
       throw new DaemonError('MALFORMED_BODY', 'message `to` must be a participant id');
     }
 
-    const joined = await this.#ensureJoined(who);
-    const event = await this.#append({
-      kind: 'message',
-      from: who,
-      room,
-      body: text,
-      ...(to === undefined ? {} : { to }),
-    });
+    requireRoomMembership(ctx, room);
 
-    return { events: [...joined, event] };
+    return [
+      await ctx.append({
+        kind: 'message',
+        from: ctx.who,
+        room,
+        body: text,
+        ...(to === undefined ? {} : { to }),
+      }),
+    ];
   }
 
   /**
@@ -293,14 +477,26 @@ class Daemon {
    * this daemon's lifetime, taking the whole Participant from config.
    */
   async #ensureJoined(who: ParticipantId): Promise<CrosstalkEvent[]> {
-    if (this.#joined.has(who)) return [];
-    // Marked before the await so two concurrent first requests cannot both join.
-    this.#joined.add(who);
+    const inFlight = this.#joins.get(who);
+    if (inFlight !== undefined) {
+      // Wait for it, but do not re-report it: whoever triggered the join owns
+      // the event. Waiting matters — a request that runs ahead of its own join
+      // fails its room-membership check, because membership is projected from
+      // `participant_joined`.
+      await inFlight;
+      return [];
+    }
 
     const participant = this.#config.participants.find((candidate) => candidate.id === who);
     if (participant === undefined) return [];
 
-    return [await this.#append({ kind: 'participant_joined', from: who, participant })];
+    // Registered before the first await so two concurrent first requests
+    // cannot both start a join.
+    const join = this.#append({ kind: 'participant_joined', from: who, participant }).then(
+      (event) => [event],
+    );
+    this.#joins.set(who, join);
+    return join;
   }
 
   /** Every write funnels through here: one EventLog, one seq sequence, no gaps. */
@@ -311,10 +507,25 @@ class Daemon {
       return event;
     });
     this.#writeTail = queued.catch(() => {});
-    return queued;
+    const event = await queued;
+    this.#wake(event);
+    return event;
+  }
+
+  /**
+   * A `@human` message needs no separate priority path: every addressing event
+   * resolves its waiter immediately, so nothing is ever queued behind anything.
+   */
+  #wake(event: CrosstalkEvent): void {
+    for (const waiter of [...this.#waiters]) {
+      if (addressesParticipant(event, waiter.who, this.#state)) {
+        waiter.resolve([event]);
+      }
+    }
   }
 
   #fail(response: ServerResponse, error: unknown): void {
+    if (response.headersSent) return;
     if (error instanceof ProtocolError) {
       send(response, PROTOCOL_STATUS[error.code], wire('protocol', error.code, error.message));
       return;
@@ -323,8 +534,33 @@ class Daemon {
       send(response, DAEMON_STATUS[error.code], wire('daemon', error.code, error.message, error.url));
       return;
     }
-    send(response, 500, wire('daemon', 'MALFORMED_BODY', (error as Error).message ?? 'Internal error'));
+    send(response, 500, wire('daemon', 'MALFORMED_BODY', (error as Error)?.message ?? 'Internal error'));
   }
+}
+
+/** Stopping the hub is not something any participant should be able to do to the others. */
+function requireShutdownAuthority(config: CrosstalkConfig, who: ParticipantId): void {
+  const role = config.participants.find((candidate) => candidate.id === who)?.role;
+  if (who !== HUMAN_ID && role !== 'leader' && role !== 'human') {
+    throw new DaemonError('ROLE_NOT_PERMITTED', 'POST /shutdown requires the leader or @human');
+  }
+}
+
+/** Matches `/tasks/:id/ack` shapes, returning the captured segments. */
+function matchPath(path: string, pattern: string): string[] | undefined {
+  const actual = path.split('/').filter(Boolean);
+  const expected = pattern.split('/').filter(Boolean);
+  if (actual.length !== expected.length) return undefined;
+
+  const captured: string[] = [];
+  for (const [index, segment] of expected.entries()) {
+    if (segment.startsWith(':')) {
+      captured.push(actual[index]!);
+      continue;
+    }
+    if (segment !== actual[index]) return undefined;
+  }
+  return captured;
 }
 
 function wire(
@@ -354,6 +590,16 @@ function rejectDerivedAuthorFields(body: Record<string, unknown>): void {
       throw new DaemonError(
         'FROM_NOT_ALLOWED',
         `\`${field}\` is derived from the presenting token and must not be sent`,
+      );
+    }
+  }
+  // Evidence carries its own author field, and it is derived too.
+  const evidence = body['evidence'];
+  for (const item of Array.isArray(evidence) ? evidence : [evidence]) {
+    if (item !== null && typeof item === 'object' && 'by' in (item as object)) {
+      throw new DaemonError(
+        'FROM_NOT_ALLOWED',
+        '`evidence.by` is derived from the presenting token and must not be sent',
       );
     }
   }

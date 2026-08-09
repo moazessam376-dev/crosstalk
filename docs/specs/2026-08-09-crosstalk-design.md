@@ -290,6 +290,31 @@ A required field invites `falsifier: "if it didn't work"`. Three options were co
 
 **(3), with a light lint.** The `discriminating_test` rung asks both sides to derive a runnable command from their falsifiers. A vacuous falsifier cannot produce one, and that failure is recorded. §12 tracks *falsifiers that failed to yield a test* per participant. A length/pattern lint at `raise_claim` catches the laziest cases without pretending to judge quality.
 
+### 5.6 Plan formation
+
+Everything above governs work *after* a plan exists. The plan itself is the least reviewed artifact in the system and the most expensive to get wrong, because a defect in it is copied into every task derived from it.
+
+The evidence for that is this project's own construction. Of seventeen findings the leader raised across four tracks, **nine were the leader's own errors**, and the two most serious were not code at all:
+
+- a specified `POST /events` endpoint that bypassed every validator in the project, making each falsifier rule and both task gates advisory
+- a task gate that no event could satisfy, so `submitted` was unreachable through the log — with both golden fixtures encoding that unreachable state, unnoticed by three merged tracks
+
+Neither was found by reviewing an implementation. Both were found the first time somebody *independent read the plan* — the acknowledgement gate, which costs one turn.
+
+So plan formation is a configurable mode rather than an assumption:
+
+| Mode | Shape | Cost | Use when |
+|---|---|---|---|
+| `solo` | One agent authors, freezes, distributes | 1 author | small or well-understood work; the current default |
+| `review` | One authors; **N independent agents read it before freeze**, each raising claims against the plan | 1 author + N readers | **recommended** — the highest yield per token observed here |
+| `panel` | N agents draft independently; a `Decision` selects or synthesises | N authors + resolution | genuinely novel design where the solution space is wide and one author's framing is a risk in itself |
+
+**No new machinery.** A claim may already target `'brief' | 'spec'` (§4.2), so a reader disputing the plan uses `raise_claim` exactly as a critic disputes code, with the same falsifier requirement. Selection in `panel` mode is a `Decision` with the configured method (§4.2). Plan formation is a policy over primitives that already exist.
+
+**The freeze is a gate, not a moment.** In `review` and `panel` the plan is not frozen until every claim against it is resolved. Freezing with open claims is the failure this section exists to prevent — a leader deciding its own plan is finished is precisely the judgement the data above says not to trust.
+
+**Reviewers must be independent of the author.** A reader that helped write a section cannot raise a useful claim against it; it has already made the assumption the claim would have to question.
+
 ---
 
 ## 6. Transport

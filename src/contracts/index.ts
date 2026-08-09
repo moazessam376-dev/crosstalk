@@ -34,6 +34,7 @@ export { ProtocolError } from './errors.js';
 export type {
   ProjectConfig,
   Duration,
+  PlanningMode,
   PolicyConfig,
   MirrorMode,
   MirrorConfig,

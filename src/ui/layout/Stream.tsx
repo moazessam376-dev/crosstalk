@@ -83,7 +83,7 @@ export function Stream({ events, activeRoom, onHumanAction }: StreamProps) {
     createElement('h2', null, activeRoom ?? 'Stream'),
     createElement('p', { className: 'stream-count' }, String(visibleEvents.length) + ' events'),
     activeRoom && activeRoom.startsWith('dispute:')
-      ? createElement(DisputeView, { roomId: activeRoom, events: visibleEvents, onHumanAction })
+      ? createElement(DisputeView, { roomId: activeRoom, events, onHumanAction })
       : createElement('div', { className: 'card-stream' }, cards),
   );
 }

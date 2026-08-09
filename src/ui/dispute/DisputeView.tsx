@@ -30,19 +30,34 @@ function roomEvents(events: readonly CrosstalkEvent[], roomId: string): Crosstal
   return events.filter((event) => event.room === roomId).sort((left, right) => left.seq - right.seq);
 }
 
-function collectClaims(events: readonly CrosstalkEvent[]): ClaimView[] {
+function collectClaims(
+  events: readonly CrosstalkEvent[],
+  scopedEvents: readonly CrosstalkEvent[],
+  roomId: string,
+): ClaimView[] {
+  const relatedIds = new Set<string>();
+  for (const event of scopedEvents) {
+    if (event.kind === 'claim_raised') relatedIds.add(event.claim.id);
+    if (event.kind === 'claim_response' || event.kind === 'evidence_added' || event.kind === 'evidence_stale') {
+      relatedIds.add(event.claimId);
+    }
+    if (event.kind === 'decision_opened' && event.decision.claimId) {
+      relatedIds.add(event.decision.claimId);
+    }
+  }
+
   const claims = new Map<string, ClaimView>();
   for (const event of events) {
-    if (event.kind === 'claim_raised') {
+    if (event.kind === 'claim_raised' && (event.room === roomId || relatedIds.has(event.claim.id))) {
       claims.set(event.claim.id, { claim: event.claim, responses: [], staleShas: new Set(), extraEvidence: [] });
     }
-    if (event.kind === 'claim_response') {
+    if (event.kind === 'claim_response' && event.room === roomId) {
       claims.get(event.claimId)?.responses.push(event);
     }
-    if (event.kind === 'evidence_added') {
+    if (event.kind === 'evidence_added' && relatedIds.has(event.claimId)) {
       claims.get(event.claimId)?.extraEvidence.push(event.evidence);
     }
-    if (event.kind === 'evidence_stale') {
+    if (event.kind === 'evidence_stale' && relatedIds.has(event.claimId)) {
       claims.get(event.claimId)?.staleShas.add(event.sha);
     }
   }
@@ -112,14 +127,15 @@ function voteCounts(events: readonly CrosstalkEvent[], decision: DecisionOpenedE
 }
 
 export function DisputeView({ roomId, events, onHumanAction }: DisputeViewProps) {
-  const ordered = roomEvents(events, roomId);
-  const claims = collectClaims(ordered);
-  const decision = latestDecision(ordered);
-  const counts = decision ? voteCounts(ordered, decision) : new Map<string, number>();
+  const ordered = events.slice().sort((left, right) => left.seq - right.seq);
+  const scopedEvents = roomEvents(ordered, roomId);
+  const claims = collectClaims(ordered, scopedEvents, roomId);
+  const decision = latestDecision(scopedEvents);
+  const counts = decision ? voteCounts(scopedEvents, decision) : new Map<string, number>();
   const round = roundFor(claims);
   const primary = claims[0];
   const latestResponse = primary?.responses.at(-1);
-  const resolved = resolvedClaimIds(ordered);
+  const resolved = resolvedClaimIds(scopedEvents);
   const evidence = primary ? [...primary.claim.evidence, ...primary.extraEvidence] : [];
   const claimWithEvidence = primary ? { ...primary.claim, evidence, state: displayState(primary, resolved) } : undefined;
 

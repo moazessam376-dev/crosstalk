@@ -43,4 +43,11 @@
   --status-contested: #8250df;
   --status-blocker: #cf222e;
   --status-open: #bc6b00;
+
+  --font-ui: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
+  --size-ui: 13px;
+  --size-mono: 12.5px;
+  --row-h: 30px;
+  --radius: 6px;
 }

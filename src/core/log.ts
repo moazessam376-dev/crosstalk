@@ -2,6 +2,10 @@ import { open, type FileHandle } from 'node:fs/promises';
 
 import type { CrosstalkEvent, DraftEvent } from '../contracts/events.js';
 
+function cloneEvent<T extends CrosstalkEvent | DraftEvent>(event: T): T {
+  return structuredClone(event);
+}
+
 export class EventLog {
   #handle: FileHandle;
   #events: CrosstalkEvent[];
@@ -55,22 +59,25 @@ export class EventLog {
   }
 
   async append(draft: DraftEvent): Promise<CrosstalkEvent> {
+    const draftCopy = cloneEvent(draft);
     const event: CrosstalkEvent = {
-      ...draft,
+      ...draftCopy,
       seq: ++this.#lastSeq,
       ts: new Date().toISOString(),
     } as CrosstalkEvent;
     const line = `${JSON.stringify(event)}\n`;
     await this.#handle.write(Buffer.from(line, 'utf8'));
-    this.#events.push(event);
-    return event;
+    this.#events.push(cloneEvent(event));
+    return cloneEvent(event);
   }
 
   async read(): Promise<CrosstalkEvent[]> {
-    return [...this.#events];
+    return this.#events.map((event) => cloneEvent(event));
   }
 
   async readFrom(seq: number): Promise<CrosstalkEvent[]> {
-    return this.#events.filter((event) => event.seq >= seq);
+    return this.#events
+      .filter((event) => event.seq >= seq)
+      .map((event) => cloneEvent(event));
   }
 }

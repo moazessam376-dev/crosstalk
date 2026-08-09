@@ -10,6 +10,7 @@ export class EventLog {
   #handle: FileHandle;
   #events: CrosstalkEvent[];
   #lastSeq: number;
+  #appendTail: Promise<void> = Promise.resolve();
 
   private constructor(handle: FileHandle, events: CrosstalkEvent[], lastSeq: number) {
     this.#handle = handle;
@@ -65,9 +66,14 @@ export class EventLog {
       seq: ++this.#lastSeq,
       ts: new Date().toISOString(),
     } as CrosstalkEvent;
-    const line = `${JSON.stringify(event)}\n`;
-    await this.#handle.write(Buffer.from(line, 'utf8'));
-    this.#events.push(cloneEvent(event));
+    const line = Buffer.from(JSON.stringify(event) + '\n', 'utf8');
+    const queued = this.#appendTail.then(async () => {
+      await this.#handle.write(line);
+      this.#events.push(cloneEvent(event));
+    });
+    this.#appendTail = queued.catch(() => {});
+
+    await queued;
     return cloneEvent(event);
   }
 

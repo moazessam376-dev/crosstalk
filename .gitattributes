@@ -1,0 +1,10 @@
+# Cross-platform contributors on Windows, macOS and Linux all land LF in the repo.
+* text=auto eol=lf
+
+# Fixtures for the conformance suite are byte-exact — never touch them.
+*.jsonl -text
+tests/golden/** -text
+
+*.png binary
+*.jpg binary
+*.ico binary

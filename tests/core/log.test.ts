@@ -45,4 +45,40 @@ describe('EventLog', () => {
     expect(recovered.lastSeq).toBe(1);
     expect((await recovered.read())).toHaveLength(1);
   });
+
+  it('preserves in-memory history from caller mutation across append and reads', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ct-'));
+    const path = join(dir, 'events.jsonl');
+    const log = await EventLog.open(path);
+    const appended = await log.append({
+      kind: 'task_created',
+      from: 'leader',
+      task: {
+        id: 'T-01',
+        title: 'Original title',
+        brief: 'Brief',
+        specRefs: ['docs/spec.md'],
+        assignee: 'codex',
+        deps: [],
+        acceptance: ['one'],
+        state: 'draft',
+        branch: 'ct/T-01',
+      },
+    });
+
+    appended.seq = 999;
+    appended.task.title = 'Mutated append result';
+
+    const readEvents = await log.read();
+    readEvents[0]!.task.title = 'Mutated read result';
+
+    const readFromEvents = await log.readFrom(1);
+    readFromEvents[0]!.task.title = 'Mutated readFrom result';
+
+    const laterRead = await log.read();
+    const taskCreated = laterRead[0];
+    expect(taskCreated?.seq).toBe(1);
+    expect(taskCreated?.kind).toBe('task_created');
+    expect(taskCreated?.task.title).toBe('Original title');
+  });
 });

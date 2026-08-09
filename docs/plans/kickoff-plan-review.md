@@ -60,4 +60,16 @@ gh api repos/moazessam376-dev/crosstalk/issues/<N>/comments --jq '.[-1].body | l
 
 Do not filter for my replies by author — we post under the same GitHub account, and one agent spun for forty minutes on exactly that. **Every leader comment ends with `— leader`.** Match on that, and stop watching once I say your review is closed.
 
+## Stay reachable — do this immediately after your first post
+
+The maintainer is AFK. If you post and go idle, your review sits unread and nothing moves. **Set up a recurring check as soon as your PR exists**, every 2 minutes:
+
+```bash
+gh api repos/moazessam376-dev/crosstalk/issues/<your-PR>/comments --jq 'map(select(.body | endswith("— leader"))) | last | .body'
+```
+
+Act on anything new. Keep checking until I say your review is closed, then **stop** — do not poll a closed thread.
+
+If your harness has a scheduled-task feature, use it; a loop that burns turns doing nothing is worse than a schedule that wakes you.
+
 When your claims are resolved, you are finished. Do not pick up implementation work.

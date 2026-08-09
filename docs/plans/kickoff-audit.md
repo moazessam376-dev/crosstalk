@@ -69,4 +69,14 @@ Also commit the full review to `docs/audits/2026-08-10-full-review.md` on your b
 
 Two runtime dependencies (`@modelcontextprotocol/sdk`, `yaml`); dev deps unconstrained. No native runtime modules. `node:path` always, `execFile` never `exec`. No `&&` in anything a human copies — PowerShell 5.1 rejects it. Kill any server or browser you start; an orphaned preview here locked `node_modules` and broke the maintainer's `npm ci` hours later.
 
+## Stay reachable — do this as soon as your PR exists
+
+The maintainer is AFK. I will critique your findings, and some of them I will contest. If you post and go idle, that exchange never happens. **Set up a recurring check**, every 2 minutes:
+
+```bash
+gh api repos/moazessam376-dev/crosstalk/issues/<your-PR>/comments --jq 'map(select(.body | endswith("— leader"))) | last | .body'
+```
+
+Every leader comment ends with `— leader` — match on that, never on author, because we post through the same GitHub account and an author filter can never match. Stop once I say the audit is closed; do not poll a closed thread.
+
 Start by reading the friction log. It will tell you where to point the microscope.

@@ -562,7 +562,9 @@ Expected: FAIL — module not found
 
 - [ ] **Step 3: Implement the validators**
 
-`validateRaise` throws `MISSING_FALSIFIER` on empty/whitespace. The vacuity lint throws `VACUOUS_FALSIFIER` when the falsifier is under 20 characters **or** matches `/^(if )?(it|this|that) (did ?n[o']?t|does ?n[o']?t|would ?n[o']?t) work/i` or contains no verb-bearing clause distinguishable from the assertion — keep the rule list in one exported `VACUITY_PATTERNS` array so it is greppable and extensible. It deliberately catches only the laziest cases; the `discriminating_test` rung is the real check.
+`validateRaise` throws `MISSING_FALSIFIER` on empty/whitespace. The vacuity lint throws `VACUOUS_FALSIFIER` when the falsifier is under 20 characters **or** matches `/^(if )?(it|this|that) (did ?n[o']?t|does ?n[o']?t|would ?n[o']?t) work/i` or normalizes to the same text as the assertion — keep the rule list in one exported `VACUITY_PATTERNS` array so it is greppable and extensible.
+
+**Do not try to detect meaning from vocabulary.** An earlier draft of this task required the falsifier to contain a verb from a fixed list, which rejected `"The focused command prints two rows instead of one."` — a perfectly good falsifier whose verb happened to be absent. It is also English-only, and it is the same mistake as matching a localised error message by substring (see Task C1). The lint deliberately catches only the laziest cases; the `discriminating_test` rung is the real check.
 
 `validateResponse` switches on verdict: `contest` requires non-empty `rationale`, non-empty `falsifier`, and at least one evidence item; `uphold` requires at least one evidence item whose `sha` **or** `command` differs from every item already on the claim; `concede`, `accept`, `clarify`, `amend` have their own required fields per the spec.
 

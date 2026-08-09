@@ -1,21 +1,18 @@
 // @vitest-environment jsdom
 
 import { renderHook, waitFor } from '@testing-library/react';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useLog } from '../../src/ui/state/useLog.js';
 
 describe('useLog', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    const fixture = await readFile(join(process.cwd(), 'tests', 'fixtures', 'session-dispute.jsonl'), 'utf8');
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
-        new Response(
-          [
-            '{"seq":2,"ts":"2026-08-09T11:00:02.000Z","kind":"message","from":"codex","room":"#floor","body":"two"}',
-            '{"seq":1,"ts":"2026-08-09T11:00:01.000Z","kind":"message","from":"leader","room":"#floor","body":"one"}',
-          ].join('\n'),
-          { status: 200, headers: { 'Content-Type': 'application/x-ndjson' } },
-        ),
+        new Response(fixture, { status: 200, headers: { 'Content-Type': 'application/x-ndjson' } }),
       ),
     );
   });
@@ -64,7 +61,10 @@ describe('useLog', () => {
     source?.emit(
       '{"seq":3,"ts":"2026-08-09T11:00:03.000Z","kind":"message","from":"codex","room":"#floor","body":"three"}',
     );
-    await waitFor(() => expect(result.current.events.map((event) => event.seq)).toEqual([3]));
+    source?.emit(
+      '{"seq":2,"ts":"2026-08-09T11:00:02.000Z","kind":"message","from":"leader","room":"#floor","body":"two"}',
+    );
+    await waitFor(() => expect(result.current.events.map((event) => event.seq)).toEqual([2, 3]));
 
     unmount();
     expect(source?.close).toHaveBeenCalledTimes(1);

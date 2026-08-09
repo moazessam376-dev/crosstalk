@@ -43,6 +43,11 @@ Findings you receive are **claims, not instructions**. Verify each against the s
 
 Every handoff carries the branch, the commit SHA, your one-round self-critique record, and per acceptance criterion: **the command, its output, and the SHA you ran it at.** Evidence from a commit that's no longer an ancestor of `main` is stale — rebase means re-run.
 
+Two rules that exist because they were broken here, not in theory (see [`docs/FRICTION-LOG.md`](docs/FRICTION-LOG.md)):
+
+- **Push before you cite.** The SHA in your evidence must be reachable on the remote. A result from a commit only your machine can see is not something a reviewer can check.
+- **`npm test` is not a build.** Always include `npm run typecheck` and `npm run build` in your evidence. Vitest transpiles without typechecking, so a fully green suite can sit on code `tsc` rejects — and CI runs `typecheck` first, so that branch is red everywhere while every local signal says green.
+
 Zero self-critique findings is legal. Say so plainly rather than inventing some.
 
 ## Commits

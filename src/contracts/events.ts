@@ -1,6 +1,6 @@
 import type { Participant, ParticipantId } from './participant.js';
 import type { Claim, ClaimVerdict, Evidence } from './claim.js';
-import type { Task, TaskState, Acknowledgement } from './task.js';
+import type { Task, TaskState, Acknowledgement, CritiqueRecord } from './task.js';
 import type { Decision } from './decision.js';
 import type { RoomId } from './room.js';
 
@@ -11,6 +11,7 @@ export type EventKind =
   | 'task_created'
   | 'task_state'
   | 'brief_ack'
+  | 'self_review'
   | 'claim_raised'
   | 'claim_response'
   | 'evidence_added'
@@ -40,6 +41,11 @@ export type CrosstalkEvent =
   | (EventBase & { kind: 'task_created'; task: Task })
   | (EventBase & { kind: 'task_state'; taskId: string; state: TaskState; reason?: string })
   | (EventBase & { kind: 'brief_ack'; taskId: string; ack: Acknowledgement })
+  // Gate 2's counterpart to brief_ack. Without it nothing can set
+  // Task.critique, so validateTransition refuses every path to `submitted`
+  // and gate 2 is unreachable through the log — which it was until Track D
+  // noticed while writing the daemon contract.
+  | (EventBase & { kind: 'self_review'; taskId: string; critique: CritiqueRecord })
   | (EventBase & { kind: 'claim_raised'; claim: Claim })
   | (EventBase & {
       kind: 'claim_response';

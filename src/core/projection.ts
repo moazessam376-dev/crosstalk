@@ -49,6 +49,13 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
       }
       return state;
     }
+    case 'self_review': {
+      const task = state.tasks.get(event.taskId);
+      if (task) {
+        state.tasks.set(event.taskId, { ...task, critique: event.critique });
+      }
+      return state;
+    }
     case 'claim_raised':
       state.claims.set(event.claim.id, { ...event.claim, evidence: [...event.claim.evidence] });
       return state;

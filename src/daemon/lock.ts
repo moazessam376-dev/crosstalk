@@ -13,6 +13,17 @@ export interface LockInfo {
 const HEALTH_TIMEOUT_MS = 500;
 
 /**
+ * How long a lock may sit with no recorded url before it counts as stale.
+ *
+ * A daemon records its address within milliseconds of binding, so the no-url
+ * state exists only between acquiring the lock and listening. A lock that has
+ * been in it for seconds belongs to a startup that died, and leaving the
+ * repository locked on that basis is worse than the millisecond-wide race of
+ * reclaiming one that is genuinely still starting.
+ */
+const STARTUP_GRACE_MS = 5_000;
+
+/**
  * Exclusive `wx` open, holding the pid.
  *
  * A pid that is *present* is not proof the daemon is alive — pids are recycled,
@@ -97,8 +108,17 @@ async function writeExclusive(path: string, info: LockInfo): Promise<void> {
 
 async function isHolderAlive(info: LockInfo): Promise<boolean> {
   if (!isPidAlive(info.pid)) return false;
-  if (info.url === undefined) return true;
+  // No url yet: either mid-startup, or a startup that died — and on a busy
+  // machine the pid check alone cannot tell those apart, because a dead
+  // holder's pid can already have been recycled onto something live.
+  if (info.url === undefined) return !isStartupExpired(info);
   return respondsToHealth(info.url);
+}
+
+function isStartupExpired(info: LockInfo): boolean {
+  const startedAt = Date.parse(info.startedAt);
+  if (Number.isNaN(startedAt)) return true;
+  return Date.now() - startedAt > STARTUP_GRACE_MS;
 }
 
 function isPidAlive(pid: number): boolean {

@@ -7,7 +7,7 @@ const projectRoot = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
-  publicDir: resolve(projectRoot, 'tests'),
+  publicDir: resolve(projectRoot, 'tests', 'fixtures'),
   build: {
     outDir: resolve(projectRoot, 'dist', 'ui'),
   },

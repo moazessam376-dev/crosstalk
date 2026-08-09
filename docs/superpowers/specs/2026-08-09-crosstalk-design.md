@@ -244,7 +244,7 @@ Configured as an ordered list of rungs, each with a timeout. Falling off the end
 
 **`discriminating_test`** — each side proposes a command derived from its falsifier whose result differs depending on who is right. If both propose, and either accepts the other's, it runs at a stated SHA and the result resolves the claim. If neither can produce such a command, that failure is recorded against both falsifiers and the rung is skipped.
 
-**`third_agent`** — an uninvolved participant rules on the record. It has been observing `dispute:<id>` since creation. Its ruling must itself carry a falsifier; a ruling without one is rejected like any other claim.
+**`third_agent`** — an uninvolved participant rules on the record. It has been observing `dispute:<id>` since creation. Its ruling must itself carry a falsifier; a ruling without one is rejected like any other claim. **Requires at least two workers**; with fewer, the rung has nobody to call and is skipped with a warning at init (§14.1), not silently at dispute time.
 
 **`leader`** — the leader decides, with recorded rationale. Terminal. This is the default last rung: it never stalls, and by this point the worker has been heard on the record with evidence, which is the property that was missing.
 
@@ -583,7 +583,13 @@ mirror:
     pollSeconds: 30
 ```
 
-Validated at startup by `crosstalk doctor`, which rejects: a non-terminal last ladder rung, `supervised` on a GUI harness, a worktree path outside the repo, a participant whose `briefFile` is unwritable, and duplicate participant ids.
+Validated at startup by `crosstalk doctor`.
+
+**Rejects** — a non-terminal last ladder rung; `supervised` on a GUI harness; a worktree path outside the repo; an unwritable `briefFile`; duplicate participant ids; zero or multiple participants with `role: leader`.
+
+**Warns** — fewer than two workers, so `third_agent` will be skipped (§5.3); mirror enabled with no remote or no GitHub credential; a brief file whose version is stale or hand-edited; a harness whose `mcp` probe failed, naming the tier it fell back to.
+
+Warnings never block startup. Every one of them names the capability being lost, not just the condition.
 
 ---
 
@@ -613,7 +619,51 @@ The purpose is calibration, not scoring. The single most useful number for a lea
 
 ---
 
-## 14. Packaging and open source
+## 14. Prerequisites, packaging and first run
+
+### 14.1 What a new user must already have
+
+Crosstalk cannot install or authenticate any of these. `crosstalk doctor` detects each one and prints the exact remedy rather than failing later.
+
+| Requirement | Why | If missing |
+|---|---|---|
+| **Node ≥ 20** | runtime | hard stop |
+| **git ≥ 2.5** | `git worktree` | hard stop |
+| **a git repository with at least one commit** | branches, worktrees, SHA-stamped evidence | hard stop |
+| **≥ 1 agent harness, installed and signed in** | Claude Code, Codex, or Cursor — each has its own subscription or key | hard stop |
+| **≥ 2 workers** | the `third_agent` ladder rung needs an uninvolved peer | warn, and skip that rung |
+| **`gh` CLI or `GITHUB_TOKEN`** | the mirror only | warn, mirror disabled |
+| **a GitHub remote** | the mirror only | warn, mirror disabled |
+
+The honest headline: **Crosstalk brings no agents with it.** It is orchestration, not a model provider. A user with zero harnesses installed gets a working install and nothing to run — `doctor` says so in those words rather than letting them discover it at first task.
+
+The `≥ 2 workers` row is a real constraint, not a nicety. With one worker, `third_agent` has nobody to call, and a ladder of `[discriminating_test, third_agent, leader]` silently degrades to `[discriminating_test, leader]`. Doctor states that explicitly at init rather than at the first dispute.
+
+### 14.2 Runtime dependencies
+
+Deliberately small, since every dependency is a cross-platform risk:
+
+- `@modelcontextprotocol/sdk` — tier-1 transport.
+- `yaml` — config. Pure JS, no build step.
+- Everything else is `node:` built-ins: `http`, `fs`, `path`, `child_process`, `crypto`.
+- **No native modules.** No `better-sqlite3`, no `node-pty`, no Python, no Docker. The event log is JSONL and the projection is in memory precisely so this stays true — a native module would break `npx` on the first Windows machine without build tools.
+
+The hub UI is built with a normal toolchain and shipped **pre-built** in the package, so installing users never run a build.
+
+### 14.3 First run
+
+`crosstalk init` is interactive and does the whole onboarding:
+
+1. Probes for installed harnesses and reports what it found, including CLI-vs-app variants.
+2. Asks which to enlist and in what role.
+3. Creates `.crosstalk/worktrees/<id>` per worker.
+4. Writes each participant's brief to its harness's `briefFile`, and registers the MCP server in its config path.
+5. Runs `doctor` and prints every warning.
+6. Prints the exact kickoff line to paste into each agent, per harness.
+
+`crosstalk down` is the inverse and matters more than it sounds: it stops the daemon and **removes the worktrees it created**. Orphaned git worktrees are a genuinely irritating thing to leave on someone's machine, and a tool that creates three of them owes the user a clean exit.
+
+### 14.4 Packaging
 
 - **npm package** `crosstalk-ai` (bare `crosstalk` is a squatted `0.0.1`), **binaries** `crosstalk` and `ct`. Usable as `npx crosstalk-ai init`.
 - **Commands:** `init` · `doctor` · `up` · `daemon` · `mcp` · `post` · `await` · `task` · `claim` · `decision` · `ledger` · `ui` · `mirror`.

@@ -153,7 +153,13 @@ Mutation 4 came from the review: it survives the other three, which is exactly w
 
 `tests/ui/verdict-parity.test.ts` exists on `main` at `294ebd6` — the review's claim that it was missing was true at that branch point and is now stale. But it maps **verdicts** to states, and this reopen is **evidence-driven**, so it does not cover this case.
 
-**This is the leader's to fix, and it is being done now rather than filed** — an unowned obligation is how F-04 and F-05 survived a concession and shipped anyway.
+**Owned by the leader. Sequenced to land with F2, not before it — and the sequencing is not an excuse.**
+
+Doing it now would be wrong, which I only noticed on checking: the core does not reopen anything yet, so a UI that displayed `open` for a stale-evidence accepted claim would diverge from the core in the *opposite* direction until F2 ships. The parity test would not catch it either, because it maps verdicts and this is evidence-driven.
+
+So the trigger is explicit rather than remembered: **Track F states in its F2 handoff that F2 has landed, and the leader lands F5 in the same review round.** F5 is not done until `displayState` and the core agree on a reopened claim, with a test that fails if either side changes alone.
+
+An owned obligation with a named trigger is a different thing from a deferred one. F-04 and F-05 shipped because a concession ended the exchange and nothing carried the debt forward; this carries it in the artifact that Track F has to read anyway.
 
 ---
 

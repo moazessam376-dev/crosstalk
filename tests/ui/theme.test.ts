@@ -8,9 +8,21 @@ const REQUIRED = ['--surface-base', '--surface-panel', '--surface-raised', '--bo
   '--font-ui', '--font-mono', '--size-ui', '--size-mono', '--row-h', '--radius'];
 
 describe('theme tokens', () => {
-  it('defines every design token', async () => {
+  it('defines every design token on both theme selectors', async () => {
     const css = await readFile('src/ui/theme.css', 'utf8');
-    for (const token of REQUIRED) expect(css).toContain(token);
+    for (const selector of [':root', ':root[data-theme="light"]']) {
+      const selectorStart = css.indexOf(selector);
+      expect(selectorStart).toBeGreaterThanOrEqual(0);
+      const blockStart = css.indexOf('{', selectorStart);
+      const blockEnd = css.indexOf('}', blockStart);
+      expect(blockStart).toBeGreaterThan(selectorStart);
+      expect(blockEnd).toBeGreaterThan(blockStart);
+      const declarations = css.slice(blockStart, blockEnd);
+
+      for (const token of REQUIRED) {
+        expect(declarations).toMatch(new RegExp(`${token}\\s*:`));
+      }
+    }
   });
 
   it('has no raw hex colours outside theme.css', async () => {

@@ -181,6 +181,16 @@ async function checkParticipant(
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
   const workspace = resolve(repoRoot, participant.workspace);
+  if (participant.role === 'worker' && workspace === repoRoot) {
+    findings.push(finding(
+      'reject',
+      'WORKER_IN_REPO_ROOT',
+      `Worker ${participant.id} resolves to the repository root, which belongs to the leader.`,
+      'Give every worker its own repo-relative git worktree under .crosstalk/worktrees/<id>.',
+    ));
+    return findings;
+  }
+
   if (!isWithin(repoRoot, workspace)) {
     findings.push(finding(
       'reject',

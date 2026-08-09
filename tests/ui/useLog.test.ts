@@ -22,7 +22,7 @@ describe('useLog', () => {
   });
 
   it('loads a fixture log into ordered events', async () => {
-    const { result } = renderHook(() => useLog({ kind: 'fixture', path: '/fixtures/session-dispute.jsonl' }));
+    const { result } = renderHook(() => useLog({ kind: 'fixture', path: '/session-dispute.jsonl' }));
     await waitFor(() => expect(result.current.events.length).toBeGreaterThan(0));
     const seqs = result.current.events.map((e) => e.seq);
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));

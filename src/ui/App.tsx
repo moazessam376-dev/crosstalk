@@ -4,7 +4,7 @@ import { Layout } from './layout/Layout.js';
 import { deriveState } from './state/derive.js';
 import { useLog } from './state/useLog.js';
 
-const DEFAULT_SOURCE = { kind: 'fixture', path: '/fixtures/session-dispute.jsonl' } as const;
+const DEFAULT_SOURCE = { kind: 'fixture', path: '/session-dispute.jsonl' } as const;
 
 export default function App() {
   const { events, connected } = useLog(DEFAULT_SOURCE);

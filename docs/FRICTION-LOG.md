@@ -149,3 +149,27 @@ The shape is worth noticing. The failure surfaced hours later, in a different pe
 **Changed.** Protocol-bearing kinds get typed routes that take the validators' own input types and let the daemon construct the event; `POST /events` accepts only kinds with no invariants to violate, and rejects anything else with an error naming the correct route.
 
 The lesson generalises past this bug: **"at the API boundary" is not a location, it is every surface a client can reach.** A rule enforced at one entrance and not the other is not enforced — it is documented. And it was found by the cheapest review in the system, before a line of the implementation existed.
+
+---
+
+## 13 · A gate nothing could ever pass, and two fixtures that passed it anyway
+
+**What happened.** Writing the daemon contract, a worker found it could not implement `submit`. `validateTransition` refuses `submitted` unless `Task.critique` is set, and **no event in the contract could carry a `CritiqueRecord`.** Gate 2 — one of the two gates the entire task lifecycle rests on — was unreachable through the log.
+
+Gate 1 had `brief_ack`. Gate 2 had nothing.
+
+The worker implementing the gate had built it exactly as specified. The specification simply never gave the log a way to satisfy it.
+
+Checking the claim turned up the worse half: **both golden fixtures transitioned to `submitted` with no critique anywhere.** They had been in the repository all day, asserted against by three merged tracks, encoding a state the project's own validators forbid.
+
+**Why the design permitted it.** The two halves never met.
+
+`project` folds events into state and deliberately does not validate — correct, because a projection replays history rather than authorising it. The validators are tested against hand-built state, not against fixtures — also correct, because building fixture state through the projection would let a projection bug hide a validator bug.
+
+Both decisions were right. Together they left no test anywhere that asked whether the golden fixtures were *legal*. Every artifact was individually verified and the relationship between them was unexamined — the same shape as entry 7, where a component test and a wiring bug passed each other in the dark, and as B-005, where two projections each satisfied their own tests and contradicted each other.
+
+**Changed.** `self_review` is gate 2's counterpart to `brief_ack`. But the fix that matters is the guard: every `task_state` transition in every fixture is now replayed through `validateTransition` against the state projected from the events preceding it.
+
+It earned its place immediately. The first fixture was repaired by hand; on the next run the guard failed on the second fixture with the identical defect, which no one had thought to look for.
+
+**The pattern this log keeps finding, stated at its most general:** a review that examines artifacts one at a time cannot see a defect that lives *between* two artifacts. Nothing was wrong with the validator. Nothing was wrong with the projection. Nothing was wrong with the fixtures on their own terms. The defect was in the agreement they were all assumed to have and none of them checked.

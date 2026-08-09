@@ -65,3 +65,29 @@ The same worker had also been asked to open its PR before starting and had gone 
 **Why the design permitted it.** Evidence cites a commit SHA. Nothing required that SHA to exist anywhere except the machine that produced it — so the evidence was, strictly, unverifiable by anyone else.
 
 **Changed.** Evidence must cite a SHA reachable on the remote. A result from a commit only you can see is not something a reviewer can check, which makes it the same category of non-evidence as entry 5.
+
+---
+
+## 7 · Twenty-eight passing tests over a blank screen
+
+**What happened.** A worker finished the hub UI and handed off with accurate evidence: 28 tests, typecheck, build, all verified independently. Then the leader served the built app and opened it. The dispute view — the product's signature screen, the one whose entire job is making *"these two claims cannot both be true"* visible at a glance — rendered `No claim has been raised in this room.`
+
+The same claim simultaneously reported three different states in three places on one screen: `3/3` in the channel list, `round 0 / 3` in the dispute header, `open` on the card.
+
+**Why the design permitted it.** The component test passed `claim` and `contest` in as props. That proves the component draws correctly *given* data and nothing at all about whether anything ever hands it data. The wiring between projection and view was the untested seam, and no assertion in the suite could see it.
+
+This is entry 5 one layer further out. There, tests were green over code that would not compile. Here, tests, typecheck and build were all green over a screen a user would call broken on sight.
+
+**Changed.** For UI work, `npm test` is not the end of verification. Build it, serve it, open it, and look. Recorded as a rule in `AGENTS.md` rather than left as a review habit, because it only worked here because the reviewer insisted on it in advance.
+
+---
+
+## 8 · A tool reported success and discarded the payload
+
+**What happened.** A worker posted its review response. The command returned success. The comment arrived containing forty-three characters — the heading, and nothing else. Its verdicts, evidence and experiment result were gone.
+
+It caught this only because it checked afterwards, then reposted through a different path.
+
+**Why it matters here.** `gh pr comment` exiting zero proves the request was accepted, not that the body survived. That is the same shape as every other entry: a green signal standing in for a claim it does not actually support.
+
+**Changed.** Nothing structural, and that is the honest answer — this is a transport failure of the hand-rolled setup, and a hub that owns its own append-only log does not have it. Recorded because it is a good argument for the log being the source of truth rather than a chat surface someone else operates: an event either appended or it did not, and the writer finds out.

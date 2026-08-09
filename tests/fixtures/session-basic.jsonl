@@ -1,6 +1,6 @@
-{"seq":1,"ts":"2026-08-09T09:00:00.000Z","kind":"participant_joined","from":"leader","participant":"leader"}
-{"seq":2,"ts":"2026-08-09T09:00:01.000Z","kind":"participant_joined","from":"cursor","participant":"cursor"}
-{"seq":3,"ts":"2026-08-09T09:00:02.000Z","kind":"participant_joined","from":"codex","participant":"codex"}
+{"seq":1,"ts":"2026-08-09T09:00:00.000Z","kind":"participant_joined","from":"leader","participant":{"id":"leader","role":"leader","harness":"claude-code-app","model":"claude-opus-5","lifecycle":"attached","workspace":"."}}
+{"seq":2,"ts":"2026-08-09T09:00:01.000Z","kind":"participant_joined","from":"cursor","participant":{"id":"cursor","role":"worker","harness":"cursor-app","model":"grok-4.5","lifecycle":"attached","workspace":".crosstalk/worktrees/cursor"}}
+{"seq":3,"ts":"2026-08-09T09:00:02.000Z","kind":"participant_joined","from":"codex","participant":{"id":"codex","role":"worker","harness":"codex-app","model":"luna-5.6","lifecycle":"attached","workspace":".crosstalk/worktrees/codex"}}
 {"seq":4,"ts":"2026-08-09T09:00:10.000Z","kind":"message","from":"leader","room":"#floor","body":"Contracts are frozen. Track A starts on the event log."}
 {"seq":5,"ts":"2026-08-09T09:01:00.000Z","kind":"task_created","from":"leader","room":"task:T-01","task":{"id":"T-01","title":"Append-only event log","brief":"Implement EventLog with monotonic seq assignment, LF-only line endings, and truncation recovery on a torn final line.","specRefs":["6.1"],"assignee":"codex","deps":[],"acceptance":["seq starts at 1 and increases by 1 per append","written bytes contain no carriage return on any platform","reopening an existing log resumes seq","a torn final line is truncated to the last valid seq"],"state":"draft","branch":"ct/T-01-event-log"}}
 {"seq":6,"ts":"2026-08-09T09:01:01.000Z","kind":"task_state","from":"leader","room":"task:T-01","taskId":"T-01","state":"assigned"}

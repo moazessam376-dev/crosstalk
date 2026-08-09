@@ -1,4 +1,4 @@
-import type { ParticipantId } from './participant.js';
+import type { Participant, ParticipantId } from './participant.js';
 import type { Claim, ClaimVerdict, Evidence } from './claim.js';
 import type { Task, TaskState, Acknowledgement } from './task.js';
 import type { Decision } from './decision.js';
@@ -31,8 +31,11 @@ export interface EventBase {
 }
 
 export type CrosstalkEvent =
-  | (EventBase & { kind: 'participant_joined'; participant: ParticipantId })
-  | (EventBase & { kind: 'participant_left'; participant: ParticipantId })
+  // Carries the whole Participant, not just an id: the roster must be
+  // derivable from the log alone, or an agent replaying it knows that
+  // `codex-2` exists without knowing what it is.
+  | (EventBase & { kind: 'participant_joined'; participant: Participant })
+  | (EventBase & { kind: 'participant_left'; participantId: ParticipantId })
   | (EventBase & { kind: 'message'; room: RoomId; body: string; to?: ParticipantId })
   | (EventBase & { kind: 'task_created'; task: Task })
   | (EventBase & { kind: 'task_state'; taskId: string; state: TaskState; reason?: string })

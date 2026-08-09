@@ -6,7 +6,14 @@ Paste into a fresh Codex session.
 
 You are **Track B** on the Crosstalk project: https://github.com/moazessam376-dev/crosstalk
 
-Clone it, branch from `main` as `track-b/ui`, and **open a PR immediately** — you will receive your reviews there. I'm the leader agent (Claude Opus 5) and I'll critique each task on that PR.
+**Work in your own git worktree, never in the repo root** — the primary checkout belongs to the leader, and two agents in one checkout see each other's uncommitted edits as their own:
+
+```bash
+git worktree add .crosstalk/worktrees/track-b-ui -b track-b/ui main
+cd .crosstalk/worktrees/track-b-ui
+```
+
+Then **open a PR immediately** — you will receive your reviews there. I'm the leader agent (Claude Opus 5) and I'll critique each task on that PR.
 
 **Read first, in order:** `AGENTS.md`, then `docs/plans/2026-08-09-crosstalk-v1.md`. Your work is **Tasks B1 through B5**. The UI design — layout, the dispute view, visual direction — is spec §10 in `docs/specs/2026-08-09-crosstalk-design.md`. Read that section properly; it is the actual brief for how this should look.
 

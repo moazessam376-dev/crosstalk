@@ -120,10 +120,18 @@ export interface Participant {
   id: ParticipantId;
   role: Role;
   harness: string;
+  /** A harness does not identify a model: several run on cursor-app and
+   *  they do not behave alike. The ledger aggregates by this. */
+  model?: string;
   lifecycle: Lifecycle;
+  /** Repo-relative path to a git worktree. Never the repo root — that is
+   *  the leader's checkout and no worker may occupy it. */
   workspace: string;
   transport?: Tier;
 }
+
+/** Ids become directory names: case-insensitive filesystems and MAX_PATH. */
+export const PARTICIPANT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;
 ```
 
 - [ ] **Step 3: Write `src/contracts/claim.ts`**
@@ -253,8 +261,11 @@ export type EventKind =
 export interface EventBase { seq: number; ts: string; from: ParticipantId; room?: RoomId; }
 
 export type CrosstalkEvent =
-  | (EventBase & { kind: 'participant_joined'; participant: ParticipantId })
-  | (EventBase & { kind: 'participant_left'; participant: ParticipantId })
+  // Carries the whole Participant: the roster must be derivable from the
+  // log alone, or a replaying agent learns `codex-2` exists without
+  // learning whether it is a leader, a worker, or what model it runs.
+  | (EventBase & { kind: 'participant_joined'; participant: Participant })
+  | (EventBase & { kind: 'participant_left'; participantId: ParticipantId })
   | (EventBase & { kind: 'message'; room: RoomId; body: string; to?: ParticipantId })
   | (EventBase & { kind: 'task_created'; task: Task })
   | (EventBase & { kind: 'task_state'; taskId: string; state: TaskState; reason?: string })
@@ -1210,6 +1221,19 @@ it('rejects supervised lifecycle on an app harness', async () => {
   expect(f).toContainEqual(expect.objectContaining({ level: 'reject', code: 'SUPERVISED_GUI_HARNESS' }));
 });
 
+// Observed on day one of building Crosstalk with Crosstalk: a worker told
+// "one worktree per participant" branched in place in the repo root, which
+// is the leader's checkout. It had followed the instruction exactly.
+it('rejects a worker whose workspace resolves to the repo root', async () => {
+  const f = await doctor(cfg({ participants: [{ id:'codex', role:'worker', workspace:'.' }] }), repo);
+  expect(f).toContainEqual(expect.objectContaining({ level: 'reject', code: 'WORKER_IN_REPO_ROOT' }));
+});
+
+it('allows the leader to occupy the repo root', async () => {
+  const f = await doctor(cfg({ participants: [{ id:'leader', role:'leader', workspace:'.' }] }), repo);
+  expect(f.filter((x) => x.code === 'WORKER_IN_REPO_ROOT')).toHaveLength(0);
+});
+
 it('rejects zero or multiple leaders', async () => {
   expect(await doctor(cfg({ leaders: 0 }), repo)).toContainEqual(expect.objectContaining({ code: 'LEADER_COUNT' }));
   expect(await doctor(cfg({ leaders: 2 }), repo)).toContainEqual(expect.objectContaining({ code: 'LEADER_COUNT' }));
@@ -1270,13 +1294,13 @@ Runs after A, B and C merge. Assigned one task at a time to whichever agent is f
 - [ ] **Step 4: Run — PASS**
 - [ ] **Step 5:** `git commit -m "Stream events over SSE and wire the hub to the live log"`
 
-### Task D3: MCP server — ten tools
+### Task D3: MCP server — twelve tools
 
 **Files:** Create `src/mcp/server.ts`, `src/mcp/tools.ts` · Test `tests/mcp/tools.test.ts`
 
 - [ ] **Step 1: Failing test** — `raise_claim` with an empty `falsifier` returns an MCP tool **error** whose message names `MISSING_FALSIFIER`; `await_turn` returns `{idle:true}` after its cap even when nothing arrives; `await_turn` returns immediately when a `@human` message lands in a room the caller is in.
 - [ ] **Step 2: Run — FAIL**
-- [ ] **Step 3: Implement** — the ten tools from spec §6.2 over stdio, each delegating to the Track A validators. `await_turn` caps at 50s regardless of the requested timeout. Human messages resolve a pending wait immediately. Validation failures surface as tool errors, never as successful results containing an error string — the agent must see a failure it can retry.
+- [ ] **Step 3: Implement** — the twelve tools from spec §6.2 over stdio, each delegating to the Track A validators. `roster()` returns id, role, harness, model and live status per participant; `board()` returns every task's id, title, assignee, state and branch — **metadata only, no message bodies**, so visibility scales past a dozen agents without becoming a noise flood. `await_turn` caps at 50s regardless of the requested timeout. Human messages resolve a pending wait immediately. Validation failures surface as tool errors, never as successful results containing an error string — the agent must see a failure it can retry.
 - [ ] **Step 4: Run — PASS**
 - [ ] **Step 5:** `git commit -m "Add tier-1 MCP server enforcing protocol validators in-band"`
 

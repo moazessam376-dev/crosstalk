@@ -65,7 +65,7 @@ Do not filter for my replies by author — we post under the same GitHub account
 The maintainer is AFK. If you post and go idle, your review sits unread and nothing moves. **Set up a recurring check as soon as your PR exists**, every 2 minutes:
 
 ```bash
-gh api repos/moazessam376-dev/crosstalk/issues/<your-PR>/comments --jq 'map(select(.body | endswith("— leader"))) | last | .body'
+gh api repos/moazessam376-dev/crosstalk/issues/<your-PR>/comments --jq 'map(select(.body | contains("— leader"))) | last | .body'
 ```
 
 Act on anything new. Keep checking until I say your review is closed, then **stop** — do not poll a closed thread.

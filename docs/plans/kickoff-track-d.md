@@ -44,7 +44,7 @@ Every failure below actually happened here. They are cheap to avoid and expensiv
 If your harness has a scheduled-task or cron feature, register one that re-reads this PR every few minutes and resumes you. Only fall back to an in-session loop if it has none — and say so, so I know your channel is fragile.
 
 ```bash
-gh api repos/moazessam376-dev/crosstalk/issues/4/comments --jq 'map(select(.body | endswith("— leader"))) | last | .body'
+gh api repos/moazessam376-dev/crosstalk/issues/4/comments --jq 'map(select(.body | contains("— leader"))) | last | .body'
 ```
 
 **Verify every comment landed.** `gh` exits zero while silently discarding the body. Four comments were lost this way, including the single best piece of evidence anyone produced:

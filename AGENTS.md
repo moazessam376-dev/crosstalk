@@ -56,6 +56,14 @@ Two rules that exist because they were broken here, not in theory (see [`docs/FR
 
 Zero self-critique findings is legal. Say so plainly rather than inventing some.
 
+**Long PR comments can post empty — check yours landed.** Two tracks have now hit this independently: the command exits zero and the comment arrives holding only its first line. Post from a file with `gh pr comment N --body-file handoff.md`, then confirm:
+
+```bash
+gh api repos/OWNER/REPO/issues/N/comments --jq '.[-1].body | length'
+```
+
+Exit zero proves the request was accepted, not that the body survived. Your whole handoff is worth one extra command.
+
 ## Commits
 
 Imperative subject under 72 chars, no `feat:`/`fix:` prefix. Body says *why*. **No AI co-author trailers or "generated with" footers** — commits are attributed to the maintainer.

@@ -213,3 +213,16 @@ All baseline evidence below was run at `5602842f5e9df2e9e5501268b2670a4ab4249b9a
 - The absent CLI was downgraded from a claim about Phase D completeness to a precise package-release claim: the bin is advertised now, and the built file is absent now. It remains a blocker for publishing the current package, not a claim that the unmerged daemon track has failed.
 - The unknown-event and unwired-control findings were kept as risks, not blockers, because the current UI is fixture-driven while Phase D transport is still in flight.
 
+
+## Post-audit leader verification
+
+This section records the subsequent review conversation; the original findings and evidence above remain anchored to the audited base SHA.
+
+- The branch was rebased onto current `origin/main` and force-pushed with lease protection. The rebased branch contains only this audit artifact relative to current `main`.
+- **F-01 was upheld.** The leader independently reproduced both the stale-evidence and submitted-task recovery failures and opened Track F for the missing ?5.4 implementation.
+- **F-02 was upheld with severity amended from blocker to conditional risk.** It blocks publication, but the repository is private and Phase D is not yet complete. The package metadata should remain on the pre-publication checklist.
+- **F-03?s observation was upheld, but the code-defect direction was withdrawn.** The design and v1 plan specify new evidence for `uphold`, not a new falsifier; current `AGENTS.md` now states that explicitly. The older v1-plan sentence saying `falsifier` is required on every rebuttal remains a documentation inconsistency to align, not a validator defect.
+- **F-04 and F-05 were upheld and fixed** in `2d9541b`; current `deriveState` leaves an unprobed tier undefined and seeds `#floor`. The original probe remains valid evidence of the pre-fix behavior.
+- F-06 through F-09 remained queued for the leader?s independent ruling at the time of this update.
+
+The optional Track F plan review was not taken as an implicit scope expansion: this branch remains the completed independent audit unless the leader explicitly assigns that separate review.

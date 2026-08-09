@@ -11,6 +11,7 @@ export class EventLog {
   #events: CrosstalkEvent[];
   #lastSeq: number;
   #appendTail: Promise<void> = Promise.resolve();
+  #closePromise: Promise<void> | undefined;
 
   private constructor(handle: FileHandle, events: CrosstalkEvent[], lastSeq: number) {
     this.#handle = handle;
@@ -77,6 +78,10 @@ export class EventLog {
     return cloneEvent(event);
   }
 
+  async close(): Promise<void> {
+    this.#closePromise ??= this.#appendTail.then(() => this.#handle.close());
+    await this.#closePromise;
+  }
   async read(): Promise<CrosstalkEvent[]> {
     return this.#events.map((event) => cloneEvent(event));
   }

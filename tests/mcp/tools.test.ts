@@ -299,6 +299,35 @@ describe('mcp tools against a real daemon', () => {
     });
   });
 
+  // Added because a mutation survived: setting await_turn's `since` to
+  // undefined broke nothing, so nothing was testing that it reached the server.
+  // The daemon tracks a per-participant delivered mark, which makes the default
+  // path and the explicit path look identical until you re-read something you
+  // have already consumed.
+  it('forwards await_turn\'s `since`, so a caller can re-read what it already consumed', async () => {
+    await withDaemon(async (f) => {
+      const codex = f.as('codex');
+      await callTool(f.as('leader'), 'say', { room: '#floor', body: 'review posted' });
+
+      const first = payload(await callTool(codex, 'await_turn', { timeout_s: 5 })) as {
+        events: CrosstalkEvent[];
+      };
+      expect(first.events.length).toBeGreaterThan(0);
+
+      // The delivered mark has advanced, so the default path now has nothing.
+      expect(payload(await callTool(codex, 'await_turn', { timeout_s: 1 }))).toEqual({ idle: true });
+
+      // ...but an explicit `since` must override that mark. Without it being
+      // forwarded, this is idle too and the test cannot tell the difference.
+      const replayed = payload(await callTool(codex, 'await_turn', { timeout_s: 1, since: 0 })) as {
+        events: CrosstalkEvent[];
+      };
+      expect(replayed.events.some((event) => event.kind === 'message' && event.body === 'review posted')).toBe(
+        true,
+      );
+    });
+  });
+
   it('await_turn wakes on another participant speaking, and not on the caller itself', async () => {
     await withDaemon(async (f) => {
       const codex = f.as('codex');

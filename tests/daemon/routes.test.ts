@@ -30,12 +30,33 @@ participants:
     workspace: .crosstalk/worktrees/cursor
 `;
 
-async function tempRepo(): Promise<string> {
+async function tempRepo(config: string = CONFIG): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'ct-routes-'));
-  await writeFile(join(dir, 'crosstalk.yaml'), CONFIG, 'utf8');
+  await writeFile(join(dir, 'crosstalk.yaml'), config, 'utf8');
   await mkdir(join(dir, '.crosstalk'), { recursive: true });
   return dir;
 }
+
+/**
+ * `policy` replaces `DEFAULT_POLICY` wholesale in the loader
+ * (`src/daemon/config.ts:78`), so a partial block would leave `ladder` and
+ * `rungTimeouts` undefined. Spelled out in full for that reason.
+ */
+const configWithMaxRounds = (maxRounds: number): string => `${CONFIG}policy:
+  selfCritique:
+    required: true
+    minRounds: 1
+  leaderCritique:
+    maxRounds: 2
+  dispute:
+    maxRounds: ${maxRounds}
+    ladder: [discriminating_test, third_agent, leader]
+    rungTimeouts:
+      discriminating_test: 30m
+      third_agent: 30m
+  taskAcceptance:
+    method: leader
+`;
 
 async function withDaemon<T>(fn: (d: DaemonHandle) => Promise<T>): Promise<T> {
   const daemon = await startDaemon({ repo: await tempRepo() });
@@ -533,6 +554,37 @@ describe('protocol events reach the people they concern', () => {
       stopped = true;
     } finally {
       if (!stopped) await daemon.close();
+    }
+  });
+});
+
+describe('GET /config.json', () => {
+  // Track C reads `maxRounds` from here for the round counter. The header and
+  // the channel row both hard-code 3 today, so the value has to be the loaded
+  // one — a served constant would let that bug survive the fix.
+  it('serves the loaded dispute maxRounds, not a constant', async () => {
+    const daemon = await startDaemon({ repo: await tempRepo(configWithMaxRounds(5)) });
+    try {
+      const body = await readJson<{ maxRounds: number }>(
+        await get(daemon, '/config.json', 'leader'),
+      );
+      expect(body.maxRounds).toBe(5);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  // The neighbouring case: a different config must move the served value.
+  // Together these two kill any hard-coded number, including a hard-coded 5.
+  it('moves with the config', async () => {
+    const daemon = await startDaemon({ repo: await tempRepo(configWithMaxRounds(7)) });
+    try {
+      const body = await readJson<{ maxRounds: number }>(
+        await get(daemon, '/config.json', 'leader'),
+      );
+      expect(body.maxRounds).toBe(7);
+    } finally {
+      await daemon.close();
     }
   });
 });

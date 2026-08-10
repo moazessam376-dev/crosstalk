@@ -37,6 +37,46 @@ export async function headSha(cwd: string): Promise<string> {
   return runGit(cwd, ['rev-parse', 'HEAD']);
 }
 
+/**
+ * The head of a named branch.
+ *
+ * Staleness is measured against `project.mainBranch` (spec §5.4), and `headSha`
+ * answers about whatever happens to be checked out. Nothing pins the daemon's
+ * checkout to the main branch, and inside one of the linked worktrees `init`
+ * creates it is pinned to something else by construction — so `rev-parse HEAD`
+ * compares every piece of evidence against the wrong commit.
+ *
+ * Resolved through `refs/heads/` rather than the bare name so a tag or a file
+ * of the same name cannot answer for the branch.
+ */
+export async function branchSha(cwd: string, branch: string): Promise<string> {
+  try {
+    return await runGit(cwd, ['rev-parse', '--verify', `refs/heads/${branch}`]);
+  } catch (error) {
+    throw new Error(
+      `No local branch "${branch}" in ${cwd}. Set project.mainBranch in .crosstalk/config.yaml to a branch this clone has, or check it out.`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * Whether `sha` names a commit this repository holds.
+ *
+ * Only ever asked after an ancestry check has already failed. Evidence can
+ * name a commit that was never pushed, or one that has since been pruned, and
+ * `merge-base --is-ancestor` exits 128 on an unknown object — indistinguishable
+ * from a broken repository unless somebody asks this question.
+ */
+export async function commitExists(sha: string, cwd: string): Promise<boolean> {
+  try {
+    await runGit(cwd, ['cat-file', '-e', `${sha}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function isAncestor(sha: string, of: string, cwd: string): Promise<boolean> {
   try {
     await runGit(cwd, ['merge-base', '--is-ancestor', sha, of]);

@@ -8,7 +8,15 @@ export const TASK_TRANSITIONS = {
   acknowledged: ['in_progress'],
   in_progress: ['self_reviewed', 'submitted'],
   self_reviewed: ['submitted'],
-  submitted: ['under_review'],
+  // `in_progress` is the leg back down (§5.4): a `rebase_notice` puts a
+  // submitted task there, and this table is the project's statement of which
+  // states a submitted task can reach — leaving it out has the table deny a
+  // move the log performs.
+  //
+  // It also makes a client-authored `submitted -> in_progress` legal, which is
+  // a widening of what a participant may do rather than a consequence of the
+  // notice. A6's authority table is what holds that to the assignee.
+  submitted: ['under_review', 'in_progress'],
   under_review: ['resolving', 'accepted'],
   resolving: ['under_review', 'accepted'],
   accepted: ['merged'],

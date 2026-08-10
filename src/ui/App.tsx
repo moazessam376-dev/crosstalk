@@ -4,7 +4,7 @@ import { Layout } from './layout/Layout.js';
 import { deriveState } from './state/derive.js';
 import { useLog, type LogSource } from './state/useLog.js';
 import { loadHubConfig, type HubConnection } from './state/hubConfig.js';
-import { postHumanAction, type HumanAction } from './state/humanAction.js';
+import { postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
 
 /**
  * Used when no daemon answers `/config.json` — `vite dev`, or a static build
@@ -41,7 +41,11 @@ export default function App({ connection: injected }: AppProps = {}) {
 
   const { events, connected } = useLog(sourceFor(connection));
   const [selectedRoom, setSelectedRoom] = useState<string | undefined>();
-  const state = deriveState(events);
+  // Undefined in fixture mode, and deliberately not defaulted. `deriveState`
+  // feeds the channel rows and the prop feeds the dispute header; both read
+  // this one value so the two can no longer disagree.
+  const maxRounds = connection.kind === 'live' ? connection.config.maxRounds : undefined;
+  const state = deriveState(events, maxRounds);
   const defaultRoom = connection.kind === 'live'
     ? connection.config.room
     : state.rooms.find((room) => room.kind === 'dispute')?.id ?? state.rooms[0]?.id;
@@ -96,6 +100,20 @@ export default function App({ connection: injected }: AppProps = {}) {
     createElement(Layout, {
       state,
       activeRoom,
+      maxRounds,
+      self: connection.kind === 'live' ? connection.config.self : undefined,
+      // Shown without a daemon too, and it says why it cannot post. The two
+      // canned buttons already answer this question that way, and a composer
+      // that vanishes instead would also hide it from `vite dev` and from
+      // every static build — which is where the design gets looked at.
+      onSend: activeRoom === undefined
+        ? undefined
+        : connection.kind === 'live'
+          ? (body: string) => postMessage(body, activeRoom)
+          : async () => ({ ok: false as const, reason: 'This hub is not connected to a daemon, so there is nobody to tell.' }),
+      onVote: connection.kind === 'live'
+        ? (decisionId: string, option: string, rationale: string) => postVote(decisionId, option, rationale)
+        : undefined,
       onSelectRoom: (roomId: string) => setSelectedRoom(roomId),
       onHumanAction,
     }),

@@ -26,8 +26,6 @@ export interface HubState {
   lastSeq: number;
 }
 
-const DEFAULT_MAX_ROUNDS = 3;
-
 function sortBySequence(events: readonly CrosstalkEvent[]): CrosstalkEvent[] {
   return [...events].sort((left, right) => left.seq - right.seq);
 }
@@ -77,14 +75,35 @@ function projectParticipants(events: readonly CrosstalkEvent[]): ParticipantView
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function projectRooms(events: readonly CrosstalkEvent[]): ChannelRoom[] {
+interface DecisionTrack {
+  room: string;
+  method: string;
+  ladder?: readonly string[];
+  /** The live rung, per rule 1 of the freeze. */
+  rung: number;
+  resolved: boolean;
+}
+
+/**
+ * Whether a decision is sitting on the human.
+ *
+ * Read from the live rung, never from `decision.currentRung` alone. Computed
+ * from the open-time snapshot, this fired only when `human` was the *first*
+ * rung — so a dispute that escalated all the way to the person holding
+ * terminal authority never told them (spec §10.3).
+ */
+function awaitsHuman(track: DecisionTrack): boolean {
+  if (track.resolved) return false;
+  return track.method === 'human' || track.ladder?.[track.rung] === 'human';
+}
+
+function projectRooms(events: readonly CrosstalkEvent[], maxRounds?: number): ChannelRoom[] {
   const rooms = new Map<string, ChannelRoom>();
   // #floor is seeded, not derived. It must exist before anyone has spoken, so
   // a log whose participants never posted there would otherwise contain no
   // evidence it exists at all. Spec §4.2. Every other room stays event-derived.
   rooms.set(FLOOR, { id: FLOOR, kind: channelKind(FLOOR) });
-  const decisionRooms = new Map<string, string | undefined>();
-  const pendingHumanByRoom = new Map<string, Set<string>>();
+  const decisions = new Map<string, DecisionTrack>();
 
   for (const event of events) {
     if (event.room && !rooms.has(event.room)) {
@@ -95,7 +114,7 @@ function projectRooms(events: readonly CrosstalkEvent[]): ChannelRoom[] {
       const room = rooms.get(event.room);
       if (room?.kind === 'dispute') {
         room.rounds = event.claim.rounds;
-        room.maxRounds = DEFAULT_MAX_ROUNDS;
+        room.maxRounds = maxRounds;
       }
     }
 
@@ -103,47 +122,54 @@ function projectRooms(events: readonly CrosstalkEvent[]): ChannelRoom[] {
       const room = rooms.get(event.room);
       if (room?.kind === 'dispute') {
         room.rounds = (room.rounds ?? 0) + 1;
-        room.maxRounds = DEFAULT_MAX_ROUNDS;
+        room.maxRounds = maxRounds;
       }
     }
 
-    if (event.kind === 'decision_opened') {
-      const decision = event.decision;
-      const awaitingHuman = decision.method === 'human' || decision.ladder?.[decision.currentRung ?? 0] === 'human';
-      decisionRooms.set(decision.id, event.room);
-      if (event.room) {
-        if (awaitingHuman) {
-          let pending = pendingHumanByRoom.get(event.room);
-          if (!pending) {
-            pending = new Set<string>();
-            pendingHumanByRoom.set(event.room, pending);
-          }
-          pending.add(decision.id);
-        }
-        const room = rooms.get(event.room);
-        if (room) room.awaitingHuman = (pendingHumanByRoom.get(event.room)?.size ?? 0) > 0;
-      }
+    if (event.kind === 'decision_opened' && event.room) {
+      decisions.set(event.decision.id, {
+        room: event.room,
+        method: event.decision.method,
+        ladder: event.decision.ladder,
+        rung: event.decision.currentRung ?? 0,
+        resolved: false,
+      });
+    }
+
+    // Rule 1: the live rung is the last `rung_entered`, not the open-time
+    // snapshot. This is the event that moves the badge.
+    if (event.kind === 'rung_entered') {
+      const track = decisions.get(event.decisionId);
+      if (track) track.rung = event.index;
     }
 
     if (event.kind === 'decision_resolved') {
-      const roomId = decisionRooms.get(event.decisionId);
-      if (roomId) {
-        pendingHumanByRoom.get(roomId)?.delete(event.decisionId);
-        const room = rooms.get(roomId);
-        if (room) room.awaitingHuman = (pendingHumanByRoom.get(roomId)?.size ?? 0) > 0;
-      }
+      const track = decisions.get(event.decisionId);
+      if (track) track.resolved = true;
     }
+  }
+
+  for (const room of rooms.values()) {
+    const pending = [...decisions.values()].filter((track) => track.room === room.id && awaitsHuman(track));
+    if (pending.length > 0) room.awaitingHuman = true;
   }
 
   return [...rooms.values()];
 }
 
-/** Build a read-only UI projection; replay order is always the event sequence. */
-export function deriveState(input: readonly CrosstalkEvent[]): HubState {
+/**
+ * Build a read-only UI projection; replay order is always the event sequence.
+ *
+ * `maxRounds` comes from the daemon's `/config.json` and is threaded in rather
+ * than defaulted. It is genuinely absent in fixture mode, and the honest render
+ * for an unknown denominator is no denominator — the two hard-coded 3s this
+ * replaces disagreed with each other and with the running config.
+ */
+export function deriveState(input: readonly CrosstalkEvent[], maxRounds?: number): HubState {
   const events = sortBySequence(input);
   return {
     participants: projectParticipants(events),
-    rooms: projectRooms(events),
+    rooms: projectRooms(events, maxRounds),
     events,
     lastSeq: events.at(-1)?.seq ?? 0,
   };

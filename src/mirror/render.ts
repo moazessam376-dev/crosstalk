@@ -1,4 +1,5 @@
 import type { Claim, Evidence } from '../contracts/claim.js';
+import type { Decision } from '../contracts/decision.js';
 
 export interface MirrorComment {
   /** GitHub's own field, present on reads and unused on writes. */
@@ -44,7 +45,7 @@ function renderEvidence(evidence: readonly Evidence[]): string[] {
  * over the previous body. Appending a reply per round would turn a five-round
  * dispute into five comments nobody reads in order.
  */
-export function renderClaimComment(claim: Claim): string {
+export function renderClaimComment(claim: Claim, decision?: Decision): string {
   const against = claim.against === 'brief' || claim.against === 'spec' ? `the ${claim.against}` : `\`${claim.against}\``;
 
   // `rounds` belongs in the heading, not only in the resolution line. The
@@ -72,6 +73,15 @@ export function renderClaimComment(claim: Claim): string {
   // resolution would publish a verdict the protocol has not reached.
   if (claim.state === 'resolved' && claim.resolution !== undefined) {
     lines.push('', `**Resolution.** ${claim.resolution}.`);
+  }
+
+  // The deciding decision, when the argument needed one. Rendered only where it
+  // exists: a section on every claim would publish an ordinary concession as an
+  // adjudication, and an open decision must not be given an outcome it has not
+  // reached.
+  if (decision !== undefined) {
+    const verdict = decision.outcome === undefined ? '_undecided_' : `**${decision.outcome}**`;
+    lines.push('', `**Decided by** ${decision.id} (${decision.method}) — ${verdict}`, '', `> ${decision.question}`);
   }
 
   return lines.join('\n');

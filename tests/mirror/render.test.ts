@@ -78,3 +78,46 @@ describe('the claim comment', () => {
     expect(findMarkedComment(comments, claimMarker('C-201'))).toBeUndefined();
   });
 });
+
+describe('the deciding decision', () => {
+  const decision = {
+    id: 'D-07',
+    question: 'Does the refund path double-credit?',
+    options: ['yes', 'no'],
+    voters: ['leader', 'codex', '@human'],
+    method: 'ladder' as const,
+    outcome: 'yes',
+    rationale: [],
+    claimId: 'C-118',
+    votes: { leader: 'yes', codex: 'yes' },
+  };
+
+  it('names the decision and its outcome on the claim it settled', () => {
+    const body = renderClaimComment(
+      claim({ state: 'resolved', resolution: 'upheld', rounds: 3 }),
+      decision,
+    );
+
+    expect(body).toContain('D-07');
+    expect(body).toContain('Does the refund path double-credit?');
+  });
+
+  /**
+   * The neighbouring case: a claim settled without a decision must not grow a
+   * decision section, or every ordinary concession would publish as an
+   * adjudication.
+   */
+  it('says nothing about a decision on a claim that never had one', () => {
+    const body = renderClaimComment(claim({ state: 'resolved', resolution: 'withdrawn', rounds: 1 }));
+
+    expect(body).not.toContain('Decided by');
+  });
+
+  it('reports an open decision as undecided rather than inventing an outcome', () => {
+    const { outcome: _outcome, ...open } = decision;
+    const body = renderClaimComment(claim({ state: 'contested', rounds: 2 }), open);
+
+    expect(body).toContain('D-07');
+    expect(body).not.toContain('yes');
+  });
+});

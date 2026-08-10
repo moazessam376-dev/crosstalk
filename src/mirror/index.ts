@@ -140,10 +140,22 @@ export async function startMirror(options: StartMirrorOptions): Promise<MirrorHa
       // Only enqueue a claim whose rendered body has actually changed. Without
       // this the mirror would re-read every claim's comments on every tick to
       // discover it had nothing to say.
-      const body = renderClaimComment(claim);
+      // The decision that settled this claim, if one did. `claimId` is the
+      // link the contract already provides; nothing needs to be inferred from
+      // the dispute room name.
+      const decision = [...state.decisions.values()].find(
+        (candidate) => candidate.claimId === claim.id,
+      );
+
+      const body = renderClaimComment(claim, decision);
       if (rendered.get(claim.id) === body) continue;
       rendered.set(claim.id, body);
-      queue.enqueue({ kind: 'claim', claim, pullNumber: pull });
+      queue.enqueue({
+        kind: 'claim',
+        claim,
+        pullNumber: pull,
+        ...(decision === undefined ? {} : { decision }),
+      });
     }
 
     const second = await queue.drain();

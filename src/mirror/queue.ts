@@ -1,4 +1,5 @@
 import type { Claim } from '../contracts/claim.js';
+import type { Decision } from '../contracts/decision.js';
 import type { Task, TaskState } from '../contracts/task.js';
 import type { GitHubTransport } from './github.js';
 import { claimMarker, findMarkedComment, renderClaimComment } from './render.js';
@@ -36,14 +37,24 @@ export async function reconcileTask(github: GitHubTransport, task: Task): Promis
   // nobody has been assigned in front of the repository.
   if (!atOrAfter(task.state, 'assigned')) return;
 
+  const body = renderTaskBody(task);
   const existing = await github.findPullRequestByBranch(task.branch);
   const pull =
     existing ??
     (await github.createDraftPullRequest({
       branch: task.branch,
       title: `${task.id} — ${task.title}`,
-      body: renderTaskBody(task),
+      body,
     }));
+
+  // The acknowledgement and the self-critique arrive long after the pull
+  // request is opened. Without this the body freezes at whatever was known at
+  // `assigned`, and the settled record the mirror exists to publish is the one
+  // part of it that never settles. Skipped when nothing changed, so a poll tick
+  // over a quiet task issues no write.
+  if (existing !== undefined && existing.body !== undefined && existing.body !== body) {
+    await github.updatePullRequestBody(pull.number, body);
+  }
 
   if (atOrAfter(task.state, 'submitted') && pull.isDraft) {
     await github.markReady(pull.number);
@@ -96,8 +107,9 @@ export async function reconcileClaim(
   github: GitHubTransport,
   claim: Claim,
   pullNumber: number,
+  decision?: Decision,
 ): Promise<void> {
-  const body = renderClaimComment(claim);
+  const body = renderClaimComment(claim, decision);
   const comments = await github.listComments(pullNumber);
   const existing = findMarkedComment(comments, claimMarker(claim.id));
 
@@ -113,7 +125,7 @@ export async function reconcileClaim(
 
 export type MirrorJob =
   | { kind: 'task'; task: Task }
-  | { kind: 'claim'; claim: Claim; pullNumber: number };
+  | { kind: 'claim'; claim: Claim; pullNumber: number; decision?: Decision };
 
 export interface DrainResult {
   completed: number;
@@ -129,7 +141,7 @@ async function apply(github: GitHubTransport, job: MirrorJob): Promise<void> {
     await reconcileTask(github, job.task);
     return;
   }
-  await reconcileClaim(github, job.claim, job.pullNumber);
+  await reconcileClaim(github, job.claim, job.pullNumber, job.decision);
 }
 
 /**

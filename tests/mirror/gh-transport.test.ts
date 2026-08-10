@@ -16,7 +16,9 @@ describe('the gh argument vectors', () => {
       '--state',
       'all',
       '--json',
-      'number,isDraft',
+      // `body` too: the reconciler compares it to decide whether the settled
+      // record has drifted, and without it every tick would rewrite the body.
+      'number,isDraft,body',
       '--limit',
       '1',
     ]);

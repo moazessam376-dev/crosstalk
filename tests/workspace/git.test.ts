@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -14,6 +14,7 @@ import {
   isRepo,
   listWorktrees,
   removeWorktree,
+  samePath,
 } from '../../src/workspace/git.js';
 
 const execFile = promisify(execFileCallback);
@@ -177,4 +178,69 @@ describe('removeWorktree and untracked files', () => {
 
     expect((await listWorktrees(repo)).some((w) => w.path.includes('codex'))).toBe(false);
   }, 60_000);
+});
+
+/**
+ * The 8.3 defect, generalised.
+ *
+ * `samePath` resolved and case-folded but never canonicalised, so any path
+ * expressed two equivalent ways compared as different. On Windows runners with
+ * 8.3 generation on, git reports a worktree's long path while Crosstalk
+ * constructs the short one — `isRegisteredWorktree` then answers "not
+ * registered" for a worktree that is, and `removeWorktree`'s fallback deletes
+ * it with `rm -rf` even though nobody passed `force`. That is the uncommitted
+ * work `force` exists to protect.
+ *
+ * A junction reproduces the same class on every platform: two spellings of one
+ * directory, which only `realpath` reconciles.
+ */
+describe('samePath canonicalises before comparing', () => {
+  it('treats two spellings of one directory as the same path', async () => {
+    const repo = await tempRepo();
+    const real = join(repo, 'real');
+    const link = join(repo, 'link');
+    await mkdir(real, { recursive: true });
+    await symlink(real, link, 'junction');
+
+    expect(await samePath(link, real)).toBe(true);
+  });
+
+  it('still tells two genuinely different directories apart', async () => {
+    // The neighbouring case: canonicalising must not collapse everything.
+    const repo = await tempRepo();
+    await mkdir(join(repo, 'a'), { recursive: true });
+    await mkdir(join(repo, 'b'), { recursive: true });
+
+    expect(await samePath(join(repo, 'a'), join(repo, 'b'))).toBe(false);
+  });
+
+  it('compares paths that do not exist yet without throwing', async () => {
+    // `realpath` throws on a missing path, and a worktree path legitimately
+    // may not exist when it is compared.
+    const repo = await tempRepo();
+    expect(await samePath(join(repo, 'nope'), join(repo, 'nope'))).toBe(true);
+    expect(await samePath(join(repo, 'nope'), join(repo, 'other'))).toBe(false);
+  });
+});
+
+describe('samePath against 8.3 short names', () => {
+  // The CI failure directly, with the resolver stubbed. A real 8.3 alias cannot
+  // be manufactured reliably — modern Windows often disables generation on
+  // non-system volumes, which is why this defect survived three machines and
+  // only appeared on the runners.
+  // Forward slashes on purpose: `resolve` normalises separators identically on
+  // both sides, and it keeps the fixture free of escaping.
+  const LONG = 'C:/Users/runneradmin/repo/.crosstalk/worktrees/codex';
+  const SHORT = 'C:/Users/RUNNER~1/repo/.crosstalk/worktrees/codex';
+  const expand: (p: string) => Promise<string> = async (p) =>
+    p.replace('RUNNER~1', 'runneradmin');
+
+  it('matches the short spelling git reports against the long one we build', async () => {
+    expect(await samePath(SHORT, LONG, expand)).toBe(true);
+  });
+
+  it('does not match two different worktrees that merely share a prefix', async () => {
+    const other = LONG.replace(/codex$/, 'cursor');
+    expect(await samePath(SHORT, other, expand)).toBe(false);
+  });
 });

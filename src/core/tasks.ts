@@ -8,6 +8,13 @@ export const TASK_TRANSITIONS = {
   acknowledged: ['in_progress'],
   in_progress: ['self_reviewed', 'submitted'],
   self_reviewed: ['submitted'],
+  // Deliberately NOT widened with `in_progress` (C-16, and F-P5 of the frozen
+  // stale-evidence plan). `validateTransition` governs what the daemon accepts
+  // *from clients*, so making that leg legal lets the assignee pull its own
+  // task out of the review queue at will with nothing recording that a rebase
+  // happened. The projection folds without validating, so `rebase_notice`
+  // moves the task anyway — this table's job is to keep clients off that leg,
+  // not to describe every move the log can make.
   submitted: ['under_review'],
   under_review: ['resolving', 'accepted'],
   resolving: ['under_review', 'accepted'],

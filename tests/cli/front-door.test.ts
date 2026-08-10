@@ -381,11 +381,15 @@ describe('the hub front door', () => {
       const authed = await fetch(`${daemon.url}/config.json`, {
         headers: { cookie: `ct_token=${token}` },
       });
+      // `maxRounds` added by Track A (A2) — Track C reads it for the round
+      // counter. Kept as `toEqual` rather than relaxed to `toMatchObject`: a
+      // strict body assertion is why this test noticed the addition at all.
       expect(await authed.json()).toEqual({
         version: 1,
         self: '@human',
         streamUrl: '/stream',
         room: '#floor',
+        maxRounds: 3,
       });
 
       expect((await fetch(`${daemon.url}/config.json`)).status).toBe(401);

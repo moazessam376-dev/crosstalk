@@ -172,3 +172,52 @@ describe('the relayed message', () => {
     expect(body).not.toContain(commentRef(4));
   });
 });
+
+/**
+ * D-2. `author_association: OWNER` is never assigned on an organisation-owned
+ * repository, so the association filter matches nothing there and
+ * `two-way-human` degrades silently to `one-way`. `humanLogin` names the person
+ * instead. Both branches are tested, per the ruling: naming a login must start
+ * matching the right person *and* stop matching on association alone.
+ */
+describe('who counts as the human', () => {
+  it('pulls the named login on an org repo, where nobody is OWNER', () => {
+    const orgComment = comment({ authorAssociation: 'MEMBER', authorLogin: 'maintainer' });
+
+    expect(isPullable(orgComment, 'maintainer')).toBe(true);
+  });
+
+  it('does not pull a different member of the same org', () => {
+    const colleague = comment({ authorAssociation: 'MEMBER', authorLogin: 'someone-else' });
+
+    expect(isPullable(colleague, 'maintainer')).toBe(false);
+  });
+
+  /**
+   * The branch that would be missed by only testing the positive: once a login
+   * is named it is authoritative, so an OWNER-authored comment from anyone else
+   * must stop being pulled. A filter that ORed the two conditions would pass
+   * every other test in this file.
+   */
+  it('stops honouring OWNER once a login is named', () => {
+    const owner = comment({ authorAssociation: 'OWNER', authorLogin: 'somebody-nameless' });
+
+    expect(isPullable(owner, undefined)).toBe(true);
+    expect(isPullable(owner, 'maintainer')).toBe(false);
+  });
+
+  it('still refuses the mirror’s own comment when a login is named', () => {
+    const own = comment({
+      body: renderInboundMessage(comment({ id: 7 })),
+      authorAssociation: 'MEMBER',
+      authorLogin: 'maintainer',
+    });
+
+    expect(isPullable(own, 'maintainer')).toBe(false);
+  });
+
+  it('falls back to OWNER when no login is configured', () => {
+    expect(isPullable(comment({ authorAssociation: 'OWNER' }), undefined)).toBe(true);
+    expect(isPullable(comment({ authorAssociation: 'MEMBER' }), undefined)).toBe(false);
+  });
+});

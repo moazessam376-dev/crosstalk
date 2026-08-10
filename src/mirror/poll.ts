@@ -51,6 +51,8 @@ export interface InboundComment {
   body: string;
   /** GitHub's own field: `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE`. */
   authorAssociation: string;
+  /** The author's login. Load-bearing wherever `humanLogin` is configured. */
+  authorLogin?: string;
 }
 
 export interface PollOptions {
@@ -58,6 +60,8 @@ export interface PollOptions {
   post(body: string): Promise<void>;
   alreadyDelivered(id: number): boolean;
   mode: MirrorMode;
+  /** `MirrorConfig.github.humanLogin`. Absent falls back to `OWNER`. */
+  humanLogin?: string;
 }
 
 /**
@@ -81,14 +85,27 @@ export function renderInboundMessage(comment: InboundComment): string {
 /**
  * Whether a GitHub comment should reach `#floor` as `@human`.
  *
- * Two filters, and the second is the load-bearing one. Author association picks
- * out the repository owner per design §8. But every agent on this project posts
- * under the owner's credential — the mirror's own writes included — so
- * association alone would pull the mirror's output straight back in. The marker
- * check is what actually closes the echo loop the spec names.
+ * The marker check is the one that closes design §8's echo loop: every agent on
+ * this project posts under the owner's credential — the mirror's own writes
+ * included — so no author-based test can separate them.
+ *
+ * The author test itself is `humanLogin` when configured, falling back to
+ * `author_association === 'OWNER'`. The fallback is correct only where a *user*
+ * owns the repository; GitHub never assigns `OWNER` on an org-owned one, so
+ * without a login there the filter matches nothing and `two-way-human` degrades
+ * silently to `one-way` (D-2).
  */
-export function isPullable(comment: InboundComment): boolean {
+export function isPullable(comment: InboundComment, humanLogin?: string): boolean {
   if (isMirrorAuthored(comment.body)) return false;
+
+  // Naming a login makes it authoritative rather than additive. `OWNER` is
+  // deliberately no longer honoured once one is set: on an org repo the people
+  // who would carry it are `MEMBER`, and OR-ing the two would let any of them
+  // speak as `@human`.
+  if (humanLogin !== undefined && humanLogin !== '') {
+    return comment.authorLogin === humanLogin;
+  }
+
   return comment.authorAssociation === 'OWNER';
 }
 
@@ -101,7 +118,7 @@ export async function pollInbound(options: PollOptions): Promise<{ delivered: nu
   let delivered = 0;
 
   for (const comment of comments) {
-    if (!isPullable(comment)) continue;
+    if (!isPullable(comment, options.humanLogin)) continue;
     if (options.alreadyDelivered(comment.id)) continue;
     await options.post(renderInboundMessage(comment));
     delivered += 1;

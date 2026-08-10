@@ -4,6 +4,8 @@ import type { Decision } from '../contracts/decision.js';
 export interface MirrorComment {
   /** GitHub's own field, present on reads and unused on writes. */
   authorAssociation?: string;
+  /** The author's login, present on reads. */
+  authorLogin?: string;
   id: number;
   body: string;
 }

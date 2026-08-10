@@ -278,3 +278,49 @@ The real signature was in the message the whole time. `TypeError: fetch failed /
 **Changed.** Before diagnosing a flaky test, **isolate it, and do not offer a cause until you have**: run the file alone, run the suite single-threaded, then form a theory. Three commands. Cheaper than every path taken here.
 
 **The general form:** a flaky test is not only a green signal that is sometimes true — it is also a red signal that confirms whatever you already suspect. Deterministic failures are falsifiable; intermittent ones are not, until you make them so. This project puts a required `falsifier` field on every claim precisely to stop unfalsifiable arguments between agents, and its own leader then spent a night making three unfalsifiable ones to itself.
+
+*Entry 19 corrects the cause given above. The claim stands as written for the same reason entry 17's does.*
+
+## 19 · The same flake, diagnosed wrong three times, was never about tests at all
+
+**What happened.** Entry 18 said the flake came from concurrent daemons in parallel worker threads, and a fix shipped on that basis: `fileParallelism: false`, with the reasoning written into `vitest.config.ts`. Five consecutive green runs followed and it was declared fixed.
+
+It was not. On a branch with more daemon-starting tests it returned at the old rate, on an idle machine, with nothing else running.
+
+The actual cause, found by a probe that did nothing but start 200 daemons and look at the URL:
+
+```
+round 161: FETCH FAILED against "http://127.0.0.1:5060" — bad port
+round 162: FETCH FAILED against "http://127.0.0.1:5061" — bad port
+
+malformed urls : 0
+port range     : 4734 .. 5137
+```
+
+`listen(0)` takes whatever ephemeral port the OS offers. Some are on the WHATWG fetch **blocked-port list** — 5060 and 5061 are SIP, 6000 is X11 — and `fetch`, along with every browser, refuses them before opening a socket. Confirmed against servers that were bound and healthy in every case:
+
+```
+5060  REFUSED: bad port      4999  OK 200
+5061  REFUSED: bad port      5062  OK 200
+6000  REFUSED: bad port      8080  OK 200
+```
+
+**It was never a test bug.** `crosstalk up` binds the same way, and this machine's ephemeral range contains those ports, so roughly one start in a hundred opens a browser onto a connection failure with a daemon running perfectly behind it. The flake was the product defect, showing itself in the only place anyone was looking.
+
+**The three diagnoses, and why each fitted.** Lock reclamation via the health probe — a task was refused over it. Then concurrent daemons — a fix shipped for it. Then, finally, blocked ports.
+
+The second is the one worth dwelling on, because it came with an experiment:
+
+```
+tests/daemon/server.test.ts alone ..... 6 runs, 6 green
+full suite ............................ 5 runs, 3 green
+```
+
+That reads as proof that running files together causes it. It is nothing of the kind. **One file starts far fewer daemons than the whole suite, so it samples a 1% event fewer times.** A lower rate was read as a different mechanism. The isolation step from entry 18 — the corrective the entry itself prescribed — was performed, and its output was still interpreted to fit the theory already in hand.
+
+**Changed.** Two rules, both learned the expensive way:
+
+- **A rate is not a mechanism.** Before concluding that condition X causes a failure, count how many *opportunities* X changes. If isolating a component reduces the number of attempts, a lower failure rate proves only that you tried fewer times.
+- **Fix the mechanism or say you have not.** Five green runs after a change is the same evidence as five green runs before it when the underlying rate is 1% per attempt and a run makes thirty attempts. `fileParallelism: false` cost the suite 6s → 48s and bought nothing measurable.
+
+**The general form:** the first two theories were about *this project's* machinery — its locks, its test runner — because that is what the diagnostician had been reading all night. The real cause was a constant in a web specification. Debugging kept proposing mechanisms from the part of the system that was already in context, and the flake, being intermittent, agreed with all of them.

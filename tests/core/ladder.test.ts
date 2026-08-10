@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Claim } from '../../src/contracts/claim.js';
+import { DEFAULT_POLICY, type CrosstalkConfig } from '../../src/contracts/config.js';
 import type { Decision, LadderRung } from '../../src/contracts/decision.js';
 import type { Participant } from '../../src/contracts/participant.js';
 import { adjudicatorFor, nextRung, planLadder } from '../../src/core/ladder.js';
@@ -12,11 +13,16 @@ function participant(id: string, role: 'leader' | 'worker'): Participant {
   return { id, role, harness: 'codex-cli', lifecycle: 'attached', workspace: '.' } as Participant;
 }
 
-function state(
-  workers: string[],
-  claim?: Partial<Claim>,
-): HubState {
-  const hub: HubState = {
+/** `workers` are configured; `connected` are the subset that have polled. */
+function fixture(workers: string[], connected: string[] = workers, claim?: Partial<Claim>) {
+  const config: CrosstalkConfig = {
+    version: 1,
+    project: { repo: '.', mainBranch: 'main' },
+    participants: [participant('leader', 'leader'), ...workers.map((w) => participant(w, 'worker'))],
+    policy: DEFAULT_POLICY,
+  };
+
+  const state: HubState = {
     participants: new Map([['leader', participant('leader', 'leader')]]),
     tasks: new Map(),
     claims: new Map(),
@@ -25,9 +31,10 @@ function state(
     messages: [],
     lastSeq: 0,
   };
-  for (const id of workers) hub.participants.set(id, participant(id, 'worker'));
+  for (const id of connected) state.participants.set(id, participant(id, 'worker'));
+
   if (claim !== undefined) {
-    hub.claims.set('C-1', {
+    state.claims.set('C-1', {
       id: 'C-1',
       raisedBy: 'codex',
       against: 'cursor',
@@ -41,60 +48,85 @@ function state(
       ...claim,
     });
   }
-  return hub;
+  return { config, state };
 }
 
-describe('planLadder', () => {
-  it('keeps every rung when two workers can supply an uninvolved peer', () => {
-    const plan = planLadder(DEFAULT_LADDER, state(['codex', 'cursor']));
-    expect(plan.ladder).toEqual(DEFAULT_LADDER);
-    expect(plan.skipped).toEqual([]);
-    expect(plan.start).toBe(0);
+describe('planLadder plans from the configuration', () => {
+  it('keeps third_agent with two workers configured and both connected', () => {
+    const { config } = fixture(['codex', 'cursor']);
+    expect(planLadder(DEFAULT_LADDER, config).skipped).toEqual([]);
   });
 
-  it('skips third_agent with one worker, and names why', () => {
-    const plan = planLadder(DEFAULT_LADDER, state(['codex']));
-    // Skipped, never silent — audit F-07. A degraded ladder must not read as a
-    // ladder somebody deliberately configured short.
+  it('keeps third_agent with two workers configured and only one connected', () => {
+    // C-14, and the case a HubState count gets wrong. Agents attaching at
+    // different times is what `lifecycle: attached` means — it is the normal
+    // case, not a race.
+    const { config } = fixture(['codex', 'cursor'], ['codex']);
+    expect(planLadder(DEFAULT_LADDER, config).skipped).toEqual([]);
+    expect(planLadder(DEFAULT_LADDER, config).start).toBe(0);
+  });
+
+  it('skips third_agent with one worker configured, blaming the configuration', () => {
+    const { config } = fixture(['codex']);
+    const plan = planLadder(DEFAULT_LADDER, config);
     expect(plan.skipped.map((s) => s.rung)).toEqual(['third_agent']);
-    expect(plan.skipped[0]!.reason).toMatch(/worker/i);
-    // The full ladder is still reported, so the rail can render the gap.
+    // The reason must say *configured*, or it blames something not at fault.
+    expect(plan.skipped[0]!.reason).toMatch(/configur/i);
     expect(plan.ladder).toEqual(DEFAULT_LADDER);
   });
 
   it('starts at the first attemptable rung when the first is skipped', () => {
-    const plan = planLadder(['third_agent', 'leader'], state(['codex']));
-    expect(plan.start).toBe(1);
+    const { config } = fixture(['codex']);
+    expect(planLadder(['third_agent', 'leader'], config).start).toBe(1);
   });
 });
 
-describe('adjudicatorFor', () => {
+describe('adjudicatorFor answers who can rule now', () => {
   it('returns the uninvolved worker', () => {
-    const hub = state(['codex', 'cursor', 'gemini'], {});
-    expect(adjudicatorFor('C-1', hub)).toBe('gemini');
+    const { config, state } = fixture(['codex', 'cursor', 'gemini'], undefined, {});
+    expect(adjudicatorFor('C-1', config, state)).toBe('gemini');
   });
 
   it('never returns either disputant', () => {
-    const hub = state(['codex', 'cursor', 'gemini'], {});
-    const chosen = adjudicatorFor('C-1', hub);
+    const { config, state } = fixture(['codex', 'cursor', 'gemini'], undefined, {});
+    const chosen = adjudicatorFor('C-1', config, state);
     expect(chosen).not.toBe('codex');
     expect(chosen).not.toBe('cursor');
   });
 
+  it('prefers a connected peer over a configured one', () => {
+    const { config, state } = fixture(
+      ['codex', 'cursor', 'gemini', 'llama'],
+      ['codex', 'cursor', 'llama'],
+      {},
+    );
+    // gemini is configured but has not polled; llama has.
+    expect(adjudicatorFor('C-1', config, state)).toBe('llama');
+  });
+
+  it('falls back to a configured peer when none is connected', () => {
+    // It will wake through await_turn. Refusing to name it would lose the rung
+    // for the same reason C-14 lost it.
+    const { config, state } = fixture(['codex', 'cursor', 'gemini'], ['codex', 'cursor'], {});
+    expect(adjudicatorFor('C-1', config, state)).toBe('gemini');
+  });
+
   it('is undefined when both workers are the disputants', () => {
-    expect(adjudicatorFor('C-1', state(['codex', 'cursor'], {}))).toBeUndefined();
+    const { config, state } = fixture(['codex', 'cursor'], undefined, {});
+    expect(adjudicatorFor('C-1', config, state)).toBeUndefined();
   });
 
   it('excludes the brief owner as a disputant on a spec claim', () => {
-    // `against: 'spec'` resolves to the leader through responderFor. The leader
-    // is not a worker so it cannot be the adjudicator anyway, but the raiser
-    // must still be excluded.
-    const hub = state(['codex', 'cursor'], { against: 'spec', raisedBy: 'codex' });
-    expect(adjudicatorFor('C-1', hub)).toBe('cursor');
+    const { config, state } = fixture(['codex', 'cursor'], undefined, {
+      against: 'spec',
+      raisedBy: 'codex',
+    });
+    expect(adjudicatorFor('C-1', config, state)).toBe('cursor');
   });
 
   it('is undefined for a claim that does not exist', () => {
-    expect(adjudicatorFor('C-99', state(['codex', 'cursor']))).toBeUndefined();
+    const { config, state } = fixture(['codex', 'cursor']);
+    expect(adjudicatorFor('C-99', config, state)).toBeUndefined();
   });
 });
 
@@ -114,26 +146,23 @@ describe('nextRung', () => {
   });
 
   it('advances to the next attemptable rung', () => {
-    const hub = state(['codex', 'cursor', 'gemini'], {});
-    expect(nextRung(decision(), hub)).toEqual({ rung: 'third_agent', index: 1 });
+    const { config, state } = fixture(['codex', 'cursor', 'gemini'], undefined, {});
+    expect(nextRung(decision(), config, state)).toEqual({ rung: 'third_agent', index: 1 });
   });
 
-  it('steps over a skipped rung', () => {
-    // One worker beyond the disputants is what third_agent needs; with only the
-    // two disputants it is unattemptable and the ladder must not stop there.
-    const hub = state(['codex', 'cursor'], {});
-    expect(nextRung(decision(), hub)).toEqual({ rung: 'leader', index: 2 });
+  it('steps over a rung with no uninvolved peer', () => {
+    const { config, state } = fixture(['codex', 'cursor'], undefined, {});
+    expect(nextRung(decision(), config, state)).toEqual({ rung: 'leader', index: 2 });
   });
 
   it('is undefined at the last rung, which is terminal', () => {
-    const hub = state(['codex', 'cursor', 'gemini'], {});
-    expect(nextRung(decision({ currentRung: 2 }), hub)).toBeUndefined();
+    const { config, state } = fixture(['codex', 'cursor', 'gemini'], undefined, {});
+    expect(nextRung(decision({ currentRung: 2 }), config, state)).toBeUndefined();
   });
 
   it('advances from the live rung, not the open-time snapshot', () => {
-    const hub = state(['codex', 'cursor', 'gemini'], {});
-    hub.rungs.set('D-1', { rung: 'third_agent', index: 1, adjudicator: 'gemini' });
-    // currentRung is still 0; the ladder has climbed underneath it.
-    expect(nextRung(decision(), hub)).toEqual({ rung: 'leader', index: 2 });
+    const { config, state } = fixture(['codex', 'cursor', 'gemini'], undefined, {});
+    state.rungs.set('D-1', { rung: 'third_agent', index: 1, adjudicator: 'gemini' });
+    expect(nextRung(decision(), config, state)).toEqual({ rung: 'leader', index: 2 });
   });
 });

@@ -1,5 +1,6 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { realpath } from 'node:fs';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -196,16 +197,57 @@ export async function purgeWorkspaces(repo: string): Promise<void> {
   await execFile('git', ['worktree', 'prune'], { cwd: root, windowsHide: true }).catch(() => undefined);
 }
 
-function samePath(left: string, right: string): boolean {
-  const [a, b] = [resolve(left), resolve(right)];
+/** Resolves a path to its canonical on-disk spelling. Injectable for tests. */
+export type PathResolver = (path: string) => Promise<string>;
+
+const nativeRealpath: PathResolver = promisify(realpath.native);
+
+/**
+ * Two spellings of one path must compare equal.
+ *
+ * Windows still generates 8.3 short names, and `os.tmpdir()` returns one on any
+ * box where the containing directory has them — every GitHub Actions runner,
+ * where `C:\Users\runneradmin` is handed out as `C:\Users\RUNNER~1`. `git
+ * worktree list` reports the long form regardless. Lowercasing does not close
+ * that gap, so `isRegistered` said "no" about a worktree that plainly existed,
+ * `ensureWorkspaces` called `addWorktree` again, and git refused with
+ * "already exists".
+ *
+ * That is a product defect, not a test artifact: `crosstalk init --force`
+ * crashed outright on any Windows machine with 8.3 generation enabled.
+ *
+ * `realpath.native` is the only thing that expands 8.3 — `path.resolve` does
+ * not. It throws for a path that does not exist yet, which is the ordinary case
+ * the first time a worktree is created, so a failure falls back to the
+ * lexical comparison rather than becoming an error.
+ */
+export async function samePath(
+  left: string,
+  right: string,
+  realpathOf: PathResolver = nativeRealpath,
+): Promise<boolean> {
+  const [a, b] = await Promise.all([canonical(left, realpathOf), canonical(right, realpathOf)]);
   return process.platform === 'win32' || process.platform === 'darwin'
     ? a.toLowerCase() === b.toLowerCase()
     : a === b;
 }
 
+async function canonical(path: string, realpathOf: PathResolver): Promise<string> {
+  const absolute = resolve(path);
+  try {
+    return await realpathOf(absolute);
+  } catch {
+    // Not on disk yet. Nothing to expand, and nothing to fail over.
+    return absolute;
+  }
+}
+
 async function isRegistered(root: string, worktree: string): Promise<boolean> {
   try {
-    return (await listWorktrees(root)).some((entry) => samePath(entry.path, worktree));
+    for (const entry of await listWorktrees(root)) {
+      if (await samePath(entry.path, worktree)) return true;
+    }
+    return false;
   } catch {
     return false;
   }

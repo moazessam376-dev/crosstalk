@@ -107,3 +107,34 @@ describe('git workspace lifecycle', () => {
     expect(await isAncestor(orphan, await headSha(repo), repo)).toBe(false);
   }, 60_000);
 });
+
+/**
+ * B-1: every worktree `init` creates carries an untracked file by construction
+ * — `init` writes the participant's brief into it, and B3 adds `.mcp.json`.
+ * `git worktree remove` refuses those without `--force`, so `down --purge`
+ * could not remove a single worktree the product had made.
+ */
+describe('removeWorktree and untracked files', () => {
+  it('refuses a worktree holding an untracked file, without force', async () => {
+    const repo = await tempRepo();
+    const worktree = await createWorktree(repo, 'codex', 'ct/codex-base');
+    temporaryWorktrees.push({ repo, id: 'codex' });
+    await writeFile(join(worktree, 'AGENTS.md'), 'the brief init wrote\n', 'utf8');
+
+    await expect(removeWorktree(repo, 'codex')).rejects.toThrow();
+    // Still there — this is the half that made `down --purge` a no-op.
+    expect((await listWorktrees(repo)).some((w) => w.path.includes('codex'))).toBe(true);
+  }, 60_000);
+
+  it('removes that same worktree with force', async () => {
+    const repo = await tempRepo();
+    const worktree = await createWorktree(repo, 'codex', 'ct/codex-base');
+    temporaryWorktrees.push({ repo, id: 'codex' });
+    await writeFile(join(worktree, 'AGENTS.md'), 'the brief init wrote\n', 'utf8');
+
+    await removeWorktree(repo, 'codex', { force: true });
+    temporaryWorktrees.pop();
+
+    expect((await listWorktrees(repo)).some((w) => w.path.includes('codex'))).toBe(false);
+  }, 60_000);
+});

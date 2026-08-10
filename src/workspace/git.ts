@@ -55,14 +55,27 @@ export async function createWorktree(repo: string, id: string, branch: string): 
   return worktree;
 }
 
-export async function removeWorktree(repo: string, id: string): Promise<void> {
+/**
+ * @param options.force  Pass `git worktree remove --force`, which is required
+ *   for any worktree holding untracked files. Every worktree `init` creates
+ *   holds one by construction — it writes the participant's brief inside it —
+ *   so `down --purge` cannot remove its own output without this. Defaults to
+ *   off: `down` on its own keeps everything, and `--purge` is the flag that
+ *   already says destruction is intended.
+ */
+export async function removeWorktree(
+  repo: string,
+  id: string,
+  options: { force?: boolean } = {},
+): Promise<void> {
   const root = resolve(repo);
   const worktree = join(root, '.crosstalk', 'worktrees', id);
   const existedBefore = await pathExists(worktree);
+  const args = ['worktree', 'remove', ...(options.force === true ? ['--force'] : []), worktree];
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      await runGit(root, ['worktree', 'remove', worktree]);
+      await runGit(root, args);
       return;
     } catch (error) {
       lastError = error;

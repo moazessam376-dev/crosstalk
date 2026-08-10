@@ -29,6 +29,24 @@ participants:
     workspace: .crosstalk/worktrees/cursor
 `;
 
+/** A ladder whose rung timeouts are short enough to actually wait for. */
+function configWithTimeouts(ladder: string, timeouts: string): string {
+  return `${CONFIG}policy:
+  selfCritique:
+    required: true
+    minRounds: 1
+  leaderCritique:
+    maxRounds: 2
+  dispute:
+    maxRounds: 3
+    ladder: ${ladder}
+    rungTimeouts:
+${timeouts}
+  taskAcceptance:
+    method: leader
+`;
+}
+
 async function tempRepo(config: string = CONFIG): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'ct-ladder-'));
   await writeFile(join(dir, 'crosstalk.yaml'), config, 'utf8');
@@ -217,5 +235,68 @@ describe('the ladder climbs on its own', () => {
       const decision = (opened as Extract<CrosstalkEvent, { kind: 'decision_opened' }>).decision;
       expect(decision.voters).toContain('leader');
     });
+  });
+});
+
+
+/** Poll the log until `predicate` holds, or give up. Beats a fixed sleep. */
+async function waitFor(
+  d: DaemonHandle,
+  predicate: (log: CrosstalkEvent[]) => boolean,
+  budgetMs = 8000,
+): Promise<CrosstalkEvent[]> {
+  const deadline = Date.now() + budgetMs;
+  let log = await events(d);
+  while (!predicate(log) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+    log = await events(d);
+  }
+  return log;
+}
+
+describe('rung timers', () => {
+  it("fails a rung that times out and enters the next one", { timeout: 20000 }, async () => {
+    await withDaemon(
+      async (daemon) => {
+        await respondTimes(daemon, 4);
+        const log = await waitFor(daemon, (l) => l.some((e) => e.kind === 'rung_failed'));
+
+        const failed = log.filter((e) => e.kind === 'rung_failed');
+        expect(failed).toHaveLength(1);
+        expect(failed[0]).toMatchObject({ rung: 'discriminating_test', index: 0, reason: 'timeout' });
+        // ...and the ladder moved on rather than stopping.
+        expect(log.filter((e) => e.kind === 'rung_entered')).toHaveLength(2);
+      },
+      configWithTimeouts('[discriminating_test, third_agent, leader]', '      discriminating_test: 1s'),
+    );
+  });
+
+  it('never arms a timer on the last rung, whatever rungTimeouts says', async () => {
+    // Spec §5.3: the terminal rung blocks indefinitely by design. Arming here
+    // would advance past the end of the ladder, which is a bug not a state.
+    await withDaemon(
+      async (daemon) => {
+        await respondTimes(daemon, 4);
+        await new Promise((r) => setTimeout(r, 2500));
+        const log = await events(daemon);
+
+        expect(log.filter((e) => e.kind === 'rung_failed')).toHaveLength(0);
+        expect(log.filter((e) => e.kind === 'rung_entered')).toHaveLength(1);
+      },
+      configWithTimeouts('[leader]', '      leader: 1s'),
+    );
+  });
+
+  it('does not arm a non-final rung that has no configured timeout', async () => {
+    await withDaemon(
+      async (daemon) => {
+        await respondTimes(daemon, 4);
+        await new Promise((r) => setTimeout(r, 2000));
+        const log = await events(daemon);
+
+        expect(log.filter((e) => e.kind === 'rung_failed')).toHaveLength(0);
+      },
+      configWithTimeouts('[discriminating_test, leader]', '      third_agent: 1s'),
+    );
   });
 });

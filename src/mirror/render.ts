@@ -1,6 +1,8 @@
 import type { Claim, Evidence } from '../contracts/claim.js';
 
 export interface MirrorComment {
+  /** GitHub's own field, present on reads and unused on writes. */
+  authorAssociation?: string;
   id: number;
   body: string;
 }

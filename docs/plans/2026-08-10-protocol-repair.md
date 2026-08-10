@@ -123,7 +123,9 @@ Modify `src/daemon/handlers.ts`, `src/core/decisions.ts`, `src/daemon/server.ts`
 
 ### A3 — the ladder actually climbs
 
-Create `src/core/ladder.ts` (pure) and `src/daemon/ladder.ts` (timers). Modify `src/daemon/handlers.ts`, `src/harness/doctor.ts`.
+Create `src/core/ladder.ts` (pure) and `src/daemon/ladder.ts` (timers). Modify `src/daemon/handlers.ts`.
+
+*The `doctor` reject for a terminal rung with a configured timeout is **Track B's**, in B2 — `src/harness/` is theirs, and it belongs beside the `NON_TERMINAL_LADDER` check already at `doctor.ts:365`. A3 states the rule; B2 implements and tests it.*
 
 ```ts
 export interface LadderPlan { ladder: LadderRung[]; skipped: SkippedRung[]; start: number }
@@ -216,8 +218,9 @@ Modify `src/cli/index.ts`, `src/cli/init.ts`.
 
 - `cmdUp` runs `doctor` before `startDaemon`. Any `reject` prints findings and exits `EXIT.protocol` **without binding a port**. Warnings print and start. `--force` overrides.
 - `init` refuses to *write* a config with zero or multiple leaders, with `doctor`'s own message. A generator that emits what the validator rejects is the bug.
+- **`doctor` rejects a ladder whose last rung has a configured timeout** (moved here from A3 — `src/harness/` is Track B's). Spec §5.3 makes `human` terminal only *with no timeout*, while `TERMINAL_RUNGS` accepts it either way, and the shipped `DEFAULT_POLICY` pairs `rungTimeouts.human: '4h'` with a senior preset ending in `human`. That config is dead escalation that reads as working escalation. Sits beside the existing `NON_TERMINAL_LADDER` check at `doctor.ts:365`.
 
-**Acceptance.** `up` on a two-leader config exits non-zero, prints `LEADER_COUNT`, and binds nothing — assert nothing is listening. Warnings-only starts. `init` with two leaders is refused.
+**Acceptance.** `up` on a two-leader config exits non-zero, prints `LEADER_COUNT`, and binds nothing — assert nothing is listening. Warnings-only starts. `init` with two leaders is refused. A ladder of `[discriminating_test, third_agent, human]` **with** `rungTimeouts.human` set is rejected, and the **same ladder without that timeout is accepted** — both sides, since a reject-only test passes against a check that refuses every `human`-terminated ladder.
 
 ### B3 — every agent gets its own MCP registration
 

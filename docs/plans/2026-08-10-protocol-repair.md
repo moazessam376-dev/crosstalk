@@ -130,21 +130,23 @@ Create `src/core/ladder.ts` (pure) and `src/daemon/ladder.ts` (timers). Modify `
 
 ```ts
 export interface LadderPlan { ladder: LadderRung[]; skipped: SkippedRung[]; start: number }
-export function planLadder(ladder: LadderRung[], state: HubState): LadderPlan;
-export function adjudicatorFor(claimId: string, state: HubState): ParticipantId | undefined;
+export function planLadder(ladder: LadderRung[], config: CrosstalkConfig): LadderPlan;
+export function adjudicatorFor(claimId: string, config: CrosstalkConfig, state: HubState): ParticipantId | undefined;
 export function nextRung(decision: Decision, state: HubState): { rung: LadderRung; index: number } | undefined;
 ```
 
 - **Trigger.** On a `claim_response` leaving the claim `contested` with `rounds > policy.dispute.maxRounds` **and no unresolved ladder decision for that `claimId`**. The guard is not optional: A1 makes responses past the maximum the *expected* case, so without it response 4 opens `D-1`, response 5 opens `D-2`, each with its own timers racing.
 - **`rounds > maxRounds` is first true at response 4**, not 5: `rounds` is 0 at raise and increments once per response.
 - `decision_opened.decision` carries `skipped` populated and `currentRung = LadderPlan.start`. Track C renders both.
-- `planLadder` drops `third_agent` when fewer than two workers exist, recording it in `skipped` with a reason. Skipped, never silent.
+- `planLadder` drops `third_agent` when fewer than two workers are **configured** — `config.participants`, never `state.participants`. Recorded in `skipped` with a reason that says *configured*. Skipped, never silent, and never falsely explained.
+  Revision 2 said "fewer than two workers exist" and handed `planLadder` only a `HubState`, whose `participants` map is projected from `participant_joined` and therefore counts who has **connected**. That made the connected reading the only one implementable. It is wrong twice over: the `skipped` reason blames a configuration that is not at fault, and — because `skipped` is frozen into `decision_opened` on an append-only log — an escalation that fires while a worker happens to be offline **permanently** loses its `third_agent` rung and falls straight through to the leader. Agents attaching at different times is what `lifecycle: attached` means; it is the normal case.
+- **Planning and availability are separate questions, resolved at separate times.** `planLadder` answers "could this rung ever run here" from config, once, at open. `adjudicatorFor` answers "is there an uninvolved peer to call right now" at each `rung_entered`, preferring a connected worker; none available → `rung_failed` reason `no_uninvolved_peer`, advance. That is what freeze rule 2 was for, and it is why the plan does not need to re-evaluate `skipped`.
 - `adjudicatorFor` returns a `role: 'worker'` participant that is neither `claim.raisedBy` nor `responderFor(claim, state)`, **re-evaluated at every `rung_entered`**. None available → `rung_failed` reason `no_uninvolved_peer`, advance.
 - **The last rung never arms a timer**, whatever `rungTimeouts` says — §5.3's terminal rung blocks indefinitely by design. A non-final rung with no configured timeout also blocks; state it rather than leaving `setTimeout(NaN)`.
 - `doctor` gains a **reject** when the last rung has a configured timeout. `TERMINAL_RUNGS` and §5.3 disagree — the spec says `human` is terminal only *with no timeout*, and the shipped `DEFAULT_POLICY` pairs `human: '4h'` with a senior preset ending in `human`. That config is dead escalation that reads as working escalation.
 - Timers re-arm on restart from the last `rung_entered.ts`; an expired deadline advances immediately.
 
-**Acceptance.** The **4th** response on `maxRounds: 3` escalates and the **3rd** does not. Five further responses produce **exactly one** `decision_opened`. One worker → `skipped` names `third_agent` with a reason. `adjudicatorFor` never returns a disputant. A ladder ending `human` with `rungTimeouts.human` set is rejected by `doctor`. A restart mid-rung re-arms; past the deadline it advances at once. **Break it on purpose:** hard-code `adjudicatorFor` to return a disputant and confirm a test goes red.
+**Acceptance.** Two workers configured and **only one connected** still plans the `third_agent` rung — the discriminating case for C-14, and the one that fails against a `HubState` count. Two workers configured and both connected likewise; one worker configured skips it with a reason naming *configured*. The **4th** response on `maxRounds: 3` escalates and the **3rd** does not. Five further responses produce **exactly one** `decision_opened`. One worker → `skipped` names `third_agent` with a reason. `adjudicatorFor` never returns a disputant. A ladder ending `human` with `rungTimeouts.human` set is rejected by `doctor`. A restart mid-rung re-arms; past the deadline it advances at once. **Break it on purpose:** hard-code `adjudicatorFor` to return a disputant and confirm a test goes red.
 
 ### A4 — the discriminating test rung
 

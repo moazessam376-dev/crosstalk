@@ -102,12 +102,15 @@ export default function App({ connection: injected }: AppProps = {}) {
       activeRoom,
       maxRounds,
       self: connection.kind === 'live' ? connection.config.self : undefined,
-      // No daemon, nowhere to post. The composer is hidden rather than shown
-      // and inert — a text box that silently drops what you typed is worse
-      // than no text box.
-      onSend: connection.kind === 'live' && activeRoom !== undefined
-        ? (body: string) => postMessage(body, activeRoom)
-        : undefined,
+      // Shown without a daemon too, and it says why it cannot post. The two
+      // canned buttons already answer this question that way, and a composer
+      // that vanishes instead would also hide it from `vite dev` and from
+      // every static build — which is where the design gets looked at.
+      onSend: activeRoom === undefined
+        ? undefined
+        : connection.kind === 'live'
+          ? (body: string) => postMessage(body, activeRoom)
+          : async () => ({ ok: false as const, reason: 'This hub is not connected to a daemon, so there is nobody to tell.' }),
       onVote: connection.kind === 'live'
         ? (decisionId: string, option: string, rationale: string) => postVote(decisionId, option, rationale)
         : undefined,

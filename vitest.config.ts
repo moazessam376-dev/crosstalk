@@ -10,24 +10,26 @@ export default defineConfig({
 
     // Test *files* run one at a time.
     //
-    // Several daemon test files each start a real daemon on an ephemeral port.
-    // Run in parallel worker threads they fail roughly two runs in five, always
-    // as `TypeError: fetch failed / Caused by: Error: bad port` — the request
-    // never leaves the client. Measured on this tree at 5a522ce:
+    // JUSTIFICATION WITHDRAWN — retained only because removing it needs
+    // evidence too, and the daemon tests' owner has the call. See friction
+    // entry 19.
+    //
+    // This was added believing the `fetch failed / Error: bad port` flake came
+    // from concurrent daemons in parallel worker threads. It does not. The
+    // cause is that `listen(0)` sometimes lands on a port the WHATWG fetch
+    // spec blocks — 5060/5061 (SIP), 6000 (X11) — which `fetch` and every
+    // browser refuse against a server that is bound and healthy.
+    //
+    // The experiment that motivated this setting was misread:
     //
     //   tests/daemon/server.test.ts alone ............. 6 runs, 6 green
-    //   tests/daemon, forks.singleFork=true ........... 3 runs, 3 green
-    //   tests/daemon, default parallelism ............. 5 runs, 3 green
+    //   full suite .................................... 5 runs, 3 green
     //
-    // So it is an artifact of concurrent daemons inside one test run, not a
-    // defect in `startDaemon` — which is also why it does not threaten
-    // `crosstalk up`, where exactly one daemon ever starts.
+    // That is not evidence about concurrency. One file starts far fewer
+    // daemons than the whole suite, so it samples a ~1% event fewer times. A
+    // rate is not a mechanism.
     //
-    // This cost more than the two minutes it looks like. The flake was first
-    // read as a lock-reclamation bug, a whole task was refused over it, and the
-    // owning track was sent to fix a defect that was never there. A flaky test
-    // is not a weaker failing test: it is a green signal that is sometimes
-    // true, and it will supply evidence for whichever theory you bring to it.
+    // Cost: the suite goes from ~6s to ~48s, for no measured benefit.
     fileParallelism: false,
   },
 });

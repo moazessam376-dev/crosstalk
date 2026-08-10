@@ -166,3 +166,36 @@ describe('the claim comment', () => {
     expect(github.countCalls('comment')).toBe(1);
   });
 });
+
+describe('the settled record in the pull request body', () => {
+  it('updates the body when the acknowledgement and critique arrive', async () => {
+    const github = new FakeGitHub();
+    const assigned = task({ state: 'assigned' });
+
+    await reconcileTask(github, assigned);
+    await reconcileTask(github, {
+      ...assigned,
+      state: 'in_progress',
+      acknowledgement: { restatement: 'credit once on retry', ambiguities: ['which currency'] },
+      critique: { rounds: 1, findings: [{ assertion: 'missed the refund path', closedBy: [] }], critic: 'self' },
+    });
+
+    const body = github.pulls[0]?.body ?? '';
+    expect(body).toContain('credit once on retry');
+    expect(body).toContain('missed the refund path');
+  });
+
+  /**
+   * The neighbouring case: a mirror that rewrote the body on every reconcile
+   * would pass the test above and issue a write per poll tick forever.
+   */
+  it('does not rewrite a body that has not changed', async () => {
+    const github = new FakeGitHub();
+    const assigned = task({ state: 'assigned' });
+
+    await reconcileTask(github, assigned);
+    await reconcileTask(github, assigned);
+
+    expect(github.countCalls('body')).toBe(0);
+  });
+});

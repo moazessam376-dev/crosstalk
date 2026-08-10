@@ -10,6 +10,8 @@ const run = promisify(execFile);
 export interface PullRequestRef {
   number: number;
   isDraft: boolean;
+  /** Present on reads. Lets the reconciler skip a body update that changes nothing. */
+  body?: string;
 }
 
 /**
@@ -49,7 +51,7 @@ export const ghArgs = {
     '--state',
     'all',
     '--json',
-    'number,isDraft',
+    'number,isDraft,body',
     '--limit',
     '1',
   ],

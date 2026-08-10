@@ -45,7 +45,7 @@ export class FakeGitHub implements GitHubTransport {
   async findPullRequestByBranch(branch: string): Promise<PullRequestRef | undefined> {
     this.#check(`find ${branch}`);
     const pull = this.pulls.find((candidate) => candidate.branch === branch);
-    return pull === undefined ? undefined : { number: pull.number, isDraft: pull.isDraft };
+    return pull === undefined ? undefined : { number: pull.number, isDraft: pull.isDraft, body: pull.body };
   }
 
   async createDraftPullRequest(input: {

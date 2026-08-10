@@ -57,3 +57,24 @@ describe('hub layout regions', () => {
     expect(screen.getByTestId('hub-layout')).toHaveAttribute('data-layout', 'four-region');
   });
 });
+
+/**
+ * C2. `ChannelList` carried its own `DEFAULT_MAX_ROUNDS = 3`, independent of
+ * the one in `derive.ts` and of the config the daemon was running. The same
+ * dispute read "round 3 / 3" in the header and "4/3" in this row.
+ */
+describe('C2 channel row denominator', () => {
+  it('renders the configured maximum', () => {
+    render(createElement(ChannelList, { rooms: [{ id: 'dispute:C-118', kind: 'dispute', rounds: 2, maxRounds: 5 }] }));
+
+    expect(screen.getByText('2/5')).toBeInTheDocument();
+  });
+
+  it('renders the round alone when no config supplied a maximum', () => {
+    // Not "2/3". A fallback here is the deleted constant coming back.
+    render(createElement(ChannelList, { rooms: [{ id: 'dispute:C-118', kind: 'dispute', rounds: 2 }] }));
+
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.queryByText('2/3')).not.toBeInTheDocument();
+  });
+});

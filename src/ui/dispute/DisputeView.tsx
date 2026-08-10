@@ -19,6 +19,15 @@ export type DisputeAction =
 export interface DisputeViewProps {
   roomId: string;
   events: CrosstalkEvent[];
+  /**
+   * `policy.dispute.maxRounds`, served by the daemon at `/config.json`.
+   *
+   * Undefined in fixture mode — `vite dev`, a static build, every UI test —
+   * and the header then shows the round with no denominator. It must never
+   * fall back to 3: that is the hard-coded constant this field replaces, and a
+   * default would hide the regression it exists to expose.
+   */
+  maxRounds?: number;
   onHumanAction?: (action: DisputeAction) => void;
 }
 
@@ -82,10 +91,17 @@ function latestDecision(events: readonly CrosstalkEvent[]): DecisionOpenedEvent 
   return events.filter((event): event is DecisionOpenedEvent => event.kind === 'decision_opened').at(-1);
 }
 
+/**
+ * The round this dispute is actually on.
+ *
+ * Never clamped. A dispute at round 5 of 3 reads `5 / 3`, because that is what
+ * happened — clamping to the maximum made the display disagree with the
+ * escalation that had already fired.
+ */
 function roundFor(claims: readonly ClaimView[]): number {
   const authoredRounds = claims.reduce((current, view) => Math.max(current, view.claim.rounds), 0);
   const observedResponses = claims.reduce((current, view) => Math.max(current, view.responses.length), 0);
-  return Math.min(3, Math.max(authoredRounds, observedResponses));
+  return Math.max(authoredRounds, observedResponses);
 }
 
 /**
@@ -214,7 +230,7 @@ function divergentShas(events: readonly CrosstalkEvent[], proposal: TestProposed
   return [...shas];
 }
 
-export function DisputeView({ roomId, events, onHumanAction }: DisputeViewProps) {
+export function DisputeView({ roomId, events, maxRounds, onHumanAction }: DisputeViewProps) {
   const ordered = events.slice().sort((left, right) => left.seq - right.seq);
   const scopedEvents = roomEvents(ordered, roomId);
   const claims = collectClaims(ordered, scopedEvents, roomId);
@@ -249,7 +265,11 @@ export function DisputeView({ roomId, events, onHumanAction }: DisputeViewProps)
       'header',
       { className: 'dispute-header' },
       createElement('h2', null, roomId),
-      createElement('span', { className: 'round-counter fact' }, `round ${round} / 3`),
+      createElement(
+        'span',
+        { className: 'round-counter fact', 'data-max-rounds': maxRounds === undefined ? 'unknown' : String(maxRounds) },
+        maxRounds === undefined ? `round ${round}` : `round ${round} / ${maxRounds}`,
+      ),
     ),
     decision
       ? createElement(

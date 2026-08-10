@@ -14,13 +14,15 @@ type HumanAction = { type: 'propose_test' | 'intervene_human' };
 export interface LayoutProps {
   state: HubState;
   activeRoom?: string;
+  /** `policy.dispute.maxRounds`, passed through to the dispute header. */
+  maxRounds?: number;
   onSelectRoom?: (roomId: string) => void;
   onHumanAction?: (action: HumanAction) => void;
 }
 
 const GRID_TEMPLATE = 'minmax(180px, 220px) minmax(220px, 280px) minmax(0, 1fr) minmax(240px, 320px)';
 
-export function Layout({ state, activeRoom, onSelectRoom, onHumanAction }: LayoutProps) {
+export function Layout({ state, activeRoom, maxRounds, onSelectRoom, onHumanAction }: LayoutProps) {
   return createElement(
     'div',
     {
@@ -40,7 +42,7 @@ export function Layout({ state, activeRoom, onSelectRoom, onHumanAction }: Layou
     },
     createElement(Rail, { participants: state.participants }),
     createElement(ChannelList, { rooms: state.rooms, activeRoom, onSelectRoom }),
-    createElement(Stream, { events: state.events, activeRoom, onHumanAction }),
+    createElement(Stream, { events: state.events, activeRoom, maxRounds, onHumanAction }),
     createElement(Inspector, { activeRoom, rooms: state.rooms }),
   );
 }

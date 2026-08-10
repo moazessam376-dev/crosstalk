@@ -41,7 +41,11 @@ export default function App({ connection: injected }: AppProps = {}) {
 
   const { events, connected } = useLog(sourceFor(connection));
   const [selectedRoom, setSelectedRoom] = useState<string | undefined>();
-  const state = deriveState(events);
+  // Undefined in fixture mode, and deliberately not defaulted. `deriveState`
+  // feeds the channel rows and the prop feeds the dispute header; both read
+  // this one value so the two can no longer disagree.
+  const maxRounds = connection.kind === 'live' ? connection.config.maxRounds : undefined;
+  const state = deriveState(events, maxRounds);
   const defaultRoom = connection.kind === 'live'
     ? connection.config.room
     : state.rooms.find((room) => room.kind === 'dispute')?.id ?? state.rooms[0]?.id;
@@ -96,6 +100,7 @@ export default function App({ connection: injected }: AppProps = {}) {
     createElement(Layout, {
       state,
       activeRoom,
+      maxRounds,
       onSelectRoom: (roomId: string) => setSelectedRoom(roomId),
       onHumanAction,
     }),

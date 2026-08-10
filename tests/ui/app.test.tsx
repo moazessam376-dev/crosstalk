@@ -17,7 +17,11 @@ afterEach(() => {
 describe('rendered hub wiring', () => {
   it('hands the cross-room dispute claim from the fixture to the rendered view', async () => {
     const fixture = await readFile(resolve(process.cwd(), 'tests', 'fixtures', 'session-dispute.jsonl'), 'utf8');
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(fixture, { status: 200 })));
+    // A fresh Response per call, not one shared instance: a body can only be
+    // consumed once, and App now fetches `/config.json` before the fixture.
+    // `mockResolvedValue` handed the same Response to both, so the second
+    // read came back empty and the hub rendered nothing.
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(fixture, { status: 200 }))));
 
     render(createElement(App));
 

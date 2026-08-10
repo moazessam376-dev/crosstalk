@@ -14,6 +14,15 @@ export interface HubConfig {
   self: ParticipantId;
   streamUrl: string;
   room: RoomId;
+  /**
+   * `policy.dispute.maxRounds` from the config the daemon actually loaded.
+   *
+   * Optional because an older daemon will not send it, and because the honest
+   * render for an unknown denominator is no denominator. The hub must not
+   * substitute a default: the three hard-coded 3s this replaces disagreed with
+   * each other and with the running config.
+   */
+  maxRounds?: number;
 }
 
 export type HubConnection =
@@ -71,5 +80,10 @@ export async function loadHubConfig(fetchImpl: typeof fetch = fetch): Promise<Hu
     return { kind: 'fixture', reason: `${CONFIG_PATH} did not carry self, streamUrl and room.` };
   }
 
-  return { kind: 'live', config: body };
+  // A non-numeric `maxRounds` is dropped, not rejected and not coerced. The
+  // daemon is answering and the stream works; one unreadable field is no reason
+  // to fall back to a fixture. Absent renders as "unknown", which is true —
+  // whereas coercing `"3"` would render a configured 3 that might not be one.
+  const maxRounds = typeof body.maxRounds === 'number' && Number.isFinite(body.maxRounds) ? body.maxRounds : undefined;
+  return { kind: 'live', config: { ...body, maxRounds } };
 }

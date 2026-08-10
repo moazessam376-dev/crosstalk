@@ -135,3 +135,55 @@ describe('App against a live daemon', () => {
     expect(screen.getByText(/offline — showing a sample conversation/)).toBeInTheDocument();
   });
 });
+
+/**
+ * C2's real risk is not the arithmetic, it is the wiring. `deriveState` is a
+ * pure function of events with no access to `HubConfig`, and `DisputeViewProps`
+ * had no config field — so every layer could be tested with the value passed in
+ * while `App` never passed it. That is audit F-09's shape exactly, and this
+ * project has already shipped it once.
+ */
+describe('C2 maxRounds reaches the screen from the daemon config', () => {
+  it('renders the configured denominator in both the header and the channel row', async () => {
+    const fixture = await readFile(resolve(process.cwd(), 'tests', 'fixtures', 'session-dispute.jsonl'), 'utf8');
+    const logged = fixture.split(/\r?\n/).filter((line) => line.trim().length > 0);
+
+    let deliver: ((event: MessageEvent) => void) | undefined;
+    class FakeEventSource {
+      constructor(readonly url: string) {
+        queueMicrotask(() => this.onopen?.(new Event('open')));
+      }
+      onopen: ((event: Event) => void) | null = null;
+      set onmessage(fn: (event: MessageEvent) => void) { deliver = fn; }
+      onerror: ((event: Event) => void) | null = null;
+      close(): void {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+
+    const liveDispute: HubConnection = {
+      kind: 'live',
+      config: { version: 1, self: '@human', streamUrl: '/stream', room: 'dispute:C-118', maxRounds: 5 },
+    };
+
+    render(createElement(Hub, { connection: liveDispute }));
+    await waitFor(() => expect(deliver).toBeDefined());
+    for (const line of logged) deliver!(new MessageEvent('message', { data: line }));
+
+    // The header and the channel row are fed by two different paths — a prop
+    // and `deriveState` — which is exactly why they disagreed before.
+    await waitFor(() => expect(screen.getByText(/round \d+ \/ 5/)).toBeInTheDocument());
+    expect(screen.getByText(/^\d+\/5$/)).toBeInTheDocument();
+  });
+
+  it('shows no denominator anywhere when the daemon did not send one', async () => {
+    // Fixture mode. A `3` appearing here is the deleted constant coming back.
+    const fixture = await readFile(resolve(process.cwd(), 'tests', 'fixtures', 'session-dispute.jsonl'), 'utf8');
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(fixture, { status: 200 }))));
+
+    render(createElement(Hub, { connection: { kind: 'fixture', reason: 'no daemon' } as HubConnection }));
+
+    await waitFor(() => expect(screen.getByTestId('dispute-view')).toBeInTheDocument());
+    expect(screen.getByTestId('dispute-view')).not.toHaveTextContent(/round \d+ \/ 3/);
+    expect(screen.getByText(/^round \d+$/)).toBeInTheDocument();
+  });
+});

@@ -15,10 +15,12 @@ export type HumanAction = { type: 'propose_test' | 'intervene_human' };
 export interface StreamProps {
   events: CrosstalkEvent[];
   activeRoom?: string;
+  /** `policy.dispute.maxRounds`, passed through to the dispute header. */
+  maxRounds?: number;
   onHumanAction?: (action: HumanAction) => void;
 }
 
-export function Stream({ events, activeRoom, onHumanAction }: StreamProps) {
+export function Stream({ events, activeRoom, maxRounds, onHumanAction }: StreamProps) {
   const visibleEvents = (activeRoom ? events.filter((event) => event.room === activeRoom) : events)
     .slice()
     .sort((left, right) => left.seq - right.seq);
@@ -83,7 +85,7 @@ export function Stream({ events, activeRoom, onHumanAction }: StreamProps) {
     createElement('h2', null, activeRoom ?? 'Stream'),
     createElement('p', { className: 'stream-count' }, String(visibleEvents.length) + ' events'),
     activeRoom && activeRoom.startsWith('dispute:')
-      ? createElement(DisputeView, { roomId: activeRoom, events, onHumanAction })
+      ? createElement(DisputeView, { roomId: activeRoom, events, maxRounds, onHumanAction })
       : createElement('div', { className: 'card-stream' }, cards),
   );
 }

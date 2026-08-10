@@ -109,6 +109,7 @@ describe('B5 dispute view', () => {
       createElement(DisputeView, {
         roomId: 'dispute:C-118',
         events,
+        maxRounds: 3,
         onHumanAction: (action) => actions.push(action),
       }),
     );
@@ -344,6 +345,52 @@ describe('C1 ladder rail', () => {
     render(createElement(DisputeView, { roomId: 'dispute:C-200', events: withAdjudicator }));
 
     expect(screen.getByTestId('ladder-adjudicator')).toHaveTextContent('cursor');
+  });
+});
+
+/**
+ * C2. `policy.dispute.maxRounds` is configuration, and the hub read `3` from
+ * three separate hard-coded constants. The same dispute read "round 3 / 3" in
+ * the header and "4/3" in the channel row, and neither number came from the
+ * config the daemon was actually running.
+ */
+describe('C2 round counter', () => {
+  it('renders the configured maximum, not a constant', () => {
+    render(createElement(DisputeView, { roomId: 'dispute:C-118', events, maxRounds: 5 }));
+
+    expect(screen.getByText('round 2 / 5')).toBeInTheDocument();
+  });
+
+  it('does not clamp a dispute that ran past its maximum', () => {
+    // `Math.min(3, …)` meant a dispute at round 5 of 3 reported "3 / 3" — the
+    // display disagreeing with the escalation that had already happened.
+    // One response is already on the base log, so four more make five rounds.
+    const extraResponses: CrosstalkEvent[] = [2, 3, 4, 5].map((n) => ({
+      seq: 20 + n,
+      ts: `2026-08-09T00:01:0${n}Z`,
+      kind: 'claim_response',
+      from: n % 2 === 0 ? 'leader' : 'codex',
+      room: 'dispute:C-118',
+      claimId: 'C-118',
+      verdict: n % 2 === 0 ? 'uphold' : 'contest',
+      rationale: `round ${n}`,
+      falsifier: `falsifier ${n}`,
+      evidence: [],
+    }));
+
+    render(createElement(DisputeView, { roomId: 'dispute:C-118', events: [...events, ...extraResponses], maxRounds: 3 }));
+
+    expect(screen.getByText('round 5 / 3')).toBeInTheDocument();
+  });
+
+  it('renders no denominator at all when no config supplied one', () => {
+    // Fixture mode — `vite dev`, a static build, every UI test. A fallback of 3
+    // here reinstates exactly the bug this task removes and hides the
+    // regression it exists to expose.
+    render(createElement(DisputeView, { roomId: 'dispute:C-118', events }));
+
+    expect(screen.getByText('round 2')).toBeInTheDocument();
+    expect(screen.queryByText(/round 2 \/ 3/)).not.toBeInTheDocument();
   });
 });
 

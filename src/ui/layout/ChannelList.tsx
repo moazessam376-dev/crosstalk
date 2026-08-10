@@ -14,8 +14,6 @@ const GROUPS: readonly { kind: ChannelKind; label: string }[] = [
   { kind: 'direct', label: 'DIRECT' },
 ];
 
-const DEFAULT_MAX_ROUNDS = 3;
-
 function displayName(room: ChannelRoom): string {
   if (room.id === '#floor') return '#floor';
   return room.id.replace(/^(task:|dispute:|dm:)/, '');
@@ -65,8 +63,15 @@ export function ChannelList({ rooms, activeRoom, onSelectRoom }: ChannelListProp
                 },
                 createElement('span', null, displayName(room)),
                 room.awaitingHuman ? createElement('span', { className: 'human-badge' }, 'human') : null,
+                // No denominator when the config did not supply one. The `3`
+                // that used to sit here was this file's own constant, and it
+                // disagreed with both the header and the running config.
                 room.kind === 'dispute' && room.rounds !== undefined
-                  ? createElement('span', { className: 'round-counter' }, `${room.rounds}/${room.maxRounds ?? DEFAULT_MAX_ROUNDS}`)
+                  ? createElement(
+                      'span',
+                      { className: 'round-counter' },
+                      room.maxRounds === undefined ? `${room.rounds}` : `${room.rounds}/${room.maxRounds}`,
+                    )
                   : null,
               ),
             ),

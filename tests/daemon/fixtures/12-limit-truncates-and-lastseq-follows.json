@@ -1,0 +1,22 @@
+{
+  "name": "lastSeq follows a truncated page, not the log tail",
+  "why": "Fails if `lastSeq` reports the tail of the log rather than the end of this response. A client paging forward with `since=lastSeq` would then step straight over everything the page omitted — and because the response still looks well-formed, the gap is invisible until someone notices a missing argument.",
+  "setup": [
+    { "method": "POST", "path": "/events", "as": "leader", "body": { "kind": "message", "room": "#floor", "body": "a" } },
+    { "method": "POST", "path": "/events", "as": "leader", "body": { "kind": "message", "room": "#floor", "body": "b" } },
+    { "method": "POST", "path": "/events", "as": "leader", "body": { "kind": "message", "room": "#floor", "body": "c" } },
+    { "method": "POST", "path": "/events", "as": "leader", "body": { "kind": "message", "room": "#floor", "body": "d" } }
+  ],
+  "request": { "method": "GET", "path": "/events?limit=2", "as": "leader" },
+  "expect": {
+    "status": 200,
+    "bodyMatches": {
+      "events": [
+        { "seq": 1, "kind": "participant_joined" },
+        { "seq": 2, "kind": "message", "body": "a" }
+      ],
+      "lastSeq": 2
+    },
+    "bodyExcludes": ["\"body\":\"c\"", "\"body\":\"d\""]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "the long poll returns idle at its cap",
+  "why": "Fails if the wait returns events, hangs past its cap, or returns a bare 204. The agent's brief tells it to call again on `{idle:true}`; anything else either strands the agent or costs it a turn it cannot interpret.",
+  "request": { "method": "GET", "path": "/await?timeout_s=0", "as": "codex" },
+  "expect": {
+    "status": 200,
+    "bodyMatches": { "idle": true }
+  }
+}

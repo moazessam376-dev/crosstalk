@@ -1,0 +1,12 @@
+{
+  "name": "a room id reaches the server percent-encoded",
+  "why": "Fails if the daemon does not decode `%23floor`. Unencoded, `#floor` in a URL is an empty path plus a fragment and the room name never leaves the client — a failure that is silent on both ends, which is why it is pinned here rather than left to a reader to remember.",
+  "setup": [
+    { "method": "POST", "path": "/events", "as": "leader", "body": { "kind": "message", "room": "#floor", "body": "on the floor" } }
+  ],
+  "request": { "method": "GET", "path": "/rooms/%23floor/events", "as": "codex" },
+  "expect": {
+    "status": 200,
+    "bodyMatches": { "events": [{ "kind": "message", "room": "#floor", "body": "on the floor" }] }
+  }
+}

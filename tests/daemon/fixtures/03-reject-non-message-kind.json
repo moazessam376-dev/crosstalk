@@ -1,0 +1,34 @@
+{
+  "name": "POST /events cannot append a protocol-bearing kind",
+  "why": "Fails with 201 if `validateRaise` is bypassable. `claim_raised` carries a whole Claim, so a generic append lets any client hand-build one — falsifier rule and all — and never reach a validator. The message must name the owning route, or a client that found the wrong door is left guessing.",
+  "request": {
+    "method": "POST",
+    "path": "/events",
+    "as": "codex",
+    "body": {
+      "kind": "claim_raised",
+      "claim": {
+        "id": "C-999",
+        "raisedBy": "codex",
+        "against": "leader",
+        "target": "src/x.ts:1",
+        "assertion": "hand-built claim",
+        "severity": "blocker",
+        "falsifier": "",
+        "evidence": [],
+        "state": "open",
+        "rounds": 0
+      }
+    }
+  },
+  "expect": {
+    "status": 422,
+    "bodyMatches": {
+      "error": {
+        "domain": "daemon",
+        "code": "EVENT_KIND_NOT_APPENDABLE",
+        "message": "claim_raised is not directly appendable — use POST /claims"
+      }
+    }
+  }
+}

@@ -2,8 +2,10 @@ import type { CrosstalkConfig } from '../contracts/config.js';
 import type { Decision } from '../contracts/decision.js';
 import type { CrosstalkEvent, DraftEvent } from '../contracts/events.js';
 import type { ParticipantId } from '../contracts/participant.js';
-import { HUMAN_ID } from '../contracts/room.js';
-import { FLOOR } from '../contracts/room.js';
+import { FLOOR, HUMAN_ID, SYSTEM_ID } from '../contracts/room.js';
+
+// Re-exported so `server.ts` keeps one import site; the id itself is a contract.
+export { SYSTEM_ID };
 import { adjudicatorFor, nextRung, planLadder } from '../core/ladder.js';
 import { responderFor } from '../core/claims.js';
 import { currentRungOf } from '../core/decisions.js';
@@ -155,16 +157,6 @@ function hasUnresolvedLadder(claimId: string, state: HubState): boolean {
 }
 
 /* ---------------------------------------------------------------- timers -- */
-
-/**
- * Author of daemon-driven events — a rung that expired because nobody acted.
- *
- * A reserved id nobody holds, mirroring `@human`. It matters that it is not a
- * real participant: `addressesParticipant` returns false when `from === who`,
- * so attributing a timeout to the leader would be exactly the participant the
- * next rung most needs to wake.
- */
-export const SYSTEM_ID: ParticipantId = '@crosstalk';
 
 const DURATION = /^(\d+)\s*(s|m|h)$/i;
 

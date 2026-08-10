@@ -51,6 +51,21 @@ export interface MirrorConfig {
     enabled: boolean;
     mode: MirrorMode;
     pollSeconds: number;
+    /**
+     * Whose comments the inbound channel treats as `@human`, by login.
+     *
+     * Absent, the filter is `author_association === 'OWNER'`, which is correct
+     * only where a *user* owns the repository. GitHub never assigns `OWNER` on
+     * an organisation-owned repo — the owner is the organisation, not a person
+     * — so the filter there matches nothing, forever, and `two-way-human`
+     * degrades silently to `one-way`. Measured across three org repositories:
+     * 300 comments, `OWNER` zero times; 98 of 98 on this user-owned one.
+     *
+     * That failure lands precisely on the AFK channel: the maintainer comments
+     * from their phone expecting every agent to see it, and nothing happens,
+     * during the window where nobody is watching the hub to notice.
+     */
+    humanLogin?: string;
   };
 }
 

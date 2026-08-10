@@ -48,6 +48,12 @@ export const PROTOCOL_STATUS: Record<ErrorCode, number> = {
   NON_TERMINAL_LADDER: 422,
   NOT_ELIGIBLE_VOTER: 403,
   VOTE_WITHOUT_RATIONALE: 422,
+  // 409, not 422: the payload is fine, the ladder is simply not at that rung.
+  RUNG_NOT_ACTIVE: 409,
+  NOT_ADJUDICATOR: 403,
+  RULING_WITHOUT_FALSIFIER: 422,
+  TEST_WITHOUT_PREDICTION: 422,
+  NOT_TASK_AUTHORITY: 403,
   UNKNOWN_CLAIM: 404,
   UNKNOWN_TASK: 404,
   UNKNOWN_DECISION: 404,
@@ -94,6 +100,11 @@ export const EVENT_KIND_ROUTE: Record<EventKind, string> = {
   task_state: 'POST /tasks/:id/state',
   decision_opened: 'POST /decisions',
   vote_cast: 'POST /decisions/:id/vote',
+  test_proposed: 'POST /decisions/:id/test',
+  // The ladder climbs on the daemon's own timers and state, never on a client
+  // asking it to. An agent that could append `rung_entered` could skip a rung.
+  rung_entered: 'no client route — emitted when the ladder advances',
+  rung_failed: 'no client route — emitted when a rung times out or cannot run',
   // Emitted by the daemon from state it owns. No client route exists, by design:
   // presence, staleness and resolution are derived, never asserted by a client.
   participant_joined: 'no client route — derived from the presenting token',

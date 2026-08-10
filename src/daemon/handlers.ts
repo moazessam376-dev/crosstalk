@@ -9,6 +9,7 @@ import { validateRaise, validateResponse, type ClaimResponseInput } from '../cor
 import { tally, validateLadder } from '../core/decisions.js';
 import type { HubState } from '../core/projection.js';
 import { isMember } from '../core/rooms.js';
+import { FLOOR } from '../contracts/room.js';
 import { validateTransition } from '../core/tasks.js';
 
 import { DaemonError } from './errors.js';
@@ -212,7 +213,16 @@ export async function openDecision(ctx: HandlerContext, body: Body): Promise<Cro
     ...(body['deadline'] === undefined ? {} : { deadline: requireString(body, 'deadline') }),
   };
 
-  return [await ctx.append({ kind: 'decision_opened', from: ctx.who, decision })];
+  // Task 0 minimum so the tree compiles. A decision about a claim belongs in
+  // that claim's dispute room; anything else is project-wide. Waking the
+  // voters is A2's job and is NOT done by this alone — room membership and
+  // the voter list are different sets, which is the whole of claim C-1.
+  return [await ctx.append({ kind: 'decision_opened', from: ctx.who, room: decisionRoom(decision), decision })];
+}
+
+/** A decision about a claim lives in its dispute room; anything else on the floor. */
+export function decisionRoom(decision: Pick<Decision, 'claimId'>): string {
+  return decision.claimId === undefined ? FLOOR : `dispute:${decision.claimId}`;
 }
 
 export async function castVote(
@@ -234,13 +244,14 @@ export async function castVote(
     throw new ProtocolError('VOTE_WITHOUT_RATIONALE', 'a vote requires a rationale');
   }
 
+  const room = decisionRoom(decision);
   const events = [
-    await ctx.append({ kind: 'vote_cast', from: ctx.who, decisionId, option, rationale }),
+    await ctx.append({ kind: 'vote_cast', from: ctx.who, room, decisionId, option, rationale }),
   ];
 
   const outcome = tally(ctx.state.decisions.get(decisionId)!);
   if (outcome !== null) {
-    events.push(await ctx.append({ kind: 'decision_resolved', from: ctx.who, decisionId, outcome }));
+    events.push(await ctx.append({ kind: 'decision_resolved', from: ctx.who, room, decisionId, outcome }));
   }
   return events;
 }

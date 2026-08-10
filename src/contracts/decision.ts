@@ -31,6 +31,18 @@ export interface Rationale {
   text: string;
 }
 
+/**
+ * A rung that will not be attempted, and why.
+ *
+ * Named rather than removed: a ladder degraded because there was no uninvolved
+ * peer to call must not look like a ladder somebody deliberately configured
+ * short. Audit F-07.
+ */
+export interface SkippedRung {
+  rung: LadderRung;
+  reason: string;
+}
+
 export interface Decision {
   /** "D-07" */
   id: string;
@@ -40,8 +52,18 @@ export interface Decision {
   method: DecisionMethod;
   /** Present when `method` is "ladder". */
   ladder?: LadderRung[];
-  /** Index into `ladder`. */
+  /**
+   * Index into `ladder` at open time, set to `LadderPlan.start`.
+   *
+   * This is a snapshot and the log is append-only, so it never moves. The
+   * *live* rung is the `index` of the last `rung_entered` for this decision,
+   * falling back to this field when there is none. Consumers must use that
+   * rule rather than reading this field alone, or a rail renders the opening
+   * rung forever while the ladder climbs underneath it.
+   */
   currentRung?: number;
+  /** Rungs that will not be attempted. Populated at open time. */
+  skipped?: SkippedRung[];
   /** ISO-8601. */
   deadline?: string;
   outcome?: string;

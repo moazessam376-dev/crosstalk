@@ -58,6 +58,7 @@ Every handoff carries the branch, the commit SHA, your one-round self-critique r
 Two rules that exist because they were broken here, not in theory (see [`docs/FRICTION-LOG.md`](docs/FRICTION-LOG.md)):
 
 - **Push before you cite.** The SHA in your evidence must be reachable on the remote. A result from a commit only your machine can see is not something a reviewer can check.
+- **One run is not evidence for anything that binds a port, spawns a process, or touches the filesystem.** Run those suites **five times consecutively** and report the pass count for each. A suite that fails two runs in five reports green on any single execution more often than not — that is not a hypothetical, it is a measured 40% flake that passed a handoff and a leader review here, both on one run apiece.
 - **`npm test` is not a build.** Always include `npm run typecheck` and `npm run build` in your evidence. Vitest transpiles without typechecking, so a fully green suite can sit on code `tsc` rejects — and CI runs `typecheck` first, so that branch is red everywhere while every local signal says green.
 
 Zero self-critique findings is legal. Say so plainly rather than inventing some.

@@ -230,3 +230,21 @@ Every rule in this repository about evidence assumes the measuring device is sou
 **Nothing was changed structurally, and that is the honest answer.** The habit is to capture the status of the command you care about — `${PIPESTATUS[0]}` in bash, or redirect to a file and check the status directly — rather than piping and asking `$?`. The leader had been doing that already, by habit rather than by reasoning, and would not have noticed the hazard unprompted.
 
 **Found by the worker, in its own evidence, while checking work nobody had questioned.** Which is the argument for self-critique being a gate rather than a courtesy: the leader's review would have read the reported `exit=0` and believed it, because reviewing evidence means reading what the instrument said.
+
+---
+
+## 17 · "Run the tests" was treated as atomic by everyone, including the rules
+
+**What happened.** A daemon suite failed **two runs in five**. The failing tests were not marginal: one was the acceptance criterion that a second daemon must refuse to start, which resolved successfully instead of rejecting — the lock did not hold.
+
+It surfaced only because the leader ran the suite four times instead of once, and only did *that* because the first run disagreed with the second. Before that, the same suite had passed a worker handoff and a leader review, each on a single execution, and each had reported it green in writing.
+
+A suite that fails 40% of the time reports green on any one run 60% of the time. Both reports were honest. Both were nearly worthless.
+
+**Why the design permitted it.** Every evidence rule in this repository — *the command, its output, and the SHA it ran at* — describes a single execution, and none of them mention repetition. "Run the tests" was treated as an atomic act by every track, by every brief the leader wrote, and by the leader's own reviews. Nothing was violated. The rule simply did not cover the case.
+
+The underlying defect was itself introduced by a leader ruling: a lock-reclamation rule requiring a health probe, which opened a window where a live holder had not yet bound its listener. The worker implemented the ordering fix the leader proposed; it was necessary and not sufficient, and the flake got worse rather than better.
+
+**Changed.** Any suite that binds a port, spawns a process or touches the filesystem gets **five consecutive runs** with per-run pass counts, in handoffs and in review. Now in `AGENTS.md`.
+
+**The general form, which is the reason this is its own entry:** a flaky test is not a weaker version of a failing test. It is a *green signal that is sometimes true*, which is strictly more dangerous than one that is never true — it survives review, accumulates trust, and teaches everyone to re-run rather than investigate.

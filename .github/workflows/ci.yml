@@ -1,9 +1,35 @@
 name: CI
 
+# Three savings, in the order they matter. This repository exhausted a
+# 2,000-minute private-repo budget in a single night of agent-driven work.
+#
+#   1. macOS bills at 10x, Windows at 2x, Linux at 1x. The old six-job matrix
+#      cost ~39 billable minutes per push and macOS was 77% of it.
+#   2. Superseded runs kept going. Agents push repeatedly; every push but the
+#      last was paying to test a commit nobody would look at.
+#   3. Docs-only pushes ran the full matrix. The last two runs before the
+#      budget ran out were friction-log edits.
+#
+# `AGENTS.md` rule 7 — green on one platform is not done — still holds:
+# `main` is tested on all three before anything is released from it.
+
 on:
   push:
     branches: [main]
+    # Only on `push`. Deliberately NOT on `pull_request`: once this repo is
+    # public and `main` requires status checks, a docs-only PR whose checks
+    # never run is a PR that can never merge. That footgun is not worth the
+    # minutes.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
   pull_request:
+
+# A newer push to the same branch cancels the older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -12,7 +38,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Pull requests: Linux + Windows. Pushes to `main`: all three.
+        # `fromJSON` because a matrix dimension has to be a real list, and a
+        # non-empty array is truthy, so the `&&`/`||` pair selects between them.
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest","windows-latest","macos-latest"]') || fromJSON('["ubuntu-latest","windows-latest"]') }}
         node: ['20', '22']
     steps:
       - uses: actions/checkout@v7

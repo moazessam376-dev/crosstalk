@@ -2,6 +2,7 @@ import { createElement, useState } from 'react';
 import type { Claim } from '../../contracts/claim.js';
 import type { LadderRung } from '../../contracts/decision.js';
 import type { CrosstalkEvent } from '../../contracts/events.js';
+import { project } from '../../core/projection.js';
 import type { ParticipantId } from '../../contracts/participant.js';
 import type { PostResult } from '../state/humanAction.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -136,29 +137,25 @@ function roundFor(claims: readonly ClaimView[]): number {
 }
 
 /**
- * Must agree with `stateForVerdict` in src/core/projection.ts for every
- * verdict. The two are independent implementations of one protocol — that
- * boundary is deliberate, but it has now produced two divergences (a claim
- * shown `resolved` while the core said `contested`, and `accept` shown
- * `triaged` while the core said `resolved`). `tests/ui/verdict-parity.test.ts`
- * asserts they agree across the whole verdict union.
+ * Claim state, from the core projection rather than from a second one.
+ *
+ * There used to be a `displayState` here that derived state from the last
+ * response's verdict. It was a deliberate boundary and it produced three
+ * divergences: a claim shown `resolved` while the core said `contested`,
+ * `accept` shown `triaged` while the core said `resolved`, and finally a claim
+ * that A5 had *reopened* — its evidence orphaned by a rebase — still drawn as
+ * `resolved`, telling the one person who had to re-argue it that the argument
+ * was settled.
+ *
+ * The third one is why the boundary went. A reopen is not a verdict, so no
+ * amount of verdict-parity testing could ever have caught it, and the next
+ * event kind that changes claim state without a verdict would have been the
+ * fourth. §10 calls the hub "a pure projection of the event log" — that is
+ * better served by *the* projection than by one that agrees with it on a good
+ * day.
  */
-export function displayState(view: ClaimView): Claim['state'] {
-  if (view.claim.resolution) return 'resolved';
-  const response = view.responses.at(-1);
-  if (!response) return view.claim.state;
-  switch (response.verdict) {
-    case 'accept':
-      return 'resolved';
-    case 'clarify':
-      return 'clarify';
-    case 'concede':
-    case 'amend':
-      return 'resolved';
-    case 'contest':
-    case 'uphold':
-      return 'contested';
-  }
+function claimStates(events: readonly CrosstalkEvent[]): Map<string, Claim> {
+  return project([...events]).claims;
 }
 
 function labelForRung(rung: string): string {
@@ -347,6 +344,7 @@ export function DisputeView({ roomId, events, maxRounds, self, onVote, onHumanAc
   const claims = collectClaims(ordered, scopedEvents, roomId);
   const decision = latestDecision(scopedEvents);
   const rail = decision ? buildRail(scopedEvents, decision) : { rungs: [], adjudicator: undefined };
+  const coreClaims = claimStates(ordered);
   const proposedTests = scopedEvents.filter((event): event is TestProposedEvent => event.kind === 'test_proposed');
   const votable = onVote === undefined ? [] : openDecisionsFor(scopedEvents, self);
   const counts = decision ? voteCounts(scopedEvents, decision) : new Map<string, number>();
@@ -363,7 +361,9 @@ export function DisputeView({ roomId, events, maxRounds, self, onVote, onHumanAc
     .filter((response) => response.from === primary?.claim.raisedBy)
     .flatMap((response) => response.evidence ?? []);
   const evidence = primary ? [...primary.claim.evidence, ...primary.extraEvidence, ...raiserEvidence] : [];
-  const claimWithEvidence = primary ? { ...primary.claim, evidence, state: displayState(primary) } : undefined;
+  const claimWithEvidence = primary
+    ? { ...primary.claim, evidence, state: coreClaims.get(primary.claim.id)?.state ?? primary.claim.state }
+    : undefined;
 
   return createElement(
     'section',

@@ -307,12 +307,34 @@ Create `src/mirror/github.ts`, `src/mirror/queue.ts`, `src/mirror/render.ts`. Te
 - **One comment per claim, edited in place** rather than appended. This keeps the PR readable and write volume far below rate limits — an appending mirror on a five-round dispute is five comments nobody can follow.
 - A queue with retry. **Mirror failure never blocks the protocol.** No remote, no credential, or GitHub unreachable degrades to nothing.
 - `gh` via `execFile`, or REST over `node:https`. **Not octokit** — two runtime dependencies, total.
+- **The mirror reads the log through `GET /stream?since=<seq>`** and has no path back into the append path, so "mirror failure never blocks the protocol" is structural rather than a discipline. Ordering is `seq` straight from the log; restart catch-up is `since`.
+- **It has a caller.** Track D exports from `src/mirror/index.ts`:
+  ```ts
+  export function startMirror(opts: { repo: string; url: string; token: string; config: MirrorConfig }):
+    Promise<{ stop(): Promise<void> }>;
+  ```
+  **Track B** calls it in `cmdUp` after the daemon is listening, when `mirror.github.enabled`, and `stop()`s it on shutdown — one call site in `src/cli/index.ts`, which Track B owns. Starting it from `up` rather than from inside the daemon is what keeps the mirror separately killable. A subsystem with no caller outside its own tests is the defect this whole plan was opened on; the first draft of D1 reproduced it.
 
 **Acceptance.** A task reaching `assigned` opens a draft PR; `submitted` marks it ready. A claim progressing through contest → uphold → concede leaves **one** comment, edited three times — assert the comment count, not just its content. With the remote unreachable, every protocol operation still succeeds and the queue retries. Tests must not need network: fake the transport at your own boundary, not with a mocked `execFile` that would pass against a typo'd subcommand.
 
 ### D2 — the inbound human channel
 
-Create `src/mirror/poll.ts`. Modify `src/daemon/server.ts` **by request to Track A** — do not edit it yourself; raise a claim naming the hook you need.
+Create `src/mirror/poll.ts`. **No daemon change — the first draft of this task was wrong to ask for one.**
+
+The mirror posts a pulled comment into `#floor` as `@human` through the existing
+`POST /events`, holding `@human`'s token from `.crosstalk/tokens/human`. The
+daemon resolves `from` from the presenting token, so attribution is already
+correct without a hook. Verified by mutation: changing `from: ctx.who` to a
+hard-coded `'@human'` in `#appendMessage` turns
+`tests/mirror/daemon-seam.test.ts`'s leader-token case red.
+
+A hook would also be *worse*, which is the part that turned this from
+unnecessary into forbidden: any hook letting the mirror inject a message as a
+participant is a second path to `from` that does not go through a token —
+`FROM_NOT_ALLOWED` reopened for one caller, in the subsystem most exposed to
+input from outside this codebase. The mirror holds `@human`'s token and has
+exactly the authority that token carries, which is also what makes it safe to
+run out of process and kill at any moment.
 
 - `mode: two-way-human` polls every `pollSeconds` while any task is active, pulling comments **authored by the repository owner** into `#floor` as `@human`.
 - Only human comments. Agent-authored PR content is never pulled back, or the mirror echoes itself.

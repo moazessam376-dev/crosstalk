@@ -337,7 +337,17 @@ class Daemon {
     if (path === '/config.json' && method === 'GET') {
       // The hub learns who it is from the cookie it was bootstrapped with,
       // rather than from anything baked into the bundle at build time.
-      send(response, 200, { version: 1, self: who, streamUrl: '/stream', room: FLOOR });
+      //
+      // `maxRounds` for the same reason: the round counter is a fact about this
+      // project's policy, and the hub hard-coded 3 in two places that then
+      // disagreed with each other. Served, never assumed.
+      send(response, 200, {
+        version: 1,
+        self: who,
+        streamUrl: '/stream',
+        room: FLOOR,
+        maxRounds: this.#config.policy.dispute.maxRounds,
+      });
       return;
     }
     if (path === '/events' && method === 'GET') {

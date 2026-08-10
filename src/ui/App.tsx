@@ -4,7 +4,7 @@ import { Layout } from './layout/Layout.js';
 import { deriveState } from './state/derive.js';
 import { useLog, type LogSource } from './state/useLog.js';
 import { loadHubConfig, type HubConnection } from './state/hubConfig.js';
-import { postHumanAction, type HumanAction } from './state/humanAction.js';
+import { postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
 
 /**
  * Used when no daemon answers `/config.json` — `vite dev`, or a static build
@@ -101,6 +101,16 @@ export default function App({ connection: injected }: AppProps = {}) {
       state,
       activeRoom,
       maxRounds,
+      self: connection.kind === 'live' ? connection.config.self : undefined,
+      // No daemon, nowhere to post. The composer is hidden rather than shown
+      // and inert — a text box that silently drops what you typed is worse
+      // than no text box.
+      onSend: connection.kind === 'live' && activeRoom !== undefined
+        ? (body: string) => postMessage(body, activeRoom)
+        : undefined,
+      onVote: connection.kind === 'live'
+        ? (decisionId: string, option: string, rationale: string) => postVote(decisionId, option, rationale)
+        : undefined,
       onSelectRoom: (roomId: string) => setSelectedRoom(roomId),
       onHumanAction,
     }),

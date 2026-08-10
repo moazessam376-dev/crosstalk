@@ -1,8 +1,9 @@
-import { createElement } from 'react';
+import { createElement, useState } from 'react';
 import type { Claim } from '../../contracts/claim.js';
 import type { LadderRung } from '../../contracts/decision.js';
 import type { CrosstalkEvent } from '../../contracts/events.js';
 import type { ParticipantId } from '../../contracts/participant.js';
+import type { PostResult } from '../state/humanAction.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { ClaimCard } from '../cards/ClaimCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -28,6 +29,10 @@ export interface DisputeViewProps {
    * default would hide the regression it exists to expose.
    */
   maxRounds?: number;
+  /** Who this browser posts as. The vote control appears only for a named voter. */
+  self?: string;
+  /** Absent when no daemon is attached — the control is hidden rather than inert. */
+  onVote?: (decisionId: string, option: string, rationale: string) => Promise<PostResult>;
   onHumanAction?: (action: DisputeAction) => void;
 }
 
@@ -230,13 +235,90 @@ function divergentShas(events: readonly CrosstalkEvent[], proposal: TestProposed
   return [...shas];
 }
 
-export function DisputeView({ roomId, events, maxRounds, onHumanAction }: DisputeViewProps) {
+interface VoteControlProps {
+  decisionId: string;
+  options: readonly string[];
+  onVote: (decisionId: string, option: string, rationale: string) => Promise<PostResult>;
+}
+
+/**
+ * The human's ruling on an open decision.
+ *
+ * The rationale is required here rather than discovered from the daemon's
+ * `VOTE_WITHOUT_RATIONALE`: a round-trip to learn that a field was mandatory is
+ * a worse experience than a field that says so. It is also the same burden
+ * every other participant carries — a ruling is a claim (spec §5.3).
+ */
+function VoteControl({ decisionId, options, onVote }: VoteControlProps) {
+  const [rationale, setRationale] = useState('');
+  const [error, setError] = useState<string | undefined>(undefined);
+  const ready = rationale.trim().length > 0;
+
+  async function cast(option: string): Promise<void> {
+    if (!ready) return;
+    const result = await onVote(decisionId, option, rationale.trim());
+    if (result.ok) {
+      setRationale('');
+      setError(undefined);
+      return;
+    }
+    setError(result.reason);
+  }
+
+  return createElement(
+    'section',
+    { className: 'vote-control', 'data-testid': `vote-control-${decisionId}`, 'aria-label': 'cast your vote' },
+    createElement('h3', null, 'your ruling'),
+    createElement('textarea', {
+      className: 'vote-rationale',
+      'data-testid': 'vote-rationale',
+      'aria-label': 'why you are ruling this way',
+      placeholder: 'Why. A vote without a reason is not a ruling.',
+      rows: 2,
+      value: rationale,
+      onChange: (event: { target: { value: string } }) => setRationale(event.target.value),
+    }),
+    createElement(
+      'div',
+      { className: 'vote-options' },
+      options.map((option) =>
+        createElement(
+          'button',
+          {
+            key: option,
+            type: 'button',
+            className: 'vote-option',
+            'data-testid': `vote-option-${option}`,
+            disabled: !ready,
+            onClick: () => void cast(option),
+          },
+          option,
+        ),
+      ),
+    ),
+    error === undefined
+      ? null
+      : createElement('p', { className: 'vote-error', role: 'alert', 'data-testid': 'vote-error' }, error),
+  );
+}
+
+export function DisputeView({ roomId, events, maxRounds, self, onVote, onHumanAction }: DisputeViewProps) {
   const ordered = events.slice().sort((left, right) => left.seq - right.seq);
   const scopedEvents = roomEvents(ordered, roomId);
   const claims = collectClaims(ordered, scopedEvents, roomId);
   const decision = latestDecision(scopedEvents);
   const rail = decision ? buildRail(scopedEvents, decision) : { rungs: [], adjudicator: undefined };
   const proposedTests = scopedEvents.filter((event): event is TestProposedEvent => event.kind === 'test_proposed');
+  // Eligibility is the decision's own `voters` list, which the daemon enforces
+  // with NOT_ELIGIBLE_VOTER. Showing the control to anyone else offers a
+  // button that cannot work.
+  const resolved = decision !== undefined
+    && scopedEvents.some((event) => event.kind === 'decision_resolved' && event.decisionId === decision.decision.id);
+  const mayVote = decision !== undefined
+    && !resolved
+    && onVote !== undefined
+    && self !== undefined
+    && decision.decision.voters.includes(self);
   const counts = decision ? voteCounts(scopedEvents, decision) : new Map<string, number>();
   const round = roundFor(claims);
   const primary = claims[0];
@@ -371,6 +453,13 @@ export function DisputeView({ roomId, events, maxRounds, onHumanAction }: Disput
             [...counts.entries()].map(([option, count]) => createElement('li', { key: option }, createElement('span', null, option), createElement('strong', null, count))),
           ),
         )
+      : null,
+    mayVote && decision !== undefined && onVote !== undefined
+      ? createElement(VoteControl, {
+          decisionId: decision.decision.id,
+          options: decision.decision.options,
+          onVote,
+        })
       : null,
     createElement(
       'div',

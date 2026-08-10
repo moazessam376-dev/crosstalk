@@ -5,8 +5,8 @@ import { ProtocolError } from '../contracts/errors.js';
 import type { CrosstalkEvent, DraftEvent } from '../contracts/events.js';
 import type { ParticipantId } from '../contracts/participant.js';
 import type { Acknowledgement, CritiqueRecord, Task, TaskState } from '../contracts/task.js';
-import { validateRaise, validateResponse, type ClaimResponseInput } from '../core/claims.js';
-import { tally, validateLadder } from '../core/decisions.js';
+import { responderFor, validateRaise, validateResponse, type ClaimResponseInput } from '../core/claims.js';
+import { currentRungOf, tally, validateLadder } from '../core/decisions.js';
 import type { HubState } from '../core/projection.js';
 import { isMember } from '../core/rooms.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
@@ -381,6 +381,68 @@ export async function castVote(
     events.push(await ctx.append({ kind: 'decision_resolved', from: ctx.who, room, decisionId, outcome }));
   }
   return events;
+}
+
+/**
+ * Propose a command whose result differs depending on who is right (§5.3).
+ *
+ * Crosstalk records the exchange and executes nothing: agents propose, run it
+ * in their own workspace, and post the output as evidence. A daemon that
+ * shelled out to whatever two arguing agents agreed on would be a remote code
+ * execution hole, not a feature.
+ */
+export async function proposeTest(
+  ctx: HandlerContext,
+  decisionId: string,
+  body: Body,
+): Promise<CrosstalkEvent[]> {
+  const decision = ctx.state.decisions.get(decisionId);
+  if (decision === undefined) {
+    throw new ProtocolError('UNKNOWN_DECISION', `Unknown decision: ${decisionId}`);
+  }
+
+  const claimId = decision.claimId;
+  const current = currentRungOf(decision, ctx.state);
+  if (claimId === undefined || current?.rung !== 'discriminating_test') {
+    throw new ProtocolError(
+      'RUNG_NOT_ACTIVE',
+      `${decisionId} is not on the discriminating_test rung`,
+    );
+  }
+
+  const claim = ctx.state.claims.get(claimId);
+  if (claim !== undefined && ctx.who !== claim.raisedBy && ctx.who !== responderFor(claim, ctx.state)) {
+    throw new ProtocolError(
+      'NOT_CLAIM_RESPONDER',
+      `${ctx.who} is not a party to ${claimId} and cannot propose its test`,
+    );
+  }
+
+  const command = requireString(body, 'command');
+  // Required for the same reason `Evidence.sha` is: two disputants running one
+  // command at two commits get a difference explained by the diff between them,
+  // not by who is right.
+  const sha = requireString(body, 'sha');
+  const predicts = readString(body, 'predicts');
+  if (predicts.trim() === '') {
+    throw new ProtocolError(
+      'TEST_WITHOUT_PREDICTION',
+      'a command nobody has predicted an outcome for discriminates nothing',
+    );
+  }
+
+  return [
+    await ctx.append({
+      kind: 'test_proposed',
+      from: ctx.who,
+      room: `dispute:${claimId}`,
+      decisionId,
+      claimId,
+      command,
+      predicts,
+      sha,
+    }),
+  ];
 }
 
 /* ----------------------------------------------------------------- reads -- */

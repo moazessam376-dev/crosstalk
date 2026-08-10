@@ -13,6 +13,7 @@ import type { ParticipantId } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { EventLog } from '../core/log.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
+import { LadderTimers, SYSTEM_ID, expireRung } from './ladder.js';
 
 import {
   DAEMON_STATUS,
@@ -270,6 +271,13 @@ class Daemon {
   readonly #subscribers = new Set<Subscriber>();
   readonly #delivered = new Map<ParticipantId, number>();
   #writeTail: Promise<unknown> = Promise.resolve();
+  /**
+   * Rung timers. Driven by appended events, so every path that enters a rung
+   * arms one without each caller having to remember.
+   */
+  readonly #ladderTimers = new LadderTimers((decisionId, reason) => {
+    void this.#expireRung(decisionId, reason);
+  });
 
   constructor(
     config: CrosstalkConfig,
@@ -285,7 +293,22 @@ class Daemon {
   }
 
   async init(): Promise<void> {
-    this.#state = project(await this.#log.read());
+    const log = await this.#log.read();
+    this.#state = project(log);
+    // A daemon restarted mid-rung picks the clock back up from the last
+    // `rung_entered`; one restarted past the deadline advances immediately
+    // rather than losing the rung.
+    this.#ladderTimers.rearm(log, this.#state, this.#config, Date.now());
+  }
+
+  /** A rung ran out of time. No request is in flight, so the daemon signs it. */
+  async #expireRung(decisionId: string, reason: string): Promise<void> {
+    try {
+      await expireRung(this.#context(SYSTEM_ID), decisionId, reason);
+    } catch {
+      // A failed escalation must not take the daemon down with it; the rung
+      // stays where it is and the next response re-evaluates.
+    }
   }
 
   /** Resolves every pending long poll so close() cannot hang on a 50s timer. */
@@ -303,6 +326,7 @@ class Daemon {
   }
 
   async close(): Promise<void> {
+    this.#ladderTimers.stop();
     await this.#writeTail.catch(() => {});
     await this.#log.close();
   }
@@ -699,6 +723,7 @@ class Daemon {
     const queued = this.#writeTail.then(async () => {
       const event = await this.#log.append(draft);
       this.#state = applyEvent(this.#state, event);
+      this.#ladderTimers.observe(event, this.#state, this.#config);
       return event;
     });
     this.#writeTail = queued.catch(() => {});

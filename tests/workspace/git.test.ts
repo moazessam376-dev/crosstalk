@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  branchSha,
+  commitExists,
   createWorktree,
   gitVersion,
   headSha,
@@ -105,6 +107,44 @@ describe('git workspace lifecycle', () => {
 
     const orphan = await commitOnOrphanBranch(repo);
     expect(await isAncestor(orphan, await headSha(repo), repo)).toBe(false);
+  }, 60_000);
+});
+
+/**
+ * A5: staleness is measured against the head of `project.mainBranch`, and
+ * `headSha` answers about whatever is checked out. The daemon runs from the
+ * repository root, but nothing pins that checkout to the main branch — and on
+ * a linked worktree it is guaranteed not to be — so `rev-parse HEAD` compares
+ * evidence against the wrong commit.
+ */
+describe('branchSha', () => {
+  it('answers for the named branch, not for whatever is checked out', async () => {
+    const repo = await tempRepo();
+    const mainTip = await git(repo, ['rev-parse', 'main']);
+    await git(repo, ['checkout', '-b', 'work']);
+    await commitEmpty(repo, 'work in progress');
+    const workTip = await git(repo, ['rev-parse', 'HEAD']);
+
+    // The setup is only meaningful while the two disagree.
+    expect(workTip).not.toBe(mainTip);
+    expect(await headSha(repo)).toBe(workTip);
+    expect(await branchSha(repo, 'main')).toBe(mainTip);
+  }, 60_000);
+
+  it('names the branch it could not find', async () => {
+    const repo = await tempRepo();
+    await expect(branchSha(repo, 'trunk')).rejects.toThrow(/trunk/);
+  }, 60_000);
+});
+
+describe('commitExists', () => {
+  it('separates a commit this repository has from one it has never heard of', async () => {
+    const repo = await tempRepo();
+
+    expect(await commitExists(await headSha(repo), repo)).toBe(true);
+    // Well-formed, and not an object here: the shape a pruned or
+    // never-pushed evidence sha has by the time the daemon re-checks it.
+    expect(await commitExists('0123456789abcdef0123456789abcdef01234567', repo)).toBe(false);
   }, 60_000);
 });
 

@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { project } from '../../src/core/projection.js';
-import type { CrosstalkEvent } from '../../src/contracts/events.js';
-import type { ClaimVerdict } from '../../src/contracts/claim.js';
+import { project, type HubState } from '../../src/core/projection.js';
+import type { CrosstalkEvent, DraftEvent } from '../../src/contracts/events.js';
+import type { ClaimVerdict, Evidence } from '../../src/contracts/claim.js';
+import type { Task, TaskState } from '../../src/contracts/task.js';
 
 async function loadFixture(name: string): Promise<CrosstalkEvent[]> {
   const raw = await readFile(join('tests', 'fixtures', `${name}.jsonl`), 'utf8');
@@ -158,4 +159,209 @@ function responseSequence(from: string[]): CrosstalkEvent[] {
     } as CrosstalkEvent);
   });
   return events;
+}
+
+/* ------------------------------------------------------- A5: staleness -- */
+
+/**
+ * §5.4's consequences. `evidence_stale` marking the item was already here; what
+ * was missing is the part that makes the marking matter — a claim whose whole
+ * case has been rewritten out from under it stops counting as settled.
+ */
+describe('evidence_stale reopens a claim that has nothing left to stand on', () => {
+  it('returns an upheld claim to open and clears the resolution', () => {
+    const state = replay([
+      ...answeredClaim('C-1', 'accept', [ev('sha-raiser')], [ev('sha-fix')]),
+      stale('C-1', 'sha-raiser'),
+      stale('C-1', 'sha-fix'),
+    ]);
+    const claim = state.claims.get('C-1')!;
+
+    expect(claim.state).toBe('open');
+    // Omitted, not set to `undefined`: an own undefined key survives the
+    // determinism test's serialised comparison.
+    expect('resolution' in claim).toBe(false);
+    // A reopened claim takes a triage verdict; the round cap governs the
+    // ladder, and this argument has already had its rounds.
+    expect(claim.rounds).toBe(1);
+    expect(claim.evidence.every((item) => item.stale === true)).toBe(true);
+  });
+
+  it('leaves a claim resolved while one fresh piece still holds it up', () => {
+    const state = replay([
+      ...answeredClaim('C-1', 'accept', [ev('sha-raiser')], [ev('sha-fix')]),
+      stale('C-1', 'sha-raiser'),
+    ]);
+    const claim = state.claims.get('C-1')!;
+
+    expect(claim.state).toBe('resolved');
+    expect(claim.resolution).toBe('upheld');
+    // The marking still happened — this is not "the event was ignored".
+    expect(claim.evidence.filter((item) => item.stale === true)).toHaveLength(1);
+  });
+
+  it('does not reopen a claim that carries no evidence at all', () => {
+    // `[].every(...)` is true, so an evidence-free claim would reopen on a sha
+    // it never carried. The suite above builds exactly such a claim.
+    const state = replay([
+      ...answeredClaim('C-2', 'accept', [], []),
+      stale('C-2', 'a-sha-this-claim-never-carried'),
+    ]);
+
+    expect(state.claims.get('C-2')?.state).toBe('resolved');
+    expect(state.claims.get('C-2')?.resolution).toBe('upheld');
+  });
+
+  it.each([
+    ['concede', 'withdrawn'],
+    ['amend', 'superseded'],
+  ] as const)('does not resurrect a %s claim', (verdict, resolution) => {
+    const state = replay([
+      ...answeredClaim('C-3', verdict, [ev('sha-old')], [ev('sha-old')]),
+      stale('C-3', 'sha-old'),
+    ]);
+    const claim = state.claims.get('C-3')!;
+
+    expect(claim.state).toBe('resolved');
+    expect(claim.resolution).toBe(resolution);
+  });
+
+  it('still only marks, on a claim that was never resolved', () => {
+    const state = replay([...raisedClaim('C-4', [ev('sha-old')]), stale('C-4', 'sha-old')]);
+    const claim = state.claims.get('C-4')!;
+
+    expect(claim.state).toBe('open');
+    expect(claim.evidence[0]?.stale).toBe(true);
+  });
+
+  // A live argument is not reopened, it is already open — and `open` and
+  // `contested` route the next response to opposite participants, so
+  // flattening one into the other hands the turn to the wrong side.
+  it('does not flatten a contested claim to open when its evidence all goes stale', () => {
+    const state = replay([
+      ...answeredClaim('C-5', 'contest', [ev('sha-raiser')], [ev('sha-counter')]),
+      stale('C-5', 'sha-raiser'),
+      stale('C-5', 'sha-counter'),
+    ]);
+    const claim = state.claims.get('C-5')!;
+
+    expect(claim.state).toBe('contested');
+    expect(claim.evidence.every((item) => item.stale === true)).toBe(true);
+  });
+});
+
+describe('rebase_notice returns a submitted task to in_progress', () => {
+  it('moves the task out of the review queue', () => {
+    const state = replay([...task('T-1', 'submitted'), rebase('T-1')]);
+    expect(state.tasks.get('T-1')?.state).toBe('in_progress');
+  });
+
+  // Without this the handler is indistinguishable from "set every task to
+  // in_progress whenever anything rebases".
+  it.each(['under_review', 'accepted', 'merged', 'self_reviewed', 'assigned'] as const)(
+    'leaves a %s task where it is',
+    (state) => {
+      expect(replay([...task('T-1', state), rebase('T-1')]).tasks.get('T-1')?.state).toBe(state);
+    },
+  );
+
+  it('ignores a notice for a task nobody created', () => {
+    expect(replay([rebase('T-404')]).tasks.size).toBe(0);
+  });
+});
+
+/** Stamps `seq` and `ts` the way the daemon does, so `project` has an order. */
+function replay(drafts: DraftEvent[]): HubState {
+  return project(
+    drafts.map(
+      (draft, index) =>
+        ({
+          ...draft,
+          seq: index + 1,
+          ts: new Date(Date.UTC(2026, 7, 10, 0, 0, index)).toISOString(),
+        }) as CrosstalkEvent,
+    ),
+  );
+}
+
+function ev(sha: string): Evidence {
+  return { kind: 'command', command: 'npm test', output: '3 passed', sha, by: 'codex' };
+}
+
+function raisedClaim(id: string, evidence: Evidence[]): DraftEvent[] {
+  return [
+    {
+      kind: 'claim_raised',
+      from: 'leader',
+      room: `dispute:${id}`,
+      claim: {
+        id,
+        raisedBy: 'leader',
+        against: 'codex',
+        target: 'src/example.ts:1',
+        assertion: 'the example is wrong',
+        severity: 'defect',
+        falsifier: 'if this is wrong, the example test passes at the head of the main branch',
+        evidence,
+        state: 'open',
+        rounds: 0,
+      },
+    },
+  ];
+}
+
+/**
+ * A resolution is never authored — `resolutionForVerdict` derives it from a
+ * verdict — so every resolved claim here is built the only way one exists.
+ */
+function answeredClaim(
+  id: string,
+  verdict: ClaimVerdict,
+  raiserEvidence: Evidence[],
+  answerEvidence: Evidence[],
+): DraftEvent[] {
+  return [
+    ...raisedClaim(id, raiserEvidence),
+    {
+      kind: 'claim_response',
+      from: verdict === 'accept' ? 'codex' : 'leader',
+      room: `dispute:${id}`,
+      claimId: id,
+      verdict,
+      rationale: 'Answered.',
+      evidence: answerEvidence,
+    },
+  ];
+}
+
+function stale(claimId: string, sha: string): DraftEvent {
+  return { kind: 'evidence_stale', from: 'leader', room: `dispute:${claimId}`, claimId, sha };
+}
+
+function rebase(taskId: string): DraftEvent {
+  return {
+    kind: 'rebase_notice',
+    from: 'leader',
+    room: `task:${taskId}`,
+    taskId,
+    newBase: 'new-main-sha',
+  };
+}
+
+function task(id: string, state: TaskState): DraftEvent[] {
+  const created: Task = {
+    id,
+    title: 'Build the log',
+    brief: 'Implement the append-only event log.',
+    specRefs: ['§5.2'],
+    assignee: 'codex',
+    deps: [],
+    acceptance: ['the log appends by seq'],
+    state: 'draft',
+    branch: `ct/${id}-log`,
+  };
+  return [
+    { kind: 'task_created', from: 'leader', room: `task:${id}`, task: created },
+    { kind: 'task_state', from: 'leader', room: `task:${id}`, taskId: id, state },
+  ];
 }

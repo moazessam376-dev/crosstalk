@@ -100,17 +100,33 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
     case 'evidence_stale': {
       const claim = state.claims.get(event.claimId);
       if (claim) {
-        state.claims.set(event.claimId, {
+        const next: Claim = {
           ...claim,
-          evidence: claim.evidence.map((evidence) =>
-            evidence.sha === event.sha ? { ...evidence, stale: true } : evidence,
+          evidence: claim.evidence.map((item) =>
+            item.sha === event.sha ? { ...item, stale: true } : item,
           ),
-        });
+        };
+        if (hasNothingLeftToStandOn(next)) {
+          next.state = 'open';
+          // Deleted rather than set to `undefined`: an own key holding
+          // `undefined` survives into serialised state, and the projection is
+          // compared serialised.
+          delete next.resolution;
+        }
+        state.claims.set(event.claimId, next);
       }
       return state;
     }
-    case 'rebase_notice':
+    case 'rebase_notice': {
+      // Only from `submitted`. A task under review, accepted or merged is
+      // somebody else's to move, and a task already being worked on has
+      // nowhere to go.
+      const task = state.tasks.get(event.taskId);
+      if (task?.state === 'submitted') {
+        state.tasks.set(event.taskId, { ...task, state: 'in_progress' });
+      }
       return state;
+    }
     case 'decision_opened':
       state.decisions.set(event.decision.id, { ...event.decision, votes: { ...event.decision.votes } });
       return state;
@@ -148,6 +164,31 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
   }
 
   throw new Error(`Unknown event kind: ${(event as { kind?: string }).kind ?? '<missing>'}`);
+}
+
+/**
+ * Whether a resolved claim has just lost the last evidence that settled it.
+ *
+ * Spec §5.4: "a claim resolved solely by now-stale evidence reopens". One fresh
+ * piece is enough to keep it settled — a resolution standing on evidence the
+ * main branch still contains has not been undermined by a rebase somewhere
+ * else in the tree.
+ *
+ * `withdrawn` and `superseded` are excluded for the same reason the daemon's
+ * sweep excludes them: a conceded claim was abandoned by the person who raised
+ * it and an amended one has a successor carrying the argument. Neither is
+ * waiting on evidence, and resurrecting them would reopen an argument that
+ * ended for reasons no rebase touches. `upheld` is precisely the case this
+ * exists for.
+ *
+ * The `length > 0` guard is not decoration: `[].every(...)` is true, so without
+ * it a claim that never carried any evidence would reopen on the first stale
+ * event naming a sha it has never seen.
+ */
+function hasNothingLeftToStandOn(claim: Claim): boolean {
+  if (claim.state !== 'resolved') return false;
+  if (claim.resolution === 'withdrawn' || claim.resolution === 'superseded') return false;
+  return claim.evidence.length > 0 && claim.evidence.every((item) => item.stale === true);
 }
 
 function emptyState(): HubState {

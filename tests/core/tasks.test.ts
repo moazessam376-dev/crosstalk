@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Claim, Evidence } from '../../src/contracts/claim.js';
 import type { Task, TaskState, CritiqueRecord, Acknowledgement } from '../../src/contracts/task.js';
-import { validateTransition } from '../../src/core/tasks.js';
+import { canTransition, validateTransition } from '../../src/core/tasks.js';
 import type { HubState } from '../../src/core/projection.js';
 
 describe('task gates', () => {
@@ -39,6 +39,34 @@ describe('task gates', () => {
       expect.objectContaining({ code: 'UNRESOLVED_CLAIMS' }),
     );
   });
+
+  // A5: a `rebase_notice` sends a submitted task back to `in_progress`, and the
+  // work that follows has to be able to climb out again — so the return leg is
+  // a legal transition rather than a state only the projection can reach.
+  it('permits submitted -> in_progress, the leg a rebase notice sends a task down', () => {
+    const state = stateWithTask('T-1', 'submitted', {
+      acknowledgement: { restatement: 'build the log', ambiguities: [] },
+    });
+    expect(canTransition('submitted', 'in_progress')).toBe(true);
+    expect(() => validateTransition('T-1', 'in_progress', state)).not.toThrow();
+  });
+
+  // The neighbours. Widening one entry must not widen the row: `submitted` is
+  // still a state you leave forwards through review, or backwards to redo the
+  // work — never sideways into a gate you have already passed.
+  it.each(['self_reviewed', 'accepted', 'merged'] as const)(
+    'still refuses submitted -> %s',
+    (target) => {
+      const state = stateWithTask('T-1', 'submitted', {
+        acknowledgement: { restatement: 'build the log', ambiguities: [] },
+        critique: { rounds: 1, findings: [], critic: 'codex subagent' },
+      });
+      expect(canTransition('submitted', target)).toBe(false);
+      expect(() => validateTransition('T-1', target, state)).toThrowError(
+        expect.objectContaining({ code: 'ILLEGAL_TRANSITION' }),
+      );
+    },
+  );
 
   it('rejects a transition not present in the table', () => {
     const state = stateWithTask('T-1', 'draft');

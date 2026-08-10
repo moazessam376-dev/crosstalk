@@ -60,7 +60,7 @@ What landed, and the claim that caused each:
 |---|---|
 | `room` **required** on `decision_opened`, `vote_cast`, `decision_resolved` | A/C-1 |
 | `rung_entered { decisionId, rung, index, adjudicator? }` | A/C-3, B/1 |
-| `rung_failed { decisionId, rung, reason }` | A/C-6, B/1 |
+| `rung_failed { decisionId, rung, index, reason }` | A/C-6, B/1, C/rule-4 |
 | `test_proposed { decisionId, claimId, command, predicts, sha }` | A/C-11 |
 | `room` **required** on `evidence_stale` (`dispute:<claimId>`) and `rebase_notice` (`task:<taskId>`) | A/C-12 |
 | `Decision.skipped?: SkippedRung[]` | A/C-2, B/1 |
@@ -71,7 +71,8 @@ What landed, and the claim that caused each:
 
 1. **Current rung** = the `index` of the last `rung_entered` for that `decisionId`; absent any, `decision.currentRung ?? 0`. One rule that satisfies both the frozen fixture and live data. Track C renders by it; Track A appends by it.
 2. **The adjudicator is chosen at rung entry, not at open.** "Uninvolved" decays — a peer picked when the ladder opened may hold its own claim by rung 2. `rung_entered.adjudicator` is stamped at *every* entry. Track C reads it from the last `rung_entered`, never from `decision_opened`.
-3. **A ladder decision's `voters` are every participant who could ever be asked at any rung**: the leader, `@human`, and all workers, deduplicated. This is *not* the dispute room's membership — that was claim A/C-1 — and it is what makes rule 2 possible without a contract change, since the adjudicator is already an eligible voter whenever it is named.
+4. **`rung_failed` carries its own `index`.** Track A emits the position that failed; consumers never pair a failure to a preceding `rung_entered` by name. The pairing convention held only while every failure followed an entry — and a rung failing *at* entry, with no uninvolved peer available, is a natural thing to emit bare. A repeated rung in one ladder breaks name-matching outright.
+5. **A ladder decision's `voters` are every participant who could ever be asked at any rung**: the leader, `@human`, and all workers, deduplicated. This is *not* the dispute room's membership — that was claim A/C-1 — and it is what makes rule 2 possible without a contract change, since the adjudicator is already an eligible voter whenever it is named.
 
 The leader also added the minimum for the tree to compile: `decisionRoom()` in
 `src/daemon/handlers.ts`, the three new kinds in `EVENT_KIND_ROUTE` and
@@ -264,7 +265,8 @@ Modify `src/ui/dispute/DisputeView.tsx`, `src/ui/cards/ClaimCard.tsx`. Create `t
 - Left pane: the claim and its falsifier. Right pane: **the most recent response from the other side** — never the claimant's own restatement. Today it pairs `claims[0]` with `responses.at(-1)`, so after an `uphold` the contesting worker's falsifier disappears from the one screen the design exists for.
 - Ladder rail from `decision.ladder`, current rung by **rule 1**, `decision.skipped` as `data-state="skipped"` with its reason, and a rung that `rung_failed` as `data-state="failed"` — distinct, or an escalated ladder and a stalled one look identical.
 - Adjudicator read from the last `rung_entered`, per **rule 2**.
-- `test_proposed` renders command, `predicts` and `sha`; answering evidence whose `sha` differs is marked. That makes "these two ran at different commits" visible on screen rather than only in the ledger.
+- `test_proposed` renders command, `predicts` and `sha`; answering evidence whose `sha` differs is marked, **and so do two proposals at differing `sha`s** — that second case is the exact scenario C-11 was argued on, where the disagreement is explained by the diff between two commits rather than by who is right.
+- The vote control offers **every** open decision `@human` is eligible for, not only the latest in the room. C-3's idempotence guard bounds ladder decisions to one per claim, but nothing stops an agent opening an ordinary `open_decision` in the same room, and §10.3 says *any* open decision.
 - Stale evidence stays struck through in place.
 
 *Correction to revision 1:* the rail and tally **do** render today — the frozen fixture carries a `room` and `tests/ui/dispute.test.tsx` passes. What never renders is against a live daemon, which was A2's bug.

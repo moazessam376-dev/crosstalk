@@ -13,6 +13,7 @@ import { FLOOR } from '../contracts/room.js';
 import { validateTransition } from '../core/tasks.js';
 
 import { DaemonError } from './errors.js';
+import { escalateIfNeeded } from './ladder.js';
 
 export interface HandlerContext {
   /** Derived from the presenting token. Never read from a body. */
@@ -73,7 +74,7 @@ export async function respondToClaim(
 
   validateResponse(input, ctx.state);
 
-  return [
+  const events = [
     await ctx.append({
       kind: 'claim_response',
       from: ctx.who,
@@ -85,6 +86,11 @@ export async function respondToClaim(
       ...(input.falsifier === undefined ? {} : { falsifier: input.falsifier }),
     }),
   ];
+
+  // Automatic: no agent has to know the ladder exists, and none can decline to
+  // escalate. `ctx.state` is a getter, so this reads the response just written.
+  events.push(...(await escalateIfNeeded(ctx, claimId)));
+  return events;
 }
 
 export async function addEvidence(

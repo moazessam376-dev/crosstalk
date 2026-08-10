@@ -248,3 +248,33 @@ The underlying defect was itself introduced by a leader ruling: a lock-reclamati
 **Changed.** Any suite that binds a port, spawns a process or touches the filesystem gets **five consecutive runs** with per-run pass counts, in handoffs and in review. Now in `AGENTS.md`.
 
 **The general form, which is the reason this is its own entry:** a flaky test is not a weaker version of a failing test. It is a *green signal that is sometimes true*, which is strictly more dangerous than one that is never true — it survives review, accumulates trust, and teaches everyone to re-run rather than investigate.
+
+*Entry 18 corrects the cause given above: there was no lock defect. The claim is left standing because it is what was believed at the time, and because being able to see a wrong diagnosis in its original wording is most of this document's value.*
+
+## 18 · The flake supplied evidence for whichever theory was brought to it
+
+**What happened.** The 40% flake in entry 17 was diagnosed three times by the leader. All three were wrong.
+
+1. *The lock does not hold* — a second daemon resolved instead of rejecting. A task was refused over it.
+2. *The health probe opens a startup window* — a leader-mandated rule, so the leader wrote the fix, and the worker implemented it. The flake continued.
+3. *It is unexplained but it is in the lock suite* — carried into the next brief as inherited work, with permission to quarantine it.
+
+Three minutes of isolation, run before any of the above, would have settled it:
+
+```
+tests/daemon/server.test.ts alone ............. 6 runs, 6 green
+tests/daemon, forks.singleFork=true ........... 3 runs, 3 green
+tests/daemon, default parallelism ............. 5 runs, 3 green
+```
+
+Concurrent daemons inside one test run, in parallel worker threads. Not the lock, not reclamation, not the health probe, and not `startDaemon` — which is why it never threatened `crosstalk up`, where one daemon starts. One line of `vitest.config.ts`.
+
+**Why three theories all fitted.** A deterministic failure constrains its explanation: the theory has to produce *that* failure, every time. A flaky one constrains nothing. Any theory that predicts "sometimes broken" matches the evidence, so the theory that gets adopted is whichever one the diagnostician already had — and each re-run returns a different-looking sample that can be read as support.
+
+Both tells were visible and both were noted out loud. The failing test *names* changed between runs, which no single-defect theory explains. And theory 2 did not account for one of the four failures — a 1.4s failure on the fast path, recorded at the time as "does not explain" and then reasoned past anyway.
+
+The real signature was in the message the whole time. `TypeError: fetch failed / Caused by: Error: bad port` is a client that never opened a connection. It is not what a lock that failed to hold looks like, and nobody read it until the fourth pass.
+
+**Changed.** Before diagnosing a flaky test, **isolate it, and do not offer a cause until you have**: run the file alone, run the suite single-threaded, then form a theory. Three commands. Cheaper than every path taken here.
+
+**The general form:** a flaky test is not only a green signal that is sometimes true — it is also a red signal that confirms whatever you already suspect. Deterministic failures are falsifiable; intermittent ones are not, until you make them so. This project puts a required `falsifier` field on every claim precisely to stop unfalsifiable arguments between agents, and its own leader then spent a night making three unfalsifiable ones to itself.

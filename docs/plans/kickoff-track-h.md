@@ -28,7 +28,7 @@ That is all. Track G owns `src/cli/**` and `src/daemon/**`; Track I owns `src/ui
 
 ## The work
 
-**1. A stdio MCP server** on `@modelcontextprotocol/sdk` — already a dependency, and one of only two we are allowed. Config comes from the environment: `CROSSTALK_URL` and `CROSSTALK_TOKEN`. Track G's `crosstalk init` writes both into `.mcp.json`; **agree the exact file shape with them through me before you rely on it.** A guess costs you both a rebuild.
+**1. A stdio MCP server** on `@modelcontextprotocol/sdk` — already a dependency, and one of only two we are allowed. Config is `CROSSTALK_REPO` + `CROSSTALK_TOKEN`, and **the daemon URL is discovered from `.crosstalk/daemon.json`, not configured.** Settled in [`docs/specs/2026-08-10-front-door-interfaces.md`](../specs/2026-08-10-front-door-interfaces.md) §1 — you are not blocked on Track G.
 
 The daemon derives `from` from the presenting token and rejects any payload that sets it. Do not send one. That rule is why the ledger can be trusted.
 

@@ -24,7 +24,7 @@ export type { LadderRung, DecisionMethod, Rationale, Decision } from './decision
 export { TERMINAL_RUNGS } from './decision.js';
 
 export type { RoomId, RoomKind } from './room.js';
-export { FLOOR, HUMAN_ID } from './room.js';
+export { FLOOR, HUMAN_ID, SYSTEM_ID } from './room.js';
 
 export type { EventKind, EventBase, CrosstalkEvent, DraftEvent } from './events.js';
 

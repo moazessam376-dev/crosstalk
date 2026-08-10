@@ -279,6 +279,7 @@ describe('C1 ladder rail', () => {
       room: 'dispute:C-200',
       decisionId: 'D-09',
       rung: 'discriminating_test',
+      index: 0,
       reason: 'timeout: codex did not propose',
     },
     {
@@ -533,10 +534,10 @@ describe('C3 the human can vote', () => {
       }),
     );
 
-    fireEvent.change(screen.getByTestId('vote-rationale'), {
+    fireEvent.change(screen.getByTestId('vote-rationale-D-30'), {
       target: { value: 'The replay run settles it: one application.' },
     });
-    fireEvent.click(screen.getByTestId('vote-option-once'));
+    fireEvent.click(screen.getByTestId('vote-option-D-30-once'));
 
     await waitFor(() => expect(cast).toHaveLength(1));
     expect(cast[0]).toEqual({
@@ -562,10 +563,10 @@ describe('C3 the human can vote', () => {
       }),
     );
 
-    fireEvent.click(screen.getByTestId('vote-option-once'));
+    fireEvent.click(screen.getByTestId('vote-option-D-30-once'));
 
     expect(cast).toEqual([]);
-    expect(screen.getByTestId('vote-option-once')).toBeDisabled();
+    expect(screen.getByTestId('vote-option-D-30-once')).toBeDisabled();
   });
 
   it('offers nothing to a participant the decision does not name', () => {
@@ -580,7 +581,7 @@ describe('C3 the human can vote', () => {
       }),
     );
 
-    expect(screen.queryByTestId('vote-rationale')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('vote-rationale-D-30')).not.toBeInTheDocument();
   });
 
   it('offers nothing once the decision has resolved', () => {
@@ -603,6 +604,207 @@ describe('C3 the human can vote', () => {
       }),
     );
 
-    expect(screen.queryByTestId('vote-rationale')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('vote-rationale-D-30')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The case `rung_failed.index` exists for. A3 fails a `third_agent` rung when
+ * no uninvolved peer is available, and failing *at entry* is a natural thing to
+ * emit bare — there is no preceding `rung_entered` to pair it to. The old
+ * name-matching would have shown that rung as untouched.
+ */
+describe('C1 a rung that fails at entry', () => {
+  it('marks the failed position even with no rung_entered before it', () => {
+    const events: CrosstalkEvent[] = [
+      {
+        seq: 1,
+        ts: '2026-08-09T00:00:01Z',
+        kind: 'claim_raised',
+        from: 'leader',
+        room: 'dispute:C-400',
+        claim: { ...claim, id: 'C-400' },
+      },
+      {
+        seq: 2,
+        ts: '2026-08-09T00:00:02Z',
+        kind: 'decision_opened',
+        from: 'leader',
+        room: 'dispute:C-400',
+        decision: {
+          id: 'D-40',
+          question: 'Does the staffing coefficient apply twice?',
+          options: ['twice', 'once'],
+          voters: ['leader', '@human'],
+          method: 'ladder',
+          ladder: ['discriminating_test', 'third_agent', 'leader'],
+          currentRung: 0,
+          rationale: [],
+          claimId: 'C-400',
+          votes: {},
+        },
+      },
+      {
+        seq: 3,
+        ts: '2026-08-09T00:00:03Z',
+        kind: 'rung_failed',
+        from: 'leader',
+        room: 'dispute:C-400',
+        decisionId: 'D-40',
+        rung: 'third_agent',
+        index: 1,
+        reason: 'no uninvolved peer was available at entry',
+      },
+    ];
+
+    render(createElement(DisputeView, { roomId: 'dispute:C-400', events }));
+
+    expect(screen.getByTestId('ladder-rung-third_agent')).toHaveAttribute('data-state', 'failed');
+    expect(screen.getByTestId('ladder-rung-third_agent')).toHaveAttribute('title', 'no uninvolved peer was available at entry');
+  });
+});
+
+/**
+ * Both disputants proposing at different commits is the scenario C-11 was
+ * argued on: two runs of one command at two commits differ because of the diff
+ * between them, and the rung then records an inconclusive falsifier against
+ * both when the real fault was that nobody agreed a commit.
+ */
+describe('C1 two proposals at two commits', () => {
+  function proposal(seq: number, from: string, sha: string): CrosstalkEvent {
+    return {
+      seq,
+      ts: `2026-08-09T00:00:0${seq}Z`,
+      kind: 'test_proposed',
+      from,
+      room: 'dispute:C-500',
+      decisionId: 'D-50',
+      claimId: 'C-500',
+      command: 'node tools/replay.mjs --ticks 3',
+      predicts: `${from} says the ledger balances`,
+      sha,
+    };
+  }
+
+  const raised: CrosstalkEvent = {
+    seq: 1,
+    ts: '2026-08-09T00:00:01Z',
+    kind: 'claim_raised',
+    from: 'leader',
+    room: 'dispute:C-500',
+    claim: { ...claim, id: 'C-500', evidence: [] },
+  };
+
+  it('marks each proposal with the other commit', () => {
+    render(
+      createElement(DisputeView, {
+        roomId: 'dispute:C-500',
+        events: [raised, proposal(2, 'leader', '9f31aa4'), proposal(3, 'codex', '20b08a7')],
+      }),
+    );
+
+    expect(screen.getByTestId('test-proposal-2-divergence')).toHaveTextContent('20b08a7');
+    expect(screen.getByTestId('test-proposal-3-divergence')).toHaveTextContent('9f31aa4');
+  });
+
+  it('says nothing when both proposals name the same commit', () => {
+    // The neighbouring case: two proposals agreeing on a commit is the rung
+    // working, and must not be flagged.
+    render(
+      createElement(DisputeView, {
+        roomId: 'dispute:C-500',
+        events: [raised, proposal(2, 'leader', '9f31aa4'), proposal(3, 'codex', '9f31aa4')],
+      }),
+    );
+
+    expect(screen.queryByTestId('test-proposal-2-divergence')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('test-proposal-3-divergence')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * §10.3 says the human may vote on *any* open decision they are eligible for.
+ * C-3's idempotence guard bounds ladder decisions to one per claim, but nothing
+ * stops an agent opening an ordinary decision in the same room.
+ */
+describe('C3 every eligible open decision', () => {
+  function decision(seq: number, id: string, ladder: boolean): CrosstalkEvent {
+    return {
+      seq,
+      ts: `2026-08-09T00:00:0${seq}Z`,
+      kind: 'decision_opened',
+      from: 'leader',
+      room: 'dispute:C-600',
+      decision: {
+        id,
+        question: `question for ${id}`,
+        options: ['twice', 'once'],
+        voters: ['leader', '@human'],
+        method: ladder ? 'ladder' : 'majority',
+        ...(ladder ? { ladder: ['discriminating_test', 'leader'] as const, currentRung: 0 } : {}),
+        rationale: [],
+        claimId: 'C-600',
+        votes: {},
+      },
+    };
+  }
+
+  const base: CrosstalkEvent[] = [
+    {
+      seq: 1,
+      ts: '2026-08-09T00:00:01Z',
+      kind: 'claim_raised',
+      from: 'leader',
+      room: 'dispute:C-600',
+      claim: { ...claim, id: 'C-600' },
+    },
+    decision(2, 'D-60', true),
+    decision(3, 'D-61', false),
+  ];
+
+  it('offers a control for each one', () => {
+    render(
+      createElement(DisputeView, {
+        roomId: 'dispute:C-600',
+        events: base,
+        self: '@human',
+        onVote: async () => ({ ok: true as const }),
+      }),
+    );
+
+    expect(screen.getByTestId('vote-rationale-D-60')).toBeInTheDocument();
+    expect(screen.getByTestId('vote-rationale-D-61')).toBeInTheDocument();
+  });
+
+  it('drops only the one that resolved', () => {
+    const resolved: CrosstalkEvent = {
+      seq: 4,
+      ts: '2026-08-09T00:00:04Z',
+      kind: 'decision_resolved',
+      from: 'leader',
+      room: 'dispute:C-600',
+      decisionId: 'D-61',
+      outcome: 'once',
+    };
+
+    render(
+      createElement(DisputeView, {
+        roomId: 'dispute:C-600',
+        events: [...base, resolved],
+        self: '@human',
+        onVote: async () => ({ ok: true as const }),
+      }),
+    );
+
+    expect(screen.getByTestId('vote-rationale-D-60')).toBeInTheDocument();
+    expect(screen.queryByTestId('vote-rationale-D-61')).not.toBeInTheDocument();
+  });
+
+  it('keeps the rail on the ladder decision when a later one has no ladder', () => {
+    // D-61 is the most recent decision and carries no ladder. A rail reading
+    // "the latest decision" would go blank here.
+    render(createElement(DisputeView, { roomId: 'dispute:C-600', events: base }));
+
+    expect(screen.getByTestId('ladder-rung-discriminating_test')).toBeInTheDocument();
   });
 });

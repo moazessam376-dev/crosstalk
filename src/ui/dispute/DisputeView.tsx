@@ -92,8 +92,34 @@ function responseView(response: ClaimResponseEvent | undefined): ClaimResponseVi
   };
 }
 
+/**
+ * The decision the rail and tally describe: the most recent one carrying a
+ * ladder. A room can hold more than one open decision — C-3's idempotence guard
+ * bounds *ladder* decisions to one per claim, but nothing stops an agent
+ * opening an ordinary one alongside it — and a rail reading "the latest
+ * decision" would go blank the moment that happened.
+ */
 function latestDecision(events: readonly CrosstalkEvent[]): DecisionOpenedEvent | undefined {
-  return events.filter((event): event is DecisionOpenedEvent => event.kind === 'decision_opened').at(-1);
+  const opened = events.filter((event): event is DecisionOpenedEvent => event.kind === 'decision_opened');
+  return opened.filter((event) => event.decision.ladder !== undefined).at(-1) ?? opened.at(-1);
+}
+
+/**
+ * Every open decision this participant may vote on. Spec §10.3 says *any*
+ * decision they are eligible for, and eligibility is the decision's own
+ * `voters` list — which is what the daemon enforces with NOT_ELIGIBLE_VOTER.
+ */
+function openDecisionsFor(events: readonly CrosstalkEvent[], self: string | undefined): DecisionOpenedEvent[] {
+  if (self === undefined) return [];
+  const resolved = new Set(
+    events.filter((event) => event.kind === 'decision_resolved').map((event) => event.decisionId),
+  );
+  return events.filter(
+    (event): event is DecisionOpenedEvent =>
+      event.kind === 'decision_opened'
+      && !resolved.has(event.decision.id)
+      && event.decision.voters.includes(self),
+  );
 }
 
 /**
@@ -158,11 +184,11 @@ interface RailRung {
  * rail reading it alone shows the opening rung forever while the ladder climbs
  * underneath it.
  *
- * `rung_failed` carries no index, so a failure is paired to the position of the
- * nearest preceding `rung_entered` for the same rung. That pairing is sound
- * because a rung is always entered before it can time out — it is the rule I
- * asked the leader to state, because nothing in the types enforces it and
- * `validateLadder` does not forbid a ladder from repeating a rung.
+ * `rung_failed.index` is the failed position, read directly. It used to be
+ * recovered by pairing each failure to the nearest preceding `rung_entered` of
+ * the same name, which held only while every failure followed an entry — and a
+ * rung that fails *at* entry, with no uninvolved peer available, is a natural
+ * thing to emit bare. The contract carries the position now.
  */
 function buildRail(
   events: readonly CrosstalkEvent[],
@@ -174,9 +200,7 @@ function buildRail(
   let lastEntered: Extract<CrosstalkEvent, { kind: 'rung_entered' }> | undefined;
   for (const event of events) {
     if (event.kind === 'rung_entered' && event.decisionId === id) lastEntered = event;
-    if (event.kind === 'rung_failed' && event.decisionId === id && lastEntered?.rung === event.rung) {
-      failedByIndex.set(lastEntered.index, event.reason);
-    }
+    if (event.kind === 'rung_failed' && event.decisionId === id) failedByIndex.set(event.index, event.reason);
   }
 
   const current = lastEntered?.index ?? currentRung ?? 0;
@@ -222,6 +246,18 @@ function voteCounts(events: readonly CrosstalkEvent[], decision: DecisionOpenedE
 function divergentShas(events: readonly CrosstalkEvent[], proposal: TestProposedEvent): string[] {
   const shas = new Set<string>();
   for (const event of events) {
+    // A competing proposal at another commit is the sharper case, and the one
+    // C-11 was argued on: the rung is already doomed before anyone runs
+    // anything. Order does not matter here — either proposal names a commit the
+    // other disagrees with.
+    if (
+      event.kind === 'test_proposed'
+      && event.decisionId === proposal.decisionId
+      && event.seq !== proposal.seq
+      && event.sha !== proposal.sha
+    ) {
+      shas.add(event.sha);
+    }
     if (event.seq <= proposal.seq) continue;
     if (event.kind === 'evidence_added' && event.claimId === proposal.claimId && event.evidence.sha !== proposal.sha) {
       shas.add(event.evidence.sha);
@@ -237,6 +273,8 @@ function divergentShas(events: readonly CrosstalkEvent[], proposal: TestProposed
 
 interface VoteControlProps {
   decisionId: string;
+  /** Named, because more than one decision can be open at once. */
+  question: string;
   options: readonly string[];
   onVote: (decisionId: string, option: string, rationale: string) => Promise<PostResult>;
 }
@@ -249,7 +287,7 @@ interface VoteControlProps {
  * a worse experience than a field that says so. It is also the same burden
  * every other participant carries — a ruling is a claim (spec §5.3).
  */
-function VoteControl({ decisionId, options, onVote }: VoteControlProps) {
+function VoteControl({ decisionId, question, options, onVote }: VoteControlProps) {
   const [rationale, setRationale] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
   const ready = rationale.trim().length > 0;
@@ -269,9 +307,10 @@ function VoteControl({ decisionId, options, onVote }: VoteControlProps) {
     'section',
     { className: 'vote-control', 'data-testid': `vote-control-${decisionId}`, 'aria-label': 'cast your vote' },
     createElement('h3', null, 'your ruling'),
+    createElement('p', { className: 'vote-question' }, question),
     createElement('textarea', {
       className: 'vote-rationale',
-      'data-testid': 'vote-rationale',
+      'data-testid': `vote-rationale-${decisionId}`,
       'aria-label': 'why you are ruling this way',
       placeholder: 'Why. A vote without a reason is not a ruling.',
       rows: 2,
@@ -288,7 +327,7 @@ function VoteControl({ decisionId, options, onVote }: VoteControlProps) {
             key: option,
             type: 'button',
             className: 'vote-option',
-            'data-testid': `vote-option-${option}`,
+            'data-testid': `vote-option-${decisionId}-${option}`,
             disabled: !ready,
             onClick: () => void cast(option),
           },
@@ -309,16 +348,7 @@ export function DisputeView({ roomId, events, maxRounds, self, onVote, onHumanAc
   const decision = latestDecision(scopedEvents);
   const rail = decision ? buildRail(scopedEvents, decision) : { rungs: [], adjudicator: undefined };
   const proposedTests = scopedEvents.filter((event): event is TestProposedEvent => event.kind === 'test_proposed');
-  // Eligibility is the decision's own `voters` list, which the daemon enforces
-  // with NOT_ELIGIBLE_VOTER. Showing the control to anyone else offers a
-  // button that cannot work.
-  const resolved = decision !== undefined
-    && scopedEvents.some((event) => event.kind === 'decision_resolved' && event.decisionId === decision.decision.id);
-  const mayVote = decision !== undefined
-    && !resolved
-    && onVote !== undefined
-    && self !== undefined
-    && decision.decision.voters.includes(self);
+  const votable = onVote === undefined ? [] : openDecisionsFor(scopedEvents, self);
   const counts = decision ? voteCounts(scopedEvents, decision) : new Map<string, number>();
   const round = roundFor(claims);
   const primary = claims[0];
@@ -454,13 +484,17 @@ export function DisputeView({ roomId, events, maxRounds, self, onVote, onHumanAc
           ),
         )
       : null,
-    mayVote && decision !== undefined && onVote !== undefined
-      ? createElement(VoteControl, {
-          decisionId: decision.decision.id,
-          options: decision.decision.options,
-          onVote,
-        })
-      : null,
+    onVote === undefined
+      ? null
+      : votable.map((open) =>
+          createElement(VoteControl, {
+            key: open.decision.id,
+            decisionId: open.decision.id,
+            question: open.decision.question,
+            options: open.decision.options,
+            onVote,
+          }),
+        ),
     createElement(
       'div',
       { className: 'dispute-actions', 'aria-label': 'human dispute controls' },

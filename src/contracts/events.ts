@@ -61,8 +61,15 @@ export type CrosstalkEvent =
       evidence: Evidence[];
     })
   | (EventBase & { kind: 'evidence_added'; claimId: string; evidence: Evidence })
-  | (EventBase & { kind: 'evidence_stale'; claimId: string; sha: string })
-  | (EventBase & { kind: 'rebase_notice'; taskId: string; newBase: string })
+  // `room` required for the same reason as the decision events below, and
+  // missed on the first pass. A claim resolved `upheld` returns to `open` when
+  // its evidence is orphaned — so somebody has to answer it again, and that
+  // participant is parked in `await_turn`. A roomless `evidence_stale` wakes
+  // nobody: the claim silently reopens and the one person who must act on it is
+  // the one person not told. `dispute:<claimId>`, already the convention.
+  | (EventBase & { kind: 'evidence_stale'; room: RoomId; claimId: string; sha: string })
+  // Same shape: `task:<taskId>`. The prose said so; now the compiler does.
+  | (EventBase & { kind: 'rebase_notice'; room: RoomId; taskId: string; newBase: string })
   // `room` is required on every decision event, not inherited as optional from
   // EventBase. `addressesParticipant` wakes a participant only for an event
   // carrying a room they are in, so a roomless decision reached nobody: a voter

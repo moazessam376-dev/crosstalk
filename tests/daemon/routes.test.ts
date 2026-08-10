@@ -647,3 +647,202 @@ describe('a dispute is an argument, not one turn', () => {
     });
   });
 });
+
+describe('who may move a task', () => {
+  /**
+   * A sibling of `configWithMaxRounds` rather than a generalisation of it, for
+   * the same reason spelled out there: `policy` replaces `DEFAULT_POLICY`
+   * wholesale, so every block has to be present or `ladder` and `rungTimeouts`
+   * come back undefined.
+   */
+  const configWithAcceptance = (method: string, extraParticipants = ''): string =>
+    `${CONFIG}${extraParticipants}policy:
+  selfCritique:
+    required: true
+    minRounds: 1
+  leaderCritique:
+    maxRounds: 2
+  dispute:
+    maxRounds: 3
+    ladder: [discriminating_test, third_agent, leader]
+    rungTimeouts:
+      discriminating_test: 30m
+      third_agent: 30m
+  taskAcceptance:
+    method: ${method}
+`;
+
+  // Quoted: '@' opens a reserved YAML indicator, so a bare `@human` will not parse.
+  const HUMAN_PARTICIPANT = `  - id: "@human"
+    role: human
+    harness: human
+    lifecycle: attached
+    workspace: .
+`;
+
+  async function withConfig<T>(config: string, fn: (d: DaemonHandle) => Promise<T>): Promise<T> {
+    const daemon = await startDaemon({ repo: await tempRepo(config) });
+    try {
+      return await fn(daemon);
+    } finally {
+      await daemon.close();
+    }
+  }
+
+  /** Read back from the board rather than from the write's reply: a refusal that
+   *  returned an error *and* appended the event would pass a status-only test. */
+  async function stateOf(daemon: DaemonHandle, id: string): Promise<string | undefined> {
+    const { tasks } = await readJson<{ tasks: { id: string; state: string }[] }>(
+      await get(daemon, '/board', 'leader'),
+    );
+    return tasks.find((task) => task.id === id)?.state;
+  }
+
+  const setState = (daemon: DaemonHandle, state: string, who: string): Promise<Response> =>
+    post(daemon, '/tasks/T-01/state', { state }, who);
+
+  /** T-01, assigned to codex, through gate 1. */
+  async function toAcknowledged(daemon: DaemonHandle): Promise<void> {
+    await post(daemon, '/tasks', TASK, 'leader');
+    await setState(daemon, 'assigned', 'leader');
+    await post(daemon, '/tasks/T-01/ack', { restatement: 'build the log', ambiguities: [] }, 'codex');
+  }
+
+  /** …and on through gate 2 to the state acceptance is reached from. */
+  async function toUnderReview(daemon: DaemonHandle): Promise<void> {
+    await toAcknowledged(daemon);
+    await setState(daemon, 'in_progress', 'codex');
+    await post(daemon, '/tasks/T-01/submit', { critique: CRITIQUE, evidence: [] }, 'codex');
+    await setState(daemon, 'submitted', 'codex');
+    await setState(daemon, 'under_review', 'leader');
+    expect(await stateOf(daemon, 'T-01')).toBe('under_review');
+  }
+
+  it('refuses a non-assignee moving a task to in_progress, and permits the assignee', async () => {
+    await withDaemon(async (daemon) => {
+      await toAcknowledged(daemon);
+
+      const stranger = await setState(daemon, 'in_progress', 'cursor');
+      expect(stranger.status).toBe(403);
+      const { error } = await readJson<WireError>(stranger);
+      expect(error).toMatchObject({ domain: 'protocol', code: 'NOT_TASK_AUTHORITY' });
+      // Naming who may is the whole value of the refusal to the agent reading it.
+      expect(error.message).toContain('codex');
+      expect(await stateOf(daemon, 'T-01')).toBe('acknowledged');
+
+      // The neighbouring permitted case. Without it the assertions above pass
+      // against a guard that refuses everybody.
+      expect((await setState(daemon, 'in_progress', 'codex')).status).toBe(201);
+      expect(await stateOf(daemon, 'T-01')).toBe('in_progress');
+    });
+  });
+
+  it('refuses the assignee opening review on its own task, and permits the leader', async () => {
+    await withDaemon(async (daemon) => {
+      await toAcknowledged(daemon);
+      await setState(daemon, 'in_progress', 'codex');
+      await post(daemon, '/tasks/T-01/submit', { critique: CRITIQUE, evidence: [] }, 'codex');
+      await setState(daemon, 'submitted', 'codex');
+
+      const assignee = await setState(daemon, 'under_review', 'codex');
+      expect(assignee.status).toBe(403);
+      const { error } = await readJson<WireError>(assignee);
+      expect(error.code).toBe('NOT_TASK_AUTHORITY');
+      expect(error.message).toContain('leader');
+      expect(await stateOf(daemon, 'T-01')).toBe('submitted');
+
+      expect((await setState(daemon, 'under_review', 'leader')).status).toBe(201);
+      expect(await stateOf(daemon, 'T-01')).toBe('under_review');
+    });
+  });
+
+  it('refuses a worker accepting under method: leader, and permits the leader', async () => {
+    await withConfig(configWithAcceptance('leader'), async (daemon) => {
+      await toUnderReview(daemon);
+
+      const worker = await setState(daemon, 'accepted', 'codex');
+      expect(worker.status).toBe(403);
+      expect((await readJson<WireError>(worker)).error.code).toBe('NOT_TASK_AUTHORITY');
+      expect(await stateOf(daemon, 'T-01')).toBe('under_review');
+
+      expect((await setState(daemon, 'accepted', 'leader')).status).toBe(201);
+      expect(await stateOf(daemon, 'T-01')).toBe('accepted');
+    });
+  });
+
+  it('sends acceptance to @human under method: human — and then refuses the leader', async () => {
+    await withConfig(configWithAcceptance('human', HUMAN_PARTICIPANT), async (daemon) => {
+      await toUnderReview(daemon);
+
+      // The pair that proves `policy.taskAcceptance.method` is read rather than
+      // hard-coded: the same caller that may accept under `leader` may not here.
+      const leader = await setState(daemon, 'accepted', 'leader');
+      expect(leader.status).toBe(403);
+      const { error } = await readJson<WireError>(leader);
+      expect(error.code).toBe('NOT_TASK_AUTHORITY');
+      expect(error.message).toContain('@human');
+      expect(await stateOf(daemon, 'T-01')).toBe('under_review');
+
+      expect((await setState(daemon, 'accepted', '@human')).status).toBe(201);
+      expect(await stateOf(daemon, 'T-01')).toBe('accepted');
+    });
+  });
+
+  it('refuses every participant under method: majority and names the decision route', async () => {
+    await withConfig(configWithAcceptance('majority', HUMAN_PARTICIPANT), async (daemon) => {
+      await toUnderReview(daemon);
+
+      for (const who of ['leader', 'codex', '@human']) {
+        const response = await setState(daemon, 'accepted', who);
+        expect(response.status).toBe(403);
+        const { error } = await readJson<WireError>(response);
+        expect(error.code).toBe('NOT_TASK_AUTHORITY');
+        // A majority names a decision, not a participant; the refusal has to
+        // say where the decision is opened or it is a dead end.
+        expect(error.message).toContain('POST /decisions');
+      }
+      expect(await stateOf(daemon, 'T-01')).toBe('under_review');
+    });
+  });
+
+  it('stops an unrelated worker’s march from in_progress to merged at the first step', async () => {
+    await withDaemon(async (daemon) => {
+      await toAcknowledged(daemon);
+      await setState(daemon, 'in_progress', 'codex');
+
+      // The verified incident, replayed: `cursor` is neither the assignee nor
+      // the leader and drove all of this before A6.
+      const march = ['self_reviewed', 'submitted', 'under_review', 'resolving', 'accepted', 'merged'];
+      const outcomes: { status: number; code: string }[] = [];
+      for (const state of march) {
+        const response = await setState(daemon, state, 'cursor');
+        outcomes.push({ status: response.status, code: (await readJson<WireError>(response)).error.code });
+      }
+
+      expect(outcomes[0]).toEqual({ status: 403, code: 'NOT_TASK_AUTHORITY' });
+      expect(outcomes).toHaveLength(6);
+      expect(outcomes.every((outcome) => outcome.code === 'NOT_TASK_AUTHORITY')).toBe(true);
+      expect(await stateOf(daemon, 'T-01')).toBe('in_progress');
+    });
+  });
+
+  it('still reports ILLEGAL_TRANSITION when the caller has authority but the move is impossible', async () => {
+    await withDaemon(async (daemon) => {
+      await post(daemon, '/tasks', TASK, 'leader');
+
+      // codex owns `in_progress`, so nothing here is a permission question —
+      // legality and permission must not collapse into one another.
+      const response = await setState(daemon, 'in_progress', 'codex');
+      expect(response.status).toBe(409);
+      expect((await readJson<WireError>(response)).error.code).toBe('ILLEGAL_TRANSITION');
+    });
+  });
+
+  it('still 404s a state change on a task that does not exist', async () => {
+    await withDaemon(async (daemon) => {
+      const response = await post(daemon, '/tasks/T-99/state', { state: 'assigned' }, 'leader');
+      expect(response.status).toBe(404);
+      expect((await readJson<WireError>(response)).error.code).toBe('UNKNOWN_TASK');
+    });
+  });
+});

@@ -9,7 +9,7 @@ import { validateRaise, validateResponse, type ClaimResponseInput } from '../cor
 import { tally, validateLadder } from '../core/decisions.js';
 import type { HubState } from '../core/projection.js';
 import { isMember } from '../core/rooms.js';
-import { FLOOR } from '../contracts/room.js';
+import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { validateTransition } from '../core/tasks.js';
 
 import { DaemonError } from './errors.js';
@@ -178,6 +178,45 @@ export async function submitTask(
   return events;
 }
 
+type TaskAuthority =
+  | 'leader'
+  | 'assignee'
+  /** Resolved per request from `policy.taskAcceptance.method`. */
+  | 'acceptance_policy'
+  /** No participant, ever. The transition table refuses it more precisely. */
+  | 'unreachable';
+
+/**
+ * Whose move each task state is. Spec §5.2.
+ *
+ * `TASK_TRANSITIONS` answers a different question and cannot answer this one:
+ * it says whether a move is *possible*, never whose it is. With only that
+ * check, an unrelated worker drove another worker's task from `in_progress`
+ * all the way to `merged` — `accepted` included, so both gates and the leader's
+ * review were skipped by someone with no standing in the task at all. Every
+ * step of that march was legal; not one of them was theirs.
+ *
+ * Total over `TaskState` on purpose, like `PROTOCOL_STATUS`: a state added to
+ * the frozen contract with no authority named fails typecheck rather than
+ * silently defaulting to "anyone".
+ */
+const TASK_AUTHORITY = {
+  // Nothing moves a task *to* `draft`: `createTask` sets it and no edge leads
+  // back. Left to `validateTransition`, which gives the truthful diagnosis.
+  draft: 'unreachable',
+  // The leader hands work out, opens review, sends it back, and merges.
+  assigned: 'leader',
+  under_review: 'leader',
+  resolving: 'leader',
+  merged: 'leader',
+  // The assignee's own progress through its work, and both gates with it.
+  acknowledged: 'assignee',
+  in_progress: 'assignee',
+  self_reviewed: 'assignee',
+  submitted: 'assignee',
+  accepted: 'acceptance_policy',
+} as const satisfies Readonly<Record<TaskState, TaskAuthority>>;
+
 export async function setTaskState(
   ctx: HandlerContext,
   taskId: string,
@@ -186,6 +225,13 @@ export async function setTaskState(
   const state = requireString(body, 'state') as TaskState;
   const reason = body['reason'] === undefined ? undefined : requireString(body, 'reason');
 
+  // Permission before legality, matching `createTask` and `acknowledgeTask`
+  // above: who you are does not depend on where the task has got to, and
+  // GATE_NOT_ACKNOWLEDGED is advice for the party who is supposed to act, not
+  // for a stranger. `ILLEGAL_TRANSITION` stays reachable for everyone who does
+  // have the authority — the two codes answer different questions and neither
+  // may swallow the other.
+  requireTaskAuthority(ctx, requireTask(ctx, taskId), state);
   validateTransition(taskId, state, ctx.state);
 
   return [
@@ -198,6 +244,81 @@ export async function setTaskState(
       ...(reason === undefined ? {} : { reason }),
     }),
   ];
+}
+
+function requireTaskAuthority(ctx: HandlerContext, task: Task, to: TaskState): void {
+  const authority = (TASK_AUTHORITY as Readonly<Record<string, TaskAuthority>>)[to];
+  // Not a state at all. That is a legality question, and `validateTransition`
+  // is a line away.
+  if (authority === undefined) return;
+
+  switch (authority) {
+    case 'leader':
+      if (roleOf(ctx, ctx.who) !== 'leader') {
+        throw new ProtocolError(
+          'NOT_TASK_AUTHORITY',
+          `only the leader may move ${task.id} to ${to}; ${ctx.who} may not`,
+        );
+      }
+      return;
+    case 'assignee':
+      if (ctx.who !== task.assignee) {
+        throw new ProtocolError(
+          'NOT_TASK_AUTHORITY',
+          `${task.id} is assigned to ${task.assignee}; only the assignee may move it to ${to}`,
+        );
+      }
+      return;
+    case 'acceptance_policy':
+      requireAcceptanceAuthority(ctx, task);
+      return;
+    case 'unreachable':
+      return;
+  }
+}
+
+/**
+ * `policy.taskAcceptance.method` decides who accepts. The field was read but
+ * never enforced — `brief.ts:55` prints it into a brief, so every participant
+ * was told a rule the daemon did not apply.
+ */
+function requireAcceptanceAuthority(ctx: HandlerContext, task: Task): void {
+  const { method } = ctx.config.policy.taskAcceptance;
+
+  switch (method) {
+    case 'leader':
+      if (roleOf(ctx, ctx.who) !== 'leader') {
+        throw new ProtocolError(
+          'NOT_TASK_AUTHORITY',
+          `policy.taskAcceptance.method is "leader", so only the leader may accept ${task.id}`,
+        );
+      }
+      return;
+    case 'human':
+      if (ctx.who !== HUMAN_ID && roleOf(ctx, ctx.who) !== 'human') {
+        throw new ProtocolError(
+          'NOT_TASK_AUTHORITY',
+          `policy.taskAcceptance.method is "human", so only ${HUMAN_ID} may accept ${task.id}`,
+        );
+      }
+      return;
+    default:
+      // `majority` and `unanimous` name a decision rather than a participant,
+      // and so do `discriminating_test` and `ladder`, which `DecisionMethod`
+      // permits here. Nobody holds the authority personally, so the refusal
+      // has to say where it lives or it is a dead end for the agent reading it.
+      throw new ProtocolError(
+        'NOT_TASK_AUTHORITY',
+        `policy.taskAcceptance.method is "${method}": no participant may accept ${task.id} directly — ` +
+          `open the decision with POST /decisions and let its outcome carry`,
+      );
+  }
+}
+
+/** Roles come from the config, not from `state.participants`: authority must not
+ *  depend on who happens to have connected. Same source as `requireRole`. */
+function roleOf(ctx: HandlerContext, who: ParticipantId): string | undefined {
+  return ctx.config.participants.find((candidate) => candidate.id === who)?.role;
 }
 
 /* ------------------------------------------------------------- decisions -- */

@@ -125,6 +125,16 @@ export type CrosstalkEvent =
       room: RoomId;
       decisionId: string;
       rung: LadderRung;
+      /**
+       * Which ladder position failed. Carried rather than recovered by pairing
+       * each failure to the nearest preceding `rung_entered` of the same name:
+       * that convention holds only while every failure follows an entry, and a
+       * rung that fails *at* entry — no uninvolved peer available — is a
+       * natural thing to emit bare. A ladder may also repeat a rung, at which
+       * point name-matching is ambiguous outright. The position is the fact;
+       * deriving it was a rule nothing enforced.
+       */
+      index: number;
       reason: string;
     })
   | (EventBase & { kind: 'brief_updated'; participant: ParticipantId; version: string });

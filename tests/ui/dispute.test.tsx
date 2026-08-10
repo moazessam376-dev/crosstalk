@@ -808,3 +808,81 @@ describe('C3 every eligible open decision', () => {
     expect(screen.getByTestId('ladder-rung-discriminating_test')).toBeInTheDocument();
   });
 });
+
+/**
+ * C-18. A5 reopens a claim whose evidence is orphaned by a rebase, and the hub
+ * drew it as `resolved` anyway — telling the one person who has to re-argue it
+ * that the argument is settled.
+ *
+ * `displayState` derived state from the last response *verdict*, and a reopen is
+ * not a verdict, so `verdict-parity.test.ts` could not see it. The hub now reads
+ * claim state from the core projection instead of maintaining a second one.
+ *
+ * C-17 is the rule these pin: **any** stale item reopens, not all of them.
+ */
+describe('C-18 a reopened claim is not resolved', () => {
+  function resolvedClaimLog(staleShas: string[]): CrosstalkEvent[] {
+    const log: CrosstalkEvent[] = [
+      {
+        seq: 1,
+        ts: '2026-08-09T00:00:01Z',
+        kind: 'claim_raised',
+        from: 'leader',
+        room: 'dispute:C-700',
+        claim: {
+          ...claim,
+          id: 'C-700',
+          evidence: [
+            { kind: 'command', command: 'node tools/economycheck.mjs', output: 'ok', sha: 'aaaaaaa', by: 'leader' },
+            { kind: 'command', command: 'node tools/replay.mjs', output: 'ok', sha: 'bbbbbbb', by: 'leader' },
+          ],
+        },
+      },
+      {
+        seq: 2,
+        ts: '2026-08-09T00:00:02Z',
+        kind: 'claim_response',
+        from: 'codex',
+        room: 'dispute:C-700',
+        claimId: 'C-700',
+        verdict: 'accept',
+        rationale: 'Fixed at that commit.',
+        evidence: [{ kind: 'command', command: 'node tools/economycheck.mjs', output: 'ok', sha: 'aaaaaaa', by: 'codex' }],
+      },
+    ];
+
+    staleShas.forEach((sha, index) => {
+      log.push({
+        seq: 3 + index,
+        ts: `2026-08-09T00:00:0${3 + index}Z`,
+        kind: 'evidence_stale',
+        from: 'leader',
+        room: 'dispute:C-700',
+        claimId: 'C-700',
+        sha,
+      });
+    });
+
+    return log;
+  }
+
+  it('renders open once any evidence has gone stale', () => {
+    render(createElement(DisputeView, { roomId: 'dispute:C-700', events: resolvedClaimLog(['aaaaaaa']) }));
+
+    expect(screen.getByTestId('dispute-claim-C-700')).toHaveAttribute('data-claim-state', 'open');
+  });
+
+  it('renders open when every piece has gone stale', () => {
+    render(createElement(DisputeView, { roomId: 'dispute:C-700', events: resolvedClaimLog(['aaaaaaa', 'bbbbbbb']) }));
+
+    expect(screen.getByTestId('dispute-claim-C-700')).toHaveAttribute('data-claim-state', 'open');
+  });
+
+  it('leaves a resolved claim resolved while every piece is still fresh', () => {
+    // The neighbouring case: this fails a projection that reopens
+    // unconditionally, which is the real wrong implementation here.
+    render(createElement(DisputeView, { roomId: 'dispute:C-700', events: resolvedClaimLog([]) }));
+
+    expect(screen.getByTestId('dispute-claim-C-700')).toHaveAttribute('data-claim-state', 'resolved');
+  });
+});

@@ -23,9 +23,9 @@ Track G owns `src/cli/**` and `src/daemon/**`; Track H owns `src/mcp/**`. Do not
 
 ## Your one dependency, and how to not be blocked by it
 
-The daemon will serve the hub same-origin and expose a runtime descriptor — the stream URL and who this browser is. **Track G is deciding right now whether that is `GET /config.json` or an injection into `index.html`, and will post it.** I will relay it to you.
+The daemon serves the hub same-origin and exposes `GET /config.json` → `{ version, self, streamUrl, room }`. **Settled in [`docs/specs/2026-08-10-front-door-interfaces.md`](../specs/2026-08-10-front-door-interfaces.md) §2 — you are not blocked on Track G.**
 
-Do not wait idle for it. Put the read behind one small function with a hard-coded fallback, build everything else against that, and swap the source when the answer lands. If it has not landed by the time the rest is done, ship the fallback and say so.
+Build against it now. Fall back to the fixture when it 404s, so you stay runnable before their half lands, and never hard-code a port.
 
 ## The work
 

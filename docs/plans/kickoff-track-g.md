@@ -37,7 +37,7 @@ Nobody else touches these. Two other tracks are running in parallel — Track H 
 
 - Writes `crosstalk.yaml` at the repo root from `DEFAULT_POLICY`, with a `participants` list.
 - Creates `.crosstalk/` and mints **one token per participant** into `.crosstalk/tokens/<id>` — `@`-stripped, and `human` stays reserved, per contract §2.3.
-- Writes `.mcp.json` for Claude Code pointing at Track H's server, carrying `CROSSTALK_URL` and that participant's `CROSSTALK_TOKEN`. Coordinate the exact shape with Track H through me — a guess here costs both of you a rebuild.
+- Writes `.mcp.json` for Claude Code. **The shape is settled in [`docs/specs/2026-08-10-front-door-interfaces.md`](../specs/2026-08-10-front-door-interfaces.md) §1** — you are not blocked on Track H, and they are not blocked on you.
 - Adds `.crosstalk/` to `.gitignore` if absent. Tokens must never be committable.
 - Prints, for each participant, the one line that participant pastes to join.
 
@@ -45,7 +45,7 @@ Nobody else touches these. Two other tracks are running in parallel — Track H 
 
 - Loads config via your existing `loadConfig`, starts the daemon, prints the URL, opens the browser unless `--no-open`.
 - **The daemon must serve the built hub at `/`** from `dist/ui`. This is not decoration: your contract §3 argues for cookie auth on `/stream` *because the hub is same-origin*, and nothing serves it today. If the hub is on a different origin that argument collapses and `EventSource` cannot authenticate at all.
-- Serve a runtime descriptor the hub can read for its own identity and stream URL — `GET /config.json` or an injection into `index.html`, your call. **Tell Track I which, early, in a PR comment I will relay.** They are blocked on this exact decision.
+- Serve `GET /config.json` and the bootstrap redirect — **settled in the interfaces spec §2**, including a security tradeoff I have named and invited you to contest.
 - If `dist/ui` is absent, say so and name the command that builds it. Do not fail with a bare 404.
 
 **3. `crosstalk down`** — `POST /shutdown`, then remove the runtime files. Per `AGENTS.md` rule 9, anything anyone created under `.crosstalk/` must be findable and removable here.
@@ -72,11 +72,23 @@ Token from `CROSSTALK_TOKEN`, else `.crosstalk/tokens/<id>` with `--as <id>`. Hu
 - `npm test` is not a build. `npm run typecheck` and `npm run build` go in the evidence.
 - Two runtime dependencies, total. No arg-parsing library — `node:util`'s `parseArgs` is in core.
 
-## Known defect you inherit
+## The flake I rejected D1 over — withdrawn
 
-`daemon lock > reclaims a lock whose holder has exited` and two neighbours fail roughly two runs in five, mostly as 5–6s timeouts against a 5000ms default. **The rule that produced it is mine** — I mandated `/health`-probe reclamation, which opens a window where a live holder has not yet bound its listener. My "startup window" diagnosis does not explain the 1.4s failure in the fast path, so treat it as unexplained rather than as a theory to confirm.
+**There was no lock defect. I owe you this one plainly.**
 
-It does not block the demo. **Quarantine it if it costs you more than fifteen minutes** — skip with a comment naming this paragraph, and say so plainly in the handoff. I would rather have a running CLI and one honest `it.skip` than neither.
+I refused D1 over a daemon suite failing two runs in five and diagnosed it as lock reclamation via the `/health` probe — a rule I had mandated myself. I sent you to fix it. It was never there.
+
+Run on the merged tree, the failures are not in the lock suite at all. They are in `server.test.ts` and `routes.test.ts`, they always read `TypeError: fetch failed / Caused by: Error: bad port`, and the request never leaves the client:
+
+```
+tests/daemon/server.test.ts alone ............. 6 runs, 6 green
+tests/daemon, forks.singleFork=true ........... 3 runs, 3 green
+tests/daemon, default parallelism ............. 5 runs, 3 green
+```
+
+Concurrent daemons inside one test run. Not `startDaemon`, and **not a risk to `crosstalk up`, where exactly one daemon ever starts.** Fixed on `main` with `fileParallelism: false` in `vitest.config.ts`, with the measurements in a comment there. Nothing for you to do — do not spend a minute on it.
+
+Twice I read a flaky signal, attached the first theory I had to it, and sent someone to fix a defect that did not exist. If you catch me doing it a third time, say so in the PR.
 
 ## Handing off — read this part
 

@@ -8,8 +8,11 @@ import { promisify } from 'node:util';
 import { startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
 import { resolveAsset } from '../../src/daemon/hub.js';
 import { browserCommand } from '../../src/cli/open.js';
-import { exitCodeFor, EXIT } from '../../src/cli/client.js';
-import { runInit, purgeWorkspaces } from '../../src/cli/init.js';
+import { exitCodeFor, CliError, EXIT } from '../../src/cli/client.js';
+import { parse, stringify } from 'yaml';
+
+import type { CrosstalkConfig } from '../../src/contracts/config.js';
+import { runInit, purgeWorkspaces, preflight } from '../../src/cli/init.js';
 import { doctor } from '../../src/harness/doctor.js';
 import { listWorktrees } from '../../src/workspace/git.js';
 
@@ -206,6 +209,73 @@ describe('init builds the workspace it promises', () => {
     await runInit({ repo, participants: [], force: true });
 
     expect(await readFile(scratch, 'utf8')).toBe('half-finished\n');
+  }, GIT_TEST_TIMEOUT);
+});
+
+describe('up refuses a configuration doctor rejects', () => {
+  /** A hand-edited config is the only way to get one: `init` now refuses to write it. */
+  async function withTwoLeaders(repo: string): Promise<void> {
+    const config = parse(await readFile(join(repo, 'crosstalk.yaml'), 'utf8')) as CrosstalkConfig;
+    const leader = config.participants.find((p) => p.role === 'leader')!;
+    config.participants.push({ ...leader, id: 'leader2' });
+    await writeFile(join(repo, 'crosstalk.yaml'), stringify(config), 'utf8');
+  }
+
+  it('refuses to start, and binds nothing, when doctor rejects', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+    await withTwoLeaders(repo);
+
+    const error = await preflight(repo, false).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).exitCode).toBe(EXIT.protocol);
+    expect((error as CliError).message).toContain('LEADER_COUNT');
+
+    // `startDaemon` writes daemon.json as it binds. Its absence is the
+    // observable form of "no port was bound" — asserting on the thrown error
+    // alone would pass even if the daemon had started first.
+    expect(await pathExists(join(repo, '.crosstalk', 'daemon.json'))).toBe(false);
+  }, GIT_TEST_TIMEOUT);
+
+  it('starts when the only findings are warnings', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+
+    // The default roster warns (one worker, MCP probe falls back) and must
+    // still start, or `up` is unusable on the config `init` itself writes.
+    const findings = await preflight(repo, false);
+    expect(findings.every((f) => f.level === 'warn')).toBe(true);
+    expect(findings.some((f) => f.code === 'THIRD_AGENT_UNAVAILABLE')).toBe(true);
+  }, GIT_TEST_TIMEOUT);
+
+  it('starts a rejected config anyway under --force', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+    await withTwoLeaders(repo);
+
+    const findings = await preflight(repo, true);
+    expect(findings.some((f) => f.code === 'LEADER_COUNT' && f.level === 'reject')).toBe(true);
+  }, GIT_TEST_TIMEOUT);
+
+  it('refuses to write a config with zero or several leaders', async () => {
+    const repo = await gitRepo();
+    const two = ['a:leader:claude-code-app', 'b:leader:claude-code-app'];
+    await expect(runInit({ repo, participants: two, force: false })).rejects.toMatchObject({
+      exitCode: EXIT.protocol,
+    });
+    // A generator that emits what the validator rejects is the bug, so nothing
+    // should have been written for `doctor` to complain about later.
+    expect(await pathExists(join(repo, 'crosstalk.yaml'))).toBe(false);
+
+    const none = ['a:worker:claude-code-app'];
+    await expect(runInit({ repo, participants: none, force: false })).rejects.toMatchObject({
+      exitCode: EXIT.protocol,
+    });
+
+    // The neighbouring case that must still be accepted.
+    await expect(
+      runInit({ repo, participants: ['a:leader:claude-code-app'], force: false }),
+    ).resolves.toBeTruthy();
   }, GIT_TEST_TIMEOUT);
 });
 

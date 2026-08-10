@@ -12,6 +12,7 @@ import { loadConfig } from '../daemon/config.js';
 import { distPath } from '../daemon/paths.js';
 import { tokenFilename } from '../daemon/server.js';
 import { writeBrief } from '../harness/brief.js';
+import { doctor, type Finding } from '../harness/doctor.js';
 import { loadRegistry, probeTier, type HarnessDescriptor } from '../harness/registry.js';
 import { createWorktree, isRepo, listWorktrees, removeWorktree } from '../workspace/git.js';
 import { CliError, EXIT, stateDir } from './client.js';
@@ -50,6 +51,19 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   const participants = parseParticipants(
     options.participants.length > 0 ? options.participants : DEFAULT_ROSTER,
   );
+
+  // Refused before anything is written, with `doctor`'s own words. `init`
+  // accepted two leaders happily, `doctor` rejected the result on the very next
+  // command, and `up` started it anyway. A generator that emits what the
+  // validator rejects is the bug, not the validator.
+  const leaders = participants.filter((participant) => participant.role === 'leader');
+  if (leaders.length !== 1) {
+    throw new CliError(
+      `LEADER_COUNT: Expected exactly one leader participant, found ${leaders.length}.`,
+      EXIT.protocol,
+      'Configure exactly one participant with role: leader; all other agents should be workers or observers.',
+    );
+  }
   const config: CrosstalkConfig = {
     version: 1,
     project: { repo: '.', mainBranch: 'main' },
@@ -104,6 +118,31 @@ async function ensureWorkspaces(repo: string, participants: Participant[]): Prom
       await addWorktree(root, participant.id, `ct/${participant.id}-base`, worktree);
     }
   }
+}
+
+/**
+ * Design §11: the config is "validated at startup by `crosstalk doctor`". It
+ * was not — `up` called `startDaemon` directly, so a configuration `doctor`
+ * rejected with exit 1 started anyway and bound a port.
+ *
+ * Runs before anything binds, so a refusal leaves no daemon behind. Warnings
+ * are returned for the caller to print and are never fatal: the roster `init`
+ * itself writes produces two of them, and a `up` that refused its own output
+ * would be worse than the bug.
+ *
+ * `--force` is for someone who knows better than the checker, which is why it
+ * returns the findings rather than swallowing them.
+ */
+export async function preflight(repo: string, force: boolean): Promise<Finding[]> {
+  const findings = await doctor(await loadConfig(repo), repo);
+  const rejects = findings.filter((finding) => finding.level === 'reject');
+  if (rejects.length === 0 || force) return findings;
+
+  throw new CliError(
+    rejects.map((finding) => `${finding.code}: ${finding.message}`).join('\n'),
+    EXIT.protocol,
+    `${rejects[0]!.remedy} Or pass --force to start anyway.`,
+  );
 }
 
 /**

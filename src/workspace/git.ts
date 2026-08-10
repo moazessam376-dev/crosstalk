@@ -1,9 +1,12 @@
 import { execFile as execFileCallback } from 'node:child_process';
+import { realpath as realpathCallback } from 'node:fs';
 import { access, mkdir, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFile = promisify(execFileCallback);
+/** The OS view of a path: expands 8.3 short names, junctions and symlinks. */
+const realpathNative = promisify(realpathCallback.native);
 const GIT_DIR_PREFIX = 'refs/heads/';
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
@@ -145,18 +148,61 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function samePath(left: string, right: string): boolean {
-  const resolvedLeft = resolve(left);
-  const resolvedRight = resolve(right);
+/**
+ * Do two paths name the same directory?
+ *
+ * Canonicalised through `realpath.native` before comparing, because resolving
+ * and case-folding is not enough: on a Windows machine with 8.3 generation on,
+ * git reports a worktree's long path while Crosstalk constructs the short one,
+ * and the two compare as different. That is not cosmetic — it made
+ * `isRegisteredWorktree` answer "not registered" for a worktree that is, so
+ * `removeWorktree`'s fallback deleted a worktree holding uncommitted work with
+ * nobody having passed `force`. The same class covers junctions, symlinks and
+ * `/private` on macOS.
+ *
+ * Exported so there is one comparator rather than a copy per caller; the copy
+ * in `src/cli/init.ts` had the identical blind spot.
+ */
+export async function samePath(
+  left: string,
+  right: string,
+  realpathOf: PathResolver = realpathNative,
+): Promise<boolean> {
+  const [canonicalLeft, canonicalRight] = await Promise.all([
+    canonical(left, realpathOf),
+    canonical(right, realpathOf),
+  ]);
   if (process.platform === 'win32' || process.platform === 'darwin') {
-    return resolvedLeft.toLowerCase() === resolvedRight.toLowerCase();
+    return canonicalLeft.toLowerCase() === canonicalRight.toLowerCase();
   }
-  return resolvedLeft === resolvedRight;
+  return canonicalLeft === canonicalRight;
+}
+
+/**
+ * Injectable so the comparator can be tested against hard-coded short and long
+ * spellings rather than a manufactured 8.3 alias. Modern Windows often disables
+ * 8.3 generation on non-system volumes, which is exactly why this defect
+ * survived three machines and only surfaced on CI. Track B's design; adopted
+ * here so the two copies can become one.
+ */
+export type PathResolver = (path: string) => Promise<string>;
+
+/** `realpath` throws on a path that does not exist, which is a legitimate state here. */
+async function canonical(path: string, realpathOf: PathResolver): Promise<string> {
+  const resolved = resolve(path);
+  try {
+    return await realpathOf(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 async function isRegisteredWorktree(repo: string, worktree: string): Promise<boolean> {
   try {
-    return (await listWorktrees(repo)).some((entry) => samePath(entry.path, worktree));
+    for (const entry of await listWorktrees(repo)) {
+      if (await samePath(entry.path, worktree)) return true;
+    }
+    return false;
   } catch {
     return true;
   }

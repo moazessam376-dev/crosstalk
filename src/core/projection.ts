@@ -106,7 +106,7 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
             item.sha === event.sha ? { ...item, stale: true } : item,
           ),
         };
-        if (hasNothingLeftToStandOn(next)) {
+        if (shouldReopen(next)) {
           next.state = 'open';
           // Deleted rather than set to `undefined`: an own key holding
           // `undefined` survives into serialised state, and the projection is
@@ -185,7 +185,7 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
  * it a claim that never carried any evidence would reopen on the first stale
  * event naming a sha it has never seen.
  */
-function hasNothingLeftToStandOn(claim: Claim): boolean {
+function shouldReopen(claim: Claim): boolean {
   if (claim.state !== 'resolved') return false;
   if (claim.resolution === 'withdrawn' || claim.resolution === 'superseded') return false;
   // C-17: *any* stale item, not all of them. `Claim.evidence` is a flat array

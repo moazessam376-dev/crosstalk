@@ -1,16 +1,84 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { execFile as execFileCallback } from 'node:child_process';
+import { realpath as realpathCallback } from 'node:fs';
+import { access, mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 
 import { startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
 import { resolveAsset } from '../../src/daemon/hub.js';
 import { browserCommand } from '../../src/cli/open.js';
-import { exitCodeFor, EXIT } from '../../src/cli/client.js';
-import { runInit } from '../../src/cli/init.js';
+import { exitCodeFor, CliError, EXIT } from '../../src/cli/client.js';
+import { parse, stringify } from 'yaml';
+
+import type { CrosstalkConfig } from '../../src/contracts/config.js';
+import { runInit, purgeWorkspaces, preflight, samePath, type PathResolver } from '../../src/cli/init.js';
+import { doctor } from '../../src/harness/doctor.js';
+import { listWorktrees } from '../../src/workspace/git.js';
+
+const execFile = promisify(execFileCallback);
+
+/**
+ * These tests drive real git — `AGENTS.md` forbids mocking it — and creating a
+ * repository, adding a worktree, purging it and re-initialising is a dozen
+ * subprocess spawns. On Windows under a loaded runner that overruns vitest's
+ * 5s default, which showed up as one failure in five consecutive runs of an
+ * otherwise green suite. The work is legitimate; the default is not.
+ */
+const GIT_TEST_TIMEOUT = 30_000;
 
 async function tempRepo(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'ct-cli-'));
+}
+
+/**
+ * A real throwaway repository, never a mock — `AGENTS.md`. `init` creates git
+ * worktrees, and a worktree cannot be added to a directory git does not own.
+ */
+async function gitRepo(): Promise<string> {
+  const repo = await tempRepo();
+  await execFile('git', ['init', '-q', '-b', 'main', '.'], { cwd: repo, windowsHide: true });
+  await execFile('git', ['config', 'user.email', 'test@crosstalk.invalid'], { cwd: repo, windowsHide: true });
+  await execFile('git', ['config', 'user.name', 'crosstalk test'], { cwd: repo, windowsHide: true });
+  await mkdir(join(repo, 'src'), { recursive: true });
+  await writeFile(join(repo, 'src', 'index.ts'), 'export {};\n', 'utf8');
+  // A worktree needs a commit to branch from.
+  await execFile('git', ['add', '-A'], { cwd: repo, windowsHide: true });
+  await execFile('git', ['commit', '-qm', 'initial'], { cwd: repo, windowsHide: true });
+  return repo;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  return access(path).then(() => true, () => false);
+}
+
+const realpathNative = promisify(realpathCallback.native);
+
+/**
+ * The canonical on-disk spelling, lowercased.
+ *
+ * Deliberately not `samePath` — using the function under test to write the
+ * assertion would make these pass for the wrong reason. `realpath.native`
+ * directly is the independent check.
+ */
+async function canonicalPath(path: string): Promise<string> {
+  const absolute = resolve(path);
+  return (await realpathNative(absolute).catch(() => absolute)).toLowerCase();
+}
+
+async function registeredWorktrees(repo: string): Promise<string[]> {
+  return Promise.all((await listWorktrees(repo)).map((entry) => canonicalPath(entry.path)));
+}
+
+/** `git check-ignore` exits 0 when a rule matches and 1 when none does. */
+async function isIgnored(cwd: string, path: string): Promise<boolean> {
+  try {
+    await execFile('git', ['check-ignore', '-q', '--', path], { cwd, windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function initialised(): Promise<string> {
@@ -84,16 +152,192 @@ describe('crosstalk init', () => {
     const minted = JSON.parse(await readFile(join(repo, '.mcp.json'), 'utf8')) as {
       mcpServers: { crosstalk: { env: Record<string, string> } };
     };
-    const embedded = minted.mcpServers.crosstalk.env['CROSSTALK_TOKEN'];
+    // The registration references the token file rather than embedding the
+    // token, so what has to stay stable is what that file holds.
+    const tokenFile = minted.mcpServers.crosstalk.env['CROSSTALK_TOKEN_FILE']!;
+    expect(tokenFile).toBeTruthy();
 
     for (let run = 0; run < 2; run += 1) {
       await withDaemon(repo, async (daemon) => {
-        // Re-minting on every start would invalidate the token baked into
-        // .mcp.json, and the agent holding it would see a 401 it could not explain.
-        expect([...daemon.tokens.values()]).toContain(embedded);
+        // Re-minting on every start would invalidate the token the registration
+        // points at, and the agent holding it would see a 401 it could not explain.
+        const referenced = (await readFile(tokenFile, 'utf8')).trim();
+        expect([...daemon.tokens.values()]).toContain(referenced);
       });
     }
   });
+});
+
+describe('two spellings of one path', () => {
+  // Hard-coded rather than manufactured: generating a real 8.3 alias needs a
+  // volume with short-name creation enabled, which is not something a test can
+  // assume. These are the exact spellings the GitHub Windows runner produces —
+  // os.tmpdir() hands out C:\Users\RUNNER~1\..., `git worktree list` reports
+  // C:\Users\runneradmin\..., and lowercasing does not bridge them.
+  const LONG = 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\ct-cli-a1\\.crosstalk\\worktrees\\codex';
+  const SHORT = 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\ct-cli-a1\\.crosstalk\\worktrees\\codex';
+  const OTHER = 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\ct-cli-a1\\.crosstalk\\worktrees\\cursor';
+
+  /** Stands in for `realpath.native`, the only thing that expands 8.3. */
+  const expand: PathResolver = async (path) => path.replace('RUNNER~1', 'runneradmin');
+
+  it('treats an 8.3 short path and its long form as one worktree', async () => {
+    expect(await samePath(SHORT, LONG, expand)).toBe(true);
+  });
+
+  it('still says no to a genuinely different worktree', async () => {
+    // The discrimination that matters: a comparator returning true whenever it
+    // is asked would satisfy the test above and be completely wrong. Both
+    // spellings resolve here, so this cannot pass by the resolver failing.
+    expect(await samePath(SHORT, OTHER, expand)).toBe(false);
+    expect(await samePath(LONG, OTHER, expand)).toBe(false);
+  });
+
+  it('falls back to the lexical comparison for a path that does not exist yet', async () => {
+    // The ordinary case the first time a worktree is created: realpath throws,
+    // and a worktree that is genuinely absent must still compare unequal.
+    const absent: PathResolver = async () => { throw new Error('ENOENT'); };
+    expect(await samePath(LONG, LONG, absent)).toBe(true);
+    expect(await samePath(LONG, OTHER, absent)).toBe(false);
+  });
+});
+
+describe('init builds the workspace it promises', () => {
+  it('leaves doctor with zero BRIEF_STALE findings on a repo it just created', async () => {
+    const repo = await gitRepo();
+    const { config } = await runInit({ repo, participants: [], force: false });
+
+    const stale = (await doctor(config, repo)).filter((f) => f.code === 'BRIEF_STALE');
+    // The product's first two commands must not disagree about a file one of
+    // them just wrote. Baseline before B1 is two on the default roster.
+    expect(stale.map((f) => f.message)).toEqual([]);
+  }, GIT_TEST_TIMEOUT);
+
+  it('creates one registered worktree per worker, and none for the leader or @human', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+
+    // Canonicalised on both sides: `os.tmpdir()` is an 8.3 short path on the
+    // Windows runners and `git worktree list` reports the long form, so a
+    // literal string comparison fails there for a worktree that exists.
+    const registered = await registeredWorktrees(repo);
+    expect(registered).toContain(await canonicalPath(join(repo, '.crosstalk', 'worktrees', 'codex')));
+    // The leader owns the primary checkout and @human never gets one, so a
+    // worktree for either would be the §7 two-agents-one-checkout failure.
+    expect(registered).not.toContain(await canonicalPath(join(repo, '.crosstalk', 'worktrees', 'leader')));
+    expect(registered).not.toContain(await canonicalPath(join(repo, '.crosstalk', 'worktrees', 'human')));
+  }, GIT_TEST_TIMEOUT);
+
+  it('leaves no .mcp.json committable, at the root or inside a worker worktree', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+    const worktree = join(repo, '.crosstalk', 'worktrees', 'codex');
+    await writeFile(join(worktree, '.mcp.json'), '{}\n', 'utf8');
+
+    // A linked worktree resolves .mcp.json against its own root, which the
+    // top-level .gitignore's `.crosstalk/` rule cannot match. The token in
+    // that file would ride out on the worker's next `git add -A`.
+    expect(await isIgnored(repo, '.mcp.json')).toBe(true);
+    expect(await isIgnored(worktree, '.mcp.json')).toBe(true);
+    // The neighbouring case that must NOT be ignored, or the rule is too broad.
+    expect(await isIgnored(worktree, 'src/index.ts')).toBe(false);
+  }, GIT_TEST_TIMEOUT);
+
+  it('purges every worktree it created, and re-initialises cleanly afterwards', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+    const worktree = join(repo, '.crosstalk', 'worktrees', 'codex');
+    const canonical = await canonicalPath(worktree);
+    expect(await registeredWorktrees(repo)).toContain(canonical);
+
+    await purgeWorkspaces(repo);
+
+    expect(await registeredWorktrees(repo)).not.toContain(canonical);
+    expect(await pathExists(worktree)).toBe(false);
+
+    // `down --purge` leaves the branch behind, so a second `init` has to adopt
+    // it rather than fail on `worktree add -b`.
+    await runInit({ repo, participants: [], force: true });
+    expect(await registeredWorktrees(repo)).toContain(await canonicalPath(worktree));
+  }, GIT_TEST_TIMEOUT);
+
+  it('preserves a worker\'s uncommitted file when init --force re-runs', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+    const scratch = join(repo, '.crosstalk', 'worktrees', 'codex', 'WORK-IN-PROGRESS.txt');
+    await writeFile(scratch, 'half-finished\n', 'utf8');
+
+    await runInit({ repo, participants: [], force: true });
+
+    expect(await readFile(scratch, 'utf8')).toBe('half-finished\n');
+  }, GIT_TEST_TIMEOUT);
+});
+
+describe('up refuses a configuration doctor rejects', () => {
+  /** A hand-edited config is the only way to get one: `init` now refuses to write it. */
+  async function withTwoLeaders(repo: string): Promise<void> {
+    const config = parse(await readFile(join(repo, 'crosstalk.yaml'), 'utf8')) as CrosstalkConfig;
+    const leader = config.participants.find((p) => p.role === 'leader')!;
+    config.participants.push({ ...leader, id: 'leader2' });
+    await writeFile(join(repo, 'crosstalk.yaml'), stringify(config), 'utf8');
+  }
+
+  it('refuses to start, and binds nothing, when doctor rejects', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+    await withTwoLeaders(repo);
+
+    const error = await preflight(repo, false).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).exitCode).toBe(EXIT.protocol);
+    expect((error as CliError).message).toContain('LEADER_COUNT');
+
+    // `startDaemon` writes daemon.json as it binds. Its absence is the
+    // observable form of "no port was bound" — asserting on the thrown error
+    // alone would pass even if the daemon had started first.
+    expect(await pathExists(join(repo, '.crosstalk', 'daemon.json'))).toBe(false);
+  }, GIT_TEST_TIMEOUT);
+
+  it('starts when the only findings are warnings', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+
+    // The default roster warns (one worker, MCP probe falls back) and must
+    // still start, or `up` is unusable on the config `init` itself writes.
+    const findings = await preflight(repo, false);
+    expect(findings.every((f) => f.level === 'warn')).toBe(true);
+    expect(findings.some((f) => f.code === 'THIRD_AGENT_UNAVAILABLE')).toBe(true);
+  }, GIT_TEST_TIMEOUT);
+
+  it('starts a rejected config anyway under --force', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+    await withTwoLeaders(repo);
+
+    const findings = await preflight(repo, true);
+    expect(findings.some((f) => f.code === 'LEADER_COUNT' && f.level === 'reject')).toBe(true);
+  }, GIT_TEST_TIMEOUT);
+
+  it('refuses to write a config with zero or several leaders', async () => {
+    const repo = await gitRepo();
+    const two = ['a:leader:claude-code-app', 'b:leader:claude-code-app'];
+    await expect(runInit({ repo, participants: two, force: false })).rejects.toMatchObject({
+      exitCode: EXIT.protocol,
+    });
+    // A generator that emits what the validator rejects is the bug, so nothing
+    // should have been written for `doctor` to complain about later.
+    expect(await pathExists(join(repo, 'crosstalk.yaml'))).toBe(false);
+
+    const none = ['a:worker:claude-code-app'];
+    await expect(runInit({ repo, participants: none, force: false })).rejects.toMatchObject({
+      exitCode: EXIT.protocol,
+    });
+
+    // The neighbouring case that must still be accepted.
+    await expect(
+      runInit({ repo, participants: ['a:leader:claude-code-app'], force: false }),
+    ).resolves.toBeTruthy();
+  }, GIT_TEST_TIMEOUT);
 });
 
 describe('the hub front door', () => {

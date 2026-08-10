@@ -241,3 +241,61 @@ describe('the ladder on a claim comment', () => {
     expect(flat).not.toMatch(/ladder|rung/i);
   });
 });
+
+/**
+ * C-20. The two early returns in `renderLadder` were both deletable with the
+ * suite still green — two guards nobody was checking.
+ *
+ * The case they protect is not the flat dispute (that one never reaches
+ * `renderLadder` at all, because the caller only enters the block when a
+ * decision exists). It is a claim settled by a decision that is *not* a ladder:
+ * `open_decision` accepts any method alongside a `claimId`, so a `majority` or
+ * `leader` decision has no rungs to show and must not grow an empty header.
+ */
+describe('a claim decided by something that is not a ladder', () => {
+  const byMajority = {
+    id: 'D-09',
+    question: 'Ship it?',
+    options: ['yes', 'no'],
+    voters: ['leader', 'codex'],
+    method: 'majority' as const,
+    outcome: 'yes',
+    rationale: [],
+    claimId: 'C-118',
+    votes: { leader: 'yes', codex: 'yes' },
+  };
+
+  it('names the decision without opening an empty ladder section', () => {
+    const body = renderClaimComment(claim({ state: 'resolved', resolution: 'upheld' }), byMajority);
+
+    expect(body).toContain('D-09');
+    expect(body).not.toContain('**Ladder**');
+  });
+
+  it('opens no ladder section for a ladder decision that has entered no rung yet', () => {
+    const body = renderClaimComment(claim(), byMajority, {
+      entered: [],
+      failed: [],
+      tests: [],
+      current: 0,
+    });
+
+    expect(body).not.toContain('**Ladder**');
+  });
+
+  /**
+   * The other side: a decision that skipped rungs but entered none still has
+   * something to say, and F-07 says it must say it — otherwise a ladder
+   * degraded to nothing reads as a decision that was never a ladder.
+   */
+  it('still reports skipped rungs when no rung was ever entered', () => {
+    const body = renderClaimComment(
+      claim(),
+      { ...byMajority, skipped: [{ rung: 'third_agent' as const, reason: 'no uninvolved peer' }] },
+      { entered: [], failed: [], tests: [], current: 0 },
+    );
+
+    expect(body).toContain('**Ladder**');
+    expect(body).toContain('no uninvolved peer');
+  });
+});

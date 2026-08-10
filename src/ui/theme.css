@@ -608,3 +608,62 @@ button:focus-visible {
     filter: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Channel rows.
+
+   The button had no styling at all, so it was `inline-block` and the round
+   counter's `margin-left: auto` did nothing: "C-1" and "2" rendered flush
+   against each other as "C-12", which reads as a room name rather than as a
+   room and a count. Only visible by opening the hub and looking — no component
+   test can see a layout that jsdom does not compute.
+--------------------------------------------------------------------------- */
+
+.channel-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--row-h);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  padding: 0 8px;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.channel-button:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.channel-button.is-active {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.channel-button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* A count is a fact, so it is monospace — the mono/sans split is doing
+   semantic work here, not decoration (spec §10.4). */
+.channel-list .round-counter {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--size-mono);
+}
+
+/* Awaiting a person is a status, and the one status the human is looking for. */
+.human-badge {
+  border-radius: 4px;
+  background: var(--surface-base);
+  padding: 1px 5px;
+  color: var(--status-open);
+  font-family: var(--font-mono);
+  font-size: var(--size-mono);
+}

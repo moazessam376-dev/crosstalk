@@ -190,8 +190,11 @@ Anything else is `NOT_TASK_AUTHORITY` naming who may.
 
 ## Track B — the front door
 
-**Owns** `src/cli/`, `src/harness/`. Branch `ct/track-b-frontdoor`. One PR.
+**Owns** `src/cli/`, `src/harness/`, `src/mcp/`. Branch `ct/track-b-frontdoor`. One PR.
 Depends on no new contract; **start immediately**.
+
+*`src/mcp/` was unassigned in revision 2 — a gap, not a deliberate exclusion.
+It is the transport B3 registers, so it is Track B's.*
 
 ### B1 — `init` builds the workspace it promises, `down` removes it
 
@@ -201,7 +204,9 @@ Modify `src/cli/init.ts`, `src/cli/index.ts`. Test `tests/cli/front-door.test.ts
 - Render and write each participant's brief to its harness's `briefFile` inside that participant's workspace, at the probed tier.
 - **Write an ignore rule into each created worktree's `.git/info/exclude`.** A linked worktree resolves `.mcp.json` relative to its own root, which the top-level `.gitignore`'s `.crosstalk/` rule does not match — so B3's per-participant token lands untracked and stageable on a branch the worker is expected to push. `.git/info/exclude` rather than `.gitignore` keeps Crosstalk out of a file the user owns.
 - **`ensureGitignored` also covers `.mcp.json` at the repo root.** Pre-existing, and now urgent: this repository is public and `init` writes a bearer token there.
-- `down --purge` removes the worktrees `init` created, via `removeWorktree` (it already handles the Windows retry).
+- `down --purge` removes the worktrees `init` created, via `removeWorktree` — which **Track A extends** to `removeWorktree(repo, id, options?: { force?: boolean })`, defaulting to today's behaviour. `--purge` passes `force: true`.
+  Revision 1 was self-contradictory here: it required `init` to write a brief *into* each worktree, which leaves an untracked file, and `git worktree remove` refuses a worktree with untracked files without `--force`. Every worktree `init` creates was therefore guaranteed unremovable, and `removeWorktree`'s existing fallback does not cover it — that path only fires when the worktree is no longer *registered*. `--purge` is already the explicitly destructive flag; `down` without it still keeps everything.
+- **The ignore rule goes in the common git dir, not per worktree.** Git reads `info/exclude` only from `git rev-parse --git-common-dir`; a copy inside a linked worktree is silently ignored. One write there covers the primary checkout and every linked worktree at once.
 
 **Acceptance.** `init` then `doctor` on a fresh repo → **zero** `BRIEF_STALE`. Baseline is **two** on the default roster and **three** on `leader/codex/cursor`; both were measured, and the ambiguity was the plan's for not naming the roster. `git worktree list` shows one per worker. `git check-ignore -v .mcp.json` reports a matching rule at the root **and** inside every worker workspace. `init --force` over an uncommitted file preserves it. `down --purge` leaves none behind. **Five consecutive runs**, report the count.
 
@@ -221,6 +226,8 @@ Modify `src/cli/init.ts`. Test `tests/cli/mcp-merge.test.ts`.
 - One registration per participant whose harness declares `mcp: stdio`, in that participant's workspace, at the harness's `mcpConfigPath`, carrying **that participant's** token.
 - **`mcp: unverified`, or no `mcpConfigPath`, or a path outside the repo → write nothing, print the exact registration.** Crosstalk does not edit files outside the repository it was pointed at. Without this branch the shipped default roster (`codex-app` has `mcp: unverified` and no `mcpConfigPath`) gets nothing at all, and B3 goes green with its own motivating symptom intact.
 - Keep the merge semantics exactly: never clobber, refuse to rewrite unparseable JSON. That fix exists because the first version deleted users' MCP servers.
+- **Reference the token, do not embed it.** `init` writes `CROSSTALK_TOKEN_FILE` pointing at `.crosstalk/tokens/<id>`; `loadMcpConfig` (`src/mcp/config.ts`) reads it, preferring `CROSSTALK_TOKEN` when both are set so CLI use is unchanged. Today `init` writes the literal bearer token into `.mcp.json` — a file many projects deliberately commit, in a tool that is now public. Excluding the file protects the token but takes a shareable file away from the user; referencing it removes the secret instead of hiding the file, and a missing token file fails loudly rather than silently. The exclude rule stays as defence in depth.
+  *This is the one addition to the agreed scope. If it is larger than it looks from here, contest it and it becomes a follow-up.*
 
 **Acceptance.** Two MCP-capable participants → two registrations, two different tokens, each under its own workspace. **On the default roster**, `codex` gets a printed instruction. A pre-existing `mcpServers` entry survives. `git check-ignore` matches for every file written.
 

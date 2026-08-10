@@ -373,6 +373,16 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
   }
 
   for (const participant of config.participants) {
+    // `@human` runs no harness — the human participates through the hub in a
+    // browser. `init` writes `harness: human` because the type requires the
+    // field, and no registry entry exists or should.
+    //
+    // Same first-run failure as the id check above, found the same way and
+    // missed once because it sat below a `head -20` in the leader's own
+    // terminal: `crosstalk init` wrote a config that `crosstalk doctor`
+    // rejected on the next command.
+    if (participant.id === HUMAN_ID) continue;
+
     const descriptor = registry.get(participant.harness);
     if (descriptor === undefined) {
       findings.push(finding(

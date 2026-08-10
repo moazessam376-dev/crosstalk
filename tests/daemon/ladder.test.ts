@@ -444,3 +444,36 @@ describe('the discriminating test rung', () => {
     );
   });
 });
+
+describe('a settled dispute stops escalating', () => {
+  it('closes the ladder when the claim resolves, and stops the timer', { timeout: 20000 }, async () => {
+    // The ordinary end of a dispute is concede/accept/amend. Without this the
+    // timer stays armed and fires rung_entered on an argument that ended hours
+    // ago — with `human` on the ladder, that pages a person at 4am.
+    await withDaemon(
+      async (daemon) => {
+        await respondTimes(daemon, 4);
+        // After four responses the raiser answered last, so it is the
+        // responder's turn: accept resolves the claim.
+        const accept = await post(
+          daemon,
+          '/claims/C-1/response',
+          { verdict: 'accept', evidence: [ev('fix-1')] },
+          'codex',
+        );
+        expect(accept.status).toBe(201);
+
+        const resolved = (await events(daemon)).filter((e) => e.kind === 'decision_resolved');
+        expect(resolved).toHaveLength(1);
+        expect(resolved[0]).toMatchObject({ decisionId: 'D-1', outcome: 'claim_resolved' });
+
+        // Well past the 1s rung timeout: nothing further may happen.
+        await new Promise((r) => setTimeout(r, 2500));
+        const after = await events(daemon);
+        expect(after.filter((e) => e.kind === 'rung_failed')).toHaveLength(0);
+        expect(after.filter((e) => e.kind === 'rung_entered')).toHaveLength(1);
+      },
+      configWithTimeouts('[discriminating_test, third_agent, leader]', '      discriminating_test: 1s'),
+    );
+  });
+});

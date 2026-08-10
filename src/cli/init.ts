@@ -1,19 +1,19 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
 
 import { DEFAULT_POLICY, type CrosstalkConfig } from '../contracts/config.js';
-import type { Participant, Role } from '../contracts/participant.js';
+import type { Participant, ParticipantId, Role } from '../contracts/participant.js';
 import { HUMAN_ID } from '../contracts/room.js';
 import { loadConfig } from '../daemon/config.js';
 import { distPath } from '../daemon/paths.js';
 import { tokenFilename } from '../daemon/server.js';
 import { writeBrief } from '../harness/brief.js';
 import { doctor, type Finding } from '../harness/doctor.js';
-import { loadRegistry, probeTier, type HarnessDescriptor } from '../harness/registry.js';
+import { loadRegistry, probeTier, resolveConfigPath, type HarnessDescriptor } from '../harness/registry.js';
 import { createWorktree, isRepo, listWorktrees, removeWorktree } from '../workspace/git.js';
 import { CliError, EXIT, stateDir } from './client.js';
 
@@ -28,9 +28,20 @@ export interface InitOptions {
 
 const DEFAULT_ROSTER = ['leader:leader:claude-code-app', 'codex:worker:codex-app'];
 
+export interface McpRegistration {
+  participantId: ParticipantId;
+  /** Where it was written. Empty when the harness names no config path. */
+  path: string;
+  written: boolean;
+  /** The exact registration — printed verbatim when it cannot be written. */
+  entry: unknown;
+  /** Why it was not written. Named, never silent. */
+  reason?: string;
+}
+
 export interface InitResult {
   configPath: string;
-  mcpPath: string;
+  mcp: McpRegistration[];
   tokens: Map<string, string>;
   config: CrosstalkConfig;
   kickoff: { id: string; line: string }[];
@@ -86,11 +97,11 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   }
 
   await ensureWorkspaces(repo, participants);
-  const mcpPath = await writeMcpConfig(repo, participants, tokens);
+  const mcp = await writeMcpConfigs(repo, participants);
   await ensureGitignored(repo);
   await writeBriefs(repo, participants, config.policy);
 
-  return { configPath, mcpPath, tokens, config, kickoff: kickoffLines(repo, participants) };
+  return { configPath, mcp, tokens, config, kickoff: kickoffLines(repo, participants) };
 }
 
 /**
@@ -283,38 +294,100 @@ async function writeBriefs(
  * from `.crosstalk/daemon.json`, because this file is written before any
  * daemon exists and an ephemeral port cannot be predicted.
  */
-async function writeMcpConfig(
-  repo: string,
-  participants: Participant[],
-  tokens: Map<string, string>,
-): Promise<string> {
-  const agent =
-    participants.find((participant) => participant.harness.startsWith('claude-code')) ??
-    participants.find((participant) => participant.role === 'worker') ??
-    participants[0]!;
-
-  const path = join(repo, '.mcp.json');
-  const entry = {
+/**
+ * The registration, identical everywhere it is written or printed.
+ *
+ * The token is *referenced*, never embedded. A live bearer token in a config
+ * file is worth removing on its own merits, and a missing token file fails
+ * loudly where an empty string would 401 with nothing to explain it.
+ */
+function registrationFor(root: string, participantId: ParticipantId): unknown {
+  return {
     command: 'node',
     // Interfaces spec §1: absolute, because the package is unpublished.
     args: [distPath(import.meta.url, 'mcp', 'index.js')],
     env: {
-      CROSSTALK_REPO: resolve(repo),
-      CROSSTALK_TOKEN: tokens.get(agent.id) ?? '',
+      CROSSTALK_REPO: root,
+      CROSSTALK_TOKEN_FILE: join(stateDir(root), 'tokens', tokenFilename(participantId)),
     },
   };
+}
 
-  // Merge, never overwrite.
-  //
-  // This file belongs to the user, not to Crosstalk. Anyone running `init` on a
-  // real project is likely to already have MCP servers configured, and the
-  // first version of this function replaced the whole file — silently deleting
-  // every one of them. `crosstalk.yaml` and the tokens were already preserved
-  // across a re-init; this was the one path that was not, and it was the one
-  // that destroyed something the user wrote.
-  //
-  // An unparseable file is left alone and reported. Rewriting JSON we failed to
-  // understand is how the damage would happen twice.
+/**
+ * One registration per participant, in that participant's own workspace,
+ * carrying that participant's token.
+ *
+ * A single shared registration meant every agent but one fell back to the CLI,
+ * and worker worktrees — where the GUI harnesses are actually opened — got
+ * nothing at all. It also meant two agents opened on the same folder presented
+ * the same token, and `from` is the field the ledger attributes by.
+ */
+async function writeMcpConfigs(
+  repo: string,
+  participants: Participant[],
+): Promise<McpRegistration[]> {
+  const root = resolve(repo);
+  let registry: Map<string, HarnessDescriptor>;
+  try {
+    registry = await loadRegistry();
+  } catch {
+    return [];
+  }
+
+  const registrations: McpRegistration[] = [];
+  for (const participant of participants) {
+    // `@human` runs no harness; it joins through the hub in a browser.
+    if (participant.id === HUMAN_ID) continue;
+    const descriptor = registry.get(participant.harness);
+    if (descriptor === undefined) continue;
+
+    const entry = registrationFor(root, participant.id);
+    const add = (path: string, written: boolean, reason?: string): void => {
+      registrations.push({ participantId: participant.id, path, written, entry, ...(reason === undefined ? {} : { reason }) });
+    };
+
+    if (descriptor.mcpConfigPath === undefined) {
+      add('', false, `harness ${descriptor.key} declares no mcpConfigPath`);
+      continue;
+    }
+    if (descriptor.mcp !== 'stdio') {
+      add('', false, `harness ${descriptor.key} declares mcp: ${descriptor.mcp}, not stdio`);
+      continue;
+    }
+
+    const path = resolveConfigPath(descriptor.mcpConfigPath, resolve(root, participant.workspace));
+    if (!isWithin(root, path)) {
+      // `~/.codex/config.toml` and the like. Crosstalk does not edit files
+      // outside the repository it was pointed at, so it prints instead.
+      add(path, false, `${path} is outside the repository`);
+      continue;
+    }
+
+    await mergeRegistration(path, entry);
+    add(path, true);
+  }
+  return registrations;
+}
+
+function isWithin(parent: string, target: string): boolean {
+  const child = relative(resolve(parent), resolve(target));
+  return child !== '' && !child.startsWith('..') && !isAbsolute(child);
+}
+
+/**
+ * Merge, never overwrite.
+ *
+ * This file belongs to the user, not to Crosstalk. Anyone running `init` on a
+ * real project is likely to already have MCP servers configured, and the first
+ * version of this function replaced the whole file — silently deleting every
+ * one of them. `crosstalk.yaml` and the tokens were already preserved across a
+ * re-init; this was the one path that was not, and it was the one that
+ * destroyed something the user wrote.
+ *
+ * An unparseable file is left alone and reported. Rewriting JSON we failed to
+ * understand is how the damage would happen twice.
+ */
+async function mergeRegistration(path: string, entry: unknown): Promise<void> {
   const existing = await readJsonObject(path);
   if (existing === 'unreadable') {
     throw new CliError(
@@ -328,8 +401,8 @@ async function writeMcpConfig(
   servers['crosstalk'] = entry;
 
   const merged = { ...(existing ?? {}), mcpServers: servers };
+  await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
-  return path;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

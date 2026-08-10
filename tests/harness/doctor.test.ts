@@ -44,6 +44,7 @@ function cfg(options: {
   leaders?: number;
   workers?: number;
   participants?: Participant[];
+  rungTimeouts?: CrosstalkConfig['policy']['dispute']['rungTimeouts'];
 } = {}): CrosstalkConfig {
   const participants = options.participants ?? [
     ...Array.from({ length: options.leaders ?? 1 }, (_, index) => participant(index === 0 ? 'leader' : `leader-${index}`, 'leader')),
@@ -60,7 +61,7 @@ function cfg(options: {
       dispute: {
         maxRounds: 3,
         ladder: options.ladder ?? ['discriminating_test', 'third_agent', 'leader'],
-        rungTimeouts: { discriminating_test: '30m', third_agent: '30m', human: '4h' },
+        rungTimeouts: options.rungTimeouts ?? { discriminating_test: '30m', third_agent: '30m', human: '4h' },
       },
       taskAcceptance: { method: 'leader' },
     },
@@ -81,6 +82,30 @@ afterEach(async () => {
 }, 60_000);
 
 describe('doctor', () => {
+  it('rejects a timeout on the last rung, and accepts the same ladder without one', async () => {
+    const ladder: LadderRung[] = ['discriminating_test', 'third_agent', 'human'];
+    const timed = { discriminating_test: '30m' as const, third_agent: '30m' as const, human: '4h' as const };
+
+    // The last rung never arms a timer, so a timeout configured on it is dead
+    // config that reads as a working escalation. Track A's C-2.
+    expect(await doctor(cfg({ ladder, rungTimeouts: timed }), repo)).toContainEqual(
+      expect.objectContaining({ level: 'reject', code: 'TERMINAL_RUNG_TIMEOUT' }),
+    );
+
+    // Both sides: a check that refused every `human`-terminated ladder would
+    // pass the assertion above while being entirely wrong.
+    const untimed = { discriminating_test: '30m' as const, third_agent: '30m' as const };
+    expect(await doctor(cfg({ ladder, rungTimeouts: untimed }), repo)).not.toContainEqual(
+      expect.objectContaining({ code: 'TERMINAL_RUNG_TIMEOUT' }),
+    );
+
+    // And the shipped default — which sets `human: '4h'` while ending on
+    // `leader` — must stay accepted: the timeout is only dead on the *last* rung.
+    expect(await doctor(cfg(), repo)).not.toContainEqual(
+      expect.objectContaining({ code: 'TERMINAL_RUNG_TIMEOUT' }),
+    );
+  }, 60_000);
+
   it('rejects a ladder whose last rung is not terminal', async () => {
     const findings = await doctor(cfg({ ladder: ['discriminating_test', 'third_agent'] }), repo);
 

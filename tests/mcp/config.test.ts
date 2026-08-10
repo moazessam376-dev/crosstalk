@@ -28,6 +28,49 @@ async function tempRepo(daemonJson?: string): Promise<string> {
   return dir;
 }
 
+describe('the token is referenced, not embedded', () => {
+  it('reads the token from CROSSTALK_TOKEN_FILE', async () => {
+    const repo = await tempRepo('{"version":1,"url":"http://127.0.0.1:1","pid":1,"startedAt":"x"}');
+    const path = join(repo, '.crosstalk', 'tokens', 'codex');
+    await mkdir(join(repo, '.crosstalk', 'tokens'), { recursive: true });
+    // Trailing newline is how `init` writes it and how a human would edit it.
+    await writeFile(path, 'from-the-file\n', 'utf8');
+
+    const config = await loadMcpConfig({ CROSSTALK_REPO: repo, CROSSTALK_TOKEN_FILE: path });
+    expect(config.token).toBe('from-the-file');
+  });
+
+  it('prefers CROSSTALK_TOKEN when both are set, so CLI use is unchanged', async () => {
+    const repo = await tempRepo('{"version":1,"url":"http://127.0.0.1:1","pid":1,"startedAt":"x"}');
+    const path = join(repo, '.crosstalk', 'tokens', 'codex');
+    await mkdir(join(repo, '.crosstalk', 'tokens'), { recursive: true });
+    await writeFile(path, 'from-the-file', 'utf8');
+
+    const config = await loadMcpConfig({
+      CROSSTALK_REPO: repo,
+      CROSSTALK_TOKEN: 'from-the-env',
+      CROSSTALK_TOKEN_FILE: path,
+    });
+    expect(config.token).toBe('from-the-env');
+  });
+
+  it('fails loudly when the token file is missing or empty', async () => {
+    const repo = await tempRepo('{"version":1,"url":"http://127.0.0.1:1","pid":1,"startedAt":"x"}');
+    const missing = join(repo, '.crosstalk', 'tokens', 'absent');
+
+    // An empty string would reach the daemon and come back a 401 with nothing
+    // to explain it, which is the failure mode this whole project keeps hitting.
+    await expect(loadMcpConfig({ CROSSTALK_REPO: repo, CROSSTALK_TOKEN_FILE: missing }))
+      .rejects.toThrow(/could not be read/);
+
+    const empty = join(repo, '.crosstalk', 'tokens', 'empty');
+    await mkdir(join(repo, '.crosstalk', 'tokens'), { recursive: true });
+    await writeFile(empty, '   \n', 'utf8');
+    await expect(loadMcpConfig({ CROSSTALK_REPO: repo, CROSSTALK_TOKEN_FILE: empty }))
+      .rejects.toThrow(/is empty/);
+  });
+});
+
 describe('mcp config', () => {
   it('discovers the url the daemon actually wrote, not one of its own', async () => {
     // The assertion that matters. A fixture would only prove this reader agrees

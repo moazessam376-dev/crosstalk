@@ -370,6 +370,20 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
       'The dispute ladder must end on a terminal rung.',
       'End the ladder with leader, human, or vote so every dispute can resolve without falling off the ladder.',
     ));
+  } else if (config.policy.dispute.rungTimeouts[lastRung] !== undefined) {
+    // The last rung never arms a timer — there is nothing to advance to, and a
+    // dispute that timed out there would fall off the ladder unresolved. A
+    // timeout configured on it is dead config that reads as a working
+    // escalation, which is worse than no setting at all. Track A's C-2.
+    //
+    // Only the *last* rung: the shipped default sets `human: '4h'` while
+    // ending on `leader`, and that timeout is live.
+    findings.push(finding(
+      'reject',
+      'TERMINAL_RUNG_TIMEOUT',
+      `The dispute ladder ends on ${lastRung}, but rungTimeouts.${lastRung} is set to ${config.policy.dispute.rungTimeouts[lastRung]}. The last rung never times out.`,
+      `Remove rungTimeouts.${lastRung}, or add a rung after it if you meant the dispute to escalate further.`,
+    ));
   }
 
   for (const participant of config.participants) {

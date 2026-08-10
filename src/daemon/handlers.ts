@@ -249,7 +249,7 @@ export async function castVote(
     await ctx.append({ kind: 'vote_cast', from: ctx.who, room, decisionId, option, rationale }),
   ];
 
-  const outcome = tally(ctx.state.decisions.get(decisionId)!);
+  const outcome = tally(ctx.state.decisions.get(decisionId)!, ctx.state);
   if (outcome !== null) {
     events.push(await ctx.append({ kind: 'decision_resolved', from: ctx.who, room, decisionId, outcome }));
   }
@@ -334,7 +334,28 @@ export function addressesParticipant(
 ): boolean {
   if ('to' in event && event.to === who) return true;
   if (event.from === who) return false;
+
+  // A decision addresses its voters, which is not the same set as its room's
+  // membership: `membersOf('dispute:<id>')` adds a leader only for brief/spec
+  // claims, so on a worker-vs-worker dispute the leader — the default terminal
+  // rung — was never told about the decision it exists to rule on.
+  if (votersOf(event, state)?.includes(who) === true) return true;
+
   return event.room !== undefined && isMember(who, event.room, state);
+}
+
+const DECISION_KINDS = [
+  'decision_opened',
+  'vote_cast',
+  'decision_resolved',
+  'rung_entered',
+  'rung_failed',
+] as const;
+
+function votersOf(event: CrosstalkEvent, state: HubState): ParticipantId[] | undefined {
+  if (!(DECISION_KINDS as readonly string[]).includes(event.kind)) return undefined;
+  if (event.kind === 'decision_opened') return event.decision.voters;
+  return 'decisionId' in event ? state.decisions.get(event.decisionId)?.voters : undefined;
 }
 
 /* --------------------------------------------------------------- helpers -- */

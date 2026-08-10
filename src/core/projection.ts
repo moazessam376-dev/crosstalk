@@ -1,14 +1,28 @@
 import type { Claim, ClaimResolution, ClaimVerdict } from '../contracts/claim.js';
-import type { Decision } from '../contracts/decision.js';
+import type { Decision, LadderRung } from '../contracts/decision.js';
 import type { CrosstalkEvent } from '../contracts/events.js';
 import type { Participant, ParticipantId } from '../contracts/participant.js';
 import type { Task } from '../contracts/task.js';
+
+/** The live position of a ladder, from the last `rung_entered`. */
+export interface RungState {
+  rung: LadderRung;
+  index: number;
+  adjudicator?: ParticipantId;
+}
 
 export interface HubState {
   participants: Map<ParticipantId, Participant>;
   tasks: Map<string, Task>;
   claims: Map<string, Claim>;
   decisions: Map<string, Decision>;
+  /**
+   * By `decisionId`. `Decision.currentRung` is a snapshot taken at open time
+   * and the log is append-only, so it never moves; the live rung is the last
+   * `rung_entered`. Kept beside the decisions rather than folded into them so
+   * the snapshot stays exactly what was written.
+   */
+  rungs: Map<string, RungState>;
   messages: CrosstalkEvent[];
   lastSeq: number;
 }
@@ -117,6 +131,18 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
       }
       return state;
     }
+    case 'rung_entered':
+      // The live rung. `Decision.currentRung` stays the open-time snapshot.
+      state.rungs.set(event.decisionId, {
+        rung: event.rung,
+        index: event.index,
+        ...(event.adjudicator === undefined ? {} : { adjudicator: event.adjudicator }),
+      });
+      return state;
+    case 'test_proposed':
+      return state;
+    case 'rung_failed':
+      return state;
     case 'brief_updated':
       return state;
   }
@@ -130,6 +156,7 @@ function emptyState(): HubState {
     tasks: new Map(),
     claims: new Map(),
     decisions: new Map(),
+    rungs: new Map(),
     messages: [],
     lastSeq: 0,
   };

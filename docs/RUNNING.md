@@ -342,12 +342,42 @@ await    [--as <id>] [--timeout 50]
 roster | board | mine   [--as <id>]
 ```
 
-**The brief Crosstalk writes for CLI-transport agents currently lists four
-commands that are wrong.** If your agent's brief tells it to run
-`crosstalk acknowledge`, `crosstalk submit`, `crosstalk claim raise` or
-`crosstalk claim respond`, none of those work — the first two do not exist
-(`Unknown command`), and the other two are `claim` and `respond` with different
-argument shapes. Use the list above, which is `--help`.
+### The brief names entry points that do not exist — on both transports
+
+As of `88abd4d` (11 August 2026), the brief `init` writes tells agents to use
+four things per transport, and on **both** transports two of the four are wrong.
+This affects every agent, not just CLI ones — MCP is the default tier for
+`claude-code-app`, which is what most people are running.
+
+**If your agent has MCP**, the brief tells it to call:
+
+| Brief says | Reality |
+|---|---|
+| `acknowledge(task_id, restatement, ambiguities[])` | does not exist — the tool is **`ack_task`** |
+| `submit(task_id, critique_record, evidence[])` | does not exist — the tool is **`submit_task`** |
+| `raise_claim({...})` | correct |
+| `respond_to_claim(claim_id, verdict, ...)` | correct |
+
+The registered tools, in full:
+
+```
+ack_task        add_evidence    await_turn      board
+create_task     my_tasks        open_decision   raise_claim
+read_events     respond_to_claim  roster        say
+set_task_state  submit_task     vote
+```
+
+**If your agent uses the CLI**, the brief tells it to run
+`crosstalk acknowledge`, `crosstalk submit`, `crosstalk claim raise` and
+`crosstalk claim respond`. The first two do not exist (`Unknown command`); the
+other two are `claim` and `respond` with different argument shapes. Use the list
+above, which is `--help`.
+
+In both cases the two that are wrong are the same two: the **gate** before code
+starts and the **gate** before work is submitted. An agent that follows its
+brief literally fails at exactly the two points the protocol will not let it
+skip. If an agent reports that a tool or command does not exist, this is why —
+it is not confused, its brief is wrong.
 
 ---
 

@@ -208,3 +208,25 @@ The fix that works — `test("— leader[[:space:]]*$")`, anchored, no escape se
 **Changed.** Nothing structural yet, and that is the honest answer — the fix is a habit rather than a mechanism, and habits are what this log exists because of. What did change is where the reviewer looks: for each task, name the plan clause, then find the code that satisfies it.
 
 The auditor's method was one sentence long and caught what the leader's could not: **read the documents against the code, not the code against itself.**
+
+---
+
+## 16 · The instrument reported success for a command it had not run
+
+**What happened.** A worker verifying its own task ran:
+
+```bash
+npm run typecheck 2>&1 | tail -4; echo $?
+```
+
+It printed `0`. `typecheck` had exited `2` with twenty errors.
+
+`$?` holds the exit status of the **last** command in a pipeline — `tail`, which succeeded at printing four lines of somebody else's failure. The worker noticed, reported it, and typed the tests against the contract's own response types so the underlying problem could not recur silently.
+
+**Why this is its own entry and not a duplicate of entry 5.** Entry 5 is a green test suite over code that does not compile: the *subject* was broken and the instrument was honest. This is the instrument itself lying — the command that exists to check the work reported a status belonging to a different process.
+
+Every rule in this repository about evidence assumes the measuring device is sound. *Run it and confirm it fails for the reason you expect. Break the code on purpose and re-run. Verify the comment body landed.* All of them reduce to reading the output of a command, and none of them check that the command reported on what you think it did.
+
+**Nothing was changed structurally, and that is the honest answer.** The habit is to capture the status of the command you care about — `${PIPESTATUS[0]}` in bash, or redirect to a file and check the status directly — rather than piping and asking `$?`. The leader had been doing that already, by habit rather than by reasoning, and would not have noticed the hazard unprompted.
+
+**Found by the worker, in its own evidence, while checking work nobody had questioned.** Which is the argument for self-critique being a gate rather than a courtesy: the leader's review would have read the reported `exit=0` and believed it, because reviewing evidence means reading what the instrument said.

@@ -278,7 +278,7 @@ class Daemon {
 
     if (path === '/shutdown' && method === 'POST') {
       requireShutdownAuthority(this.#config, who);
-      send(response, 200, { events: joined } satisfies WriteResponse);
+      send(response, 200, { events: [...joined, ...(await this.#partAll())] } satisfies WriteResponse);
       // Answer first: a caller that never gets a reply cannot tell a clean stop
       // from a crash.
       setImmediate(() => void this.onShutdownRequest?.());
@@ -497,6 +497,19 @@ class Daemon {
     );
     this.#joins.set(who, join);
     return join;
+  }
+
+  /**
+   * Closes presence for everyone who joined, so a log replayed after a clean
+   * stop does not show a room still full of participants who left hours ago.
+   */
+  async #partAll(): Promise<CrosstalkEvent[]> {
+    const events: CrosstalkEvent[] = [];
+    for (const who of [...this.#joins.keys()]) {
+      this.#joins.delete(who);
+      events.push(await this.#append({ kind: 'participant_left', from: who, participantId: who }));
+    }
+    return events;
   }
 
   /** Every write funnels through here: one EventLog, one seq sequence, no gaps. */

@@ -463,3 +463,76 @@ describe('shutdown', () => {
     }
   });
 });
+
+describe('protocol events reach the people they concern', () => {
+  it('wakes the participant a claim is raised against', async () => {
+    await withDaemon(async (daemon) => {
+      await get(daemon, '/await?timeout_s=0', 'codex');
+      const waiting = get(daemon, '/await?timeout_s=5', 'codex');
+      await new Promise((done) => setTimeout(done, 50));
+      await post(daemon, '/claims', CLAIM, 'leader');
+
+      // Without a room on the event this never fires: `addressesParticipant`
+      // has nothing to match, and the one message a worker most needs —
+      // "a claim has been raised against you" — is the one it never gets.
+      const payload = await readJson<{ events?: CrosstalkEvent[] }>(await waiting);
+      expect(kinds(payload.events ?? [])).toContain('claim_raised');
+    });
+  });
+
+  it('does not wake an uninvolved participant on a direct message', async () => {
+    await withDaemon(async (daemon) => {
+      await get(daemon, '/await?timeout_s=0', 'cursor');
+      const waiting = get(daemon, '/await?timeout_s=1', 'cursor');
+      await new Promise((done) => setTimeout(done, 50));
+      await post(
+        daemon,
+        '/events',
+        { kind: 'message', room: 'dm:codex~leader', body: 'private' },
+        'leader',
+      );
+
+      // The neighbouring case: a room cursor is not in must not wake it, or
+      // "addresses me" degrades into "anything happened".
+      expect(await readJson<{ idle?: boolean }>(await waiting)).toEqual({ idle: true });
+    });
+  });
+
+  it('authenticates the hub over a cookie, and lets a bearer token override it', async () => {
+    await withDaemon(async (daemon) => {
+      const cookie = await fetch(`${daemon.url}/events`, {
+        headers: { cookie: `ct_token=${daemon.tokens.get('leader')!}` },
+      });
+      expect(cookie.status).toBe(200);
+
+      // EventSource cannot send headers, so the hub has only this path; a
+      // bearer token must still win, or a CLI run beside a browser could be
+      // silently re-identified.
+      const both = await fetch(`${daemon.url}/events`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `ct_token=${daemon.tokens.get('leader')!}`,
+          ...auth(daemon, 'codex'),
+        },
+        body: JSON.stringify({ kind: 'message', room: '#floor', body: 'whose?' }),
+      });
+      const { events } = await readJson<WriteResponse>(both);
+      expect(events.find((event) => event.kind === 'message')).toMatchObject({ from: 'codex' });
+    });
+  });
+
+  it('closes presence on shutdown', async () => {
+    const daemon = await startDaemon({ repo: await tempRepo() });
+    let stopped = false;
+    try {
+      await post(daemon, '/events', { kind: 'message', room: '#floor', body: 'hi' }, 'codex');
+      const response = await post(daemon, '/shutdown', {}, 'leader');
+      expect(kinds((await readJson<WriteResponse>(response)).events)).toContain('participant_left');
+      await new Promise((done) => setTimeout(done, 200));
+      stopped = true;
+    } finally {
+      if (!stopped) await daemon.close();
+    }
+  });
+});

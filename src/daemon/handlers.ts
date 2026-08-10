@@ -44,7 +44,12 @@ export async function raiseClaim(ctx: HandlerContext, body: Body): Promise<Cross
     ctx.state,
   );
 
-  return [await ctx.append({ kind: 'claim_raised', from: ctx.who, claim })];
+  // Routed into the claim's dispute room, or `await_turn` never wakes the
+  // participant the claim is against — which is the single event they most
+  // need to be told about.
+  return [
+    await ctx.append({ kind: 'claim_raised', from: ctx.who, room: `dispute:${claim.id}`, claim }),
+  ];
 }
 
 export async function respondToClaim(
@@ -71,6 +76,7 @@ export async function respondToClaim(
     await ctx.append({
       kind: 'claim_response',
       from: ctx.who,
+      room: `dispute:${claimId}`,
       claimId,
       verdict: input.verdict,
       evidence,
@@ -92,6 +98,7 @@ export async function addEvidence(
     await ctx.append({
       kind: 'evidence_added',
       from: ctx.who,
+      room: `dispute:${claimId}`,
       claimId,
       evidence: readEvidence(body, ctx.who),
     }),
@@ -121,7 +128,7 @@ export async function createTask(ctx: HandlerContext, body: Body): Promise<Cross
     branch: requireString(body, 'branch'),
   };
 
-  return [await ctx.append({ kind: 'task_created', from: ctx.who, task })];
+  return [await ctx.append({ kind: 'task_created', from: ctx.who, room: `task:${task.id}`, task })];
 }
 
 export async function acknowledgeTask(
@@ -137,7 +144,9 @@ export async function acknowledgeTask(
     ambiguities: readStringList(body, 'ambiguities'),
   };
 
-  const events = [await ctx.append({ kind: 'brief_ack', from: ctx.who, taskId, ack })];
+  const events = [
+    await ctx.append({ kind: 'brief_ack', from: ctx.who, room: `task:${taskId}`, taskId, ack }),
+  ];
   // Gate 1 in one request: making the caller issue a second one to reach
   // `acknowledged` invites the second to be skipped.
   events.push(...(await transitionIfLegal(ctx, taskId, 'acknowledged')));
@@ -155,7 +164,9 @@ export async function submitTask(
   const critique = readCritique(body);
   // `self_review` is gate 2's counterpart to `brief_ack`. Until it existed the
   // gate was unreachable from the log at all (CT-D-1).
-  const events = [await ctx.append({ kind: 'self_review', from: ctx.who, taskId, critique })];
+  const events = [
+    await ctx.append({ kind: 'self_review', from: ctx.who, room: `task:${taskId}`, taskId, critique }),
+  ];
   events.push(...(await transitionIfLegal(ctx, taskId, 'self_reviewed')));
   return events;
 }
@@ -174,6 +185,7 @@ export async function setTaskState(
     await ctx.append({
       kind: 'task_state',
       from: ctx.who,
+      room: `task:${taskId}`,
       taskId,
       state,
       ...(reason === undefined ? {} : { reason }),
@@ -328,7 +340,9 @@ async function transitionIfLegal(
     // a task already past this point is not an error.
     return [];
   }
-  return [await ctx.append({ kind: 'task_state', from: ctx.who, taskId, state: to })];
+  return [
+    await ctx.append({ kind: 'task_state', from: ctx.who, room: `task:${taskId}`, taskId, state: to }),
+  ];
 }
 
 function requireTask(ctx: HandlerContext, taskId: string): Task {

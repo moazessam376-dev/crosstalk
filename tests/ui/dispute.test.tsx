@@ -147,6 +147,65 @@ describe('B5 dispute view', () => {
     expect(tally).toHaveTextContent(/once\s*0/);
   });
 
+  it('keeps the contesting side on screen after the raiser upholds', () => {
+    // The signature failure this view exists to prevent: leader raises, codex
+    // contests, leader upholds, and the screen shows "CLAIM · leader" beside
+    // "UPHOLD · leader" with codex's falsifier gone. Both falsifiers side by
+    // side is the whole idea (spec §10.2).
+    const uphold: CrosstalkEvent = {
+      seq: 8,
+      ts: '2026-08-09T00:00:08Z',
+      kind: 'claim_response',
+      from: 'leader',
+      room: 'dispute:C-118',
+      claimId: 'C-118',
+      verdict: 'uphold',
+      rationale: 'The trace still shows two applications after the replay run.',
+      evidence: [
+        {
+          kind: 'command',
+          command: 'node tools/economycheck.mjs --trace --after-replay',
+          output: 'tick 1 produce: staffed=0.5 applied twice',
+          sha: '9f31aa4',
+          by: 'leader',
+        },
+      ],
+    };
+
+    render(createElement(DisputeView, { roomId: 'dispute:C-118', events: [...events, uphold] }));
+
+    expect(screen.getByText('Removing the coefficient from consume() leaves the ledger balanced.')).toBeInTheDocument();
+    expect(screen.getByTestId('dispute-response-C-118')).toHaveTextContent('CONTEST · codex');
+  });
+
+  it('folds the raiser latest evidence into the claim pane', () => {
+    const uphold: CrosstalkEvent = {
+      seq: 8,
+      ts: '2026-08-09T00:00:08Z',
+      kind: 'claim_response',
+      from: 'leader',
+      room: 'dispute:C-118',
+      claimId: 'C-118',
+      verdict: 'uphold',
+      rationale: 'The trace still shows two applications after the replay run.',
+      evidence: [
+        {
+          kind: 'command',
+          command: 'node tools/economycheck.mjs --trace --after-replay',
+          output: 'tick 1 produce: staffed=0.5 applied twice',
+          sha: '9f31aa4',
+          by: 'leader',
+        },
+      ],
+    };
+
+    render(createElement(DisputeView, { roomId: 'dispute:C-118', events: [...events, uphold] }));
+
+    // An uphold updates the claim pane's evidence; it does not replace the
+    // opposing pane.
+    expect(screen.getByTestId('dispute-claim-C-118')).toHaveTextContent('node tools/economycheck.mjs --trace --after-replay');
+  });
+
   it('keeps a claim contested after its linked decision resolves', () => {
     const decisionResolved: CrosstalkEvent = {
       seq: 7,
@@ -161,5 +220,217 @@ describe('B5 dispute view', () => {
     render(createElement(DisputeView, { roomId: 'dispute:C-118', events: [...events, decisionResolved] }));
 
     expect(screen.getByTestId('dispute-claim-C-118')).toHaveAttribute('data-claim-state', 'contested');
+  });
+});
+
+/**
+ * Rule 1 of the freeze: the current rung is the `index` of the last
+ * `rung_entered` for that decision, falling back to `decision.currentRung ?? 0`
+ * only when there is none. `decision.currentRung` is an open-time snapshot on an
+ * append-only log, so a rail that reads it alone shows the opening rung forever
+ * while the ladder climbs underneath it.
+ */
+describe('C1 ladder rail', () => {
+  const ladderEvents: CrosstalkEvent[] = [
+    {
+      seq: 1,
+      ts: '2026-08-09T00:00:01Z',
+      kind: 'claim_raised',
+      from: 'leader',
+      room: 'dispute:C-200',
+      claim: { ...claim, id: 'C-200' },
+    },
+    {
+      seq: 2,
+      ts: '2026-08-09T00:00:02Z',
+      kind: 'decision_opened',
+      from: 'leader',
+      room: 'dispute:C-200',
+      decision: {
+        id: 'D-09',
+        question: 'Does the staffing coefficient apply twice?',
+        options: ['twice', 'once'],
+        voters: ['leader', 'codex', '@human'],
+        method: 'ladder',
+        ladder: ['discriminating_test', 'third_agent', 'leader', 'human'],
+        currentRung: 0,
+        skipped: [{ rung: 'third_agent', reason: 'only one worker is configured, so there is no uninvolved peer' }],
+        rationale: [],
+        claimId: 'C-200',
+        votes: {},
+      },
+    },
+    {
+      seq: 3,
+      ts: '2026-08-09T00:00:03Z',
+      kind: 'rung_entered',
+      from: 'leader',
+      room: 'dispute:C-200',
+      decisionId: 'D-09',
+      rung: 'discriminating_test',
+      index: 0,
+    },
+    {
+      seq: 4,
+      ts: '2026-08-09T00:00:04Z',
+      kind: 'rung_failed',
+      from: 'leader',
+      room: 'dispute:C-200',
+      decisionId: 'D-09',
+      rung: 'discriminating_test',
+      reason: 'timeout: codex did not propose',
+    },
+    {
+      seq: 5,
+      ts: '2026-08-09T00:00:05Z',
+      kind: 'rung_entered',
+      from: 'leader',
+      room: 'dispute:C-200',
+      decisionId: 'D-09',
+      rung: 'leader',
+      index: 2,
+    },
+  ];
+
+  it('lights the rung named by the last rung_entered, not the open-time snapshot', () => {
+    render(createElement(DisputeView, { roomId: 'dispute:C-200', events: ladderEvents }));
+
+    // Both sides of the discrimination: the live rung is current and the
+    // snapshot rung is not. `currentRung` is 0 in this decision, so a rail
+    // reading it alone would light `discriminating_test`.
+    expect(screen.getByTestId('ladder-rung-leader')).toHaveAttribute('data-state', 'current');
+    expect(screen.getByTestId('ladder-rung-discriminating_test')).not.toHaveAttribute('data-state', 'current');
+  });
+
+  it('renders a failed rung distinctly from a skipped one', () => {
+    render(createElement(DisputeView, { roomId: 'dispute:C-200', events: ladderEvents }));
+
+    // A degraded ladder must not look like a short one, and an escalated ladder
+    // must not look like a stalled one. Three different states, three renders.
+    expect(screen.getByTestId('ladder-rung-discriminating_test')).toHaveAttribute('data-state', 'failed');
+    expect(screen.getByTestId('ladder-rung-third_agent')).toHaveAttribute('data-state', 'skipped');
+    expect(screen.getByTestId('ladder-rung-human')).toHaveAttribute('data-state', 'pending');
+  });
+
+  it('names why a rung was skipped and why one failed', () => {
+    render(createElement(DisputeView, { roomId: 'dispute:C-200', events: ladderEvents }));
+
+    // Skipped, never silent — audit F-07.
+    expect(screen.getByTestId('ladder-rung-third_agent')).toHaveAttribute(
+      'title',
+      'only one worker is configured, so there is no uninvolved peer',
+    );
+    expect(screen.getByTestId('ladder-rung-discriminating_test')).toHaveAttribute('title', 'timeout: codex did not propose');
+  });
+
+  it('reads the adjudicator from the last rung_entered, never from decision_opened', () => {
+    // Rule 2: "uninvolved" decays, so the peer is chosen at rung entry. A rail
+    // reading `decision_opened` would name whoever was uninvolved at open time.
+    const withAdjudicator: CrosstalkEvent[] = [
+      ...ladderEvents.slice(0, 4),
+      {
+        seq: 5,
+        ts: '2026-08-09T00:00:05Z',
+        kind: 'rung_entered',
+        from: 'leader',
+        room: 'dispute:C-200',
+        decisionId: 'D-09',
+        rung: 'third_agent',
+        index: 1,
+        adjudicator: 'cursor',
+      },
+    ];
+
+    render(createElement(DisputeView, { roomId: 'dispute:C-200', events: withAdjudicator }));
+
+    expect(screen.getByTestId('ladder-adjudicator')).toHaveTextContent('cursor');
+  });
+});
+
+/**
+ * The `discriminating_test` rung, made legible. `test_proposed.sha` exists
+ * because two disputants running one command at two commits get a difference
+ * explained by the diff between them rather than by who is right — and the rung
+ * then records an inconclusive falsifier against both.
+ */
+describe('C1 discriminating test proposals', () => {
+  const proposal: CrosstalkEvent = {
+    seq: 3,
+    ts: '2026-08-09T00:00:03Z',
+    kind: 'test_proposed',
+    from: 'codex',
+    room: 'dispute:C-200',
+    decisionId: 'D-09',
+    claimId: 'C-200',
+    command: 'node tools/replay.mjs --ticks 3',
+    predicts: 'the ledger balances at tick 3 if the coefficient is applied once',
+    sha: '7c18253',
+  };
+
+  const base: CrosstalkEvent[] = [
+    {
+      seq: 1,
+      ts: '2026-08-09T00:00:01Z',
+      kind: 'claim_raised',
+      from: 'leader',
+      room: 'dispute:C-200',
+      claim: { ...claim, id: 'C-200', evidence: [] },
+    },
+    proposal,
+  ];
+
+  it('renders the command, the prediction and the commit it is asserted at', () => {
+    render(createElement(DisputeView, { roomId: 'dispute:C-200', events: base }));
+
+    const proposed = screen.getByTestId('test-proposal-3');
+    expect(proposed).toHaveTextContent('node tools/replay.mjs --ticks 3');
+    expect(proposed).toHaveTextContent('the ledger balances at tick 3 if the coefficient is applied once');
+    expect(proposed).toHaveTextContent('7c18253');
+  });
+
+  it('marks answering evidence that ran at a different commit', () => {
+    const answeredElsewhere: CrosstalkEvent = {
+      seq: 4,
+      ts: '2026-08-09T00:00:04Z',
+      kind: 'evidence_added',
+      from: 'leader',
+      room: 'dispute:C-200',
+      claimId: 'C-200',
+      evidence: {
+        kind: 'command',
+        command: 'node tools/replay.mjs --ticks 3',
+        output: 'tick 3 ledger divergence: expected 0, got -42 input units',
+        sha: '20b08a7',
+        by: 'leader',
+      },
+    };
+
+    render(createElement(DisputeView, { roomId: 'dispute:C-200', events: [...base, answeredElsewhere] }));
+
+    const divergence = screen.getByTestId('test-proposal-3-divergence');
+    expect(divergence).toHaveTextContent('20b08a7');
+  });
+
+  it('says nothing about divergence when the answer ran at the proposed commit', () => {
+    // The neighbouring case that must not trigger: same command, same commit.
+    const answeredHere: CrosstalkEvent = {
+      seq: 4,
+      ts: '2026-08-09T00:00:04Z',
+      kind: 'evidence_added',
+      from: 'leader',
+      room: 'dispute:C-200',
+      claimId: 'C-200',
+      evidence: {
+        kind: 'command',
+        command: 'node tools/replay.mjs --ticks 3',
+        output: 'tick 3 ledger balanced',
+        sha: '7c18253',
+        by: 'leader',
+      },
+    };
+
+    render(createElement(DisputeView, { roomId: 'dispute:C-200', events: [...base, answeredHere] }));
+
+    expect(screen.queryByTestId('test-proposal-3-divergence')).not.toBeInTheDocument();
   });
 });

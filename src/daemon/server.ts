@@ -43,6 +43,7 @@ import {
 } from './handlers.js';
 import { loadConfig } from './config.js';
 import { acquireLock, recordLockUrl, releaseLock } from './lock.js';
+import { isBlockedPort, NoUsablePortError, pickUsablePort } from './ports.js';
 import { DaemonError } from './errors.js';
 
 /** Loopback only. Never `localhost`: it resolves to ::1 first on Windows, which strands IPv4 clients on a server that started fine. */
@@ -146,19 +147,60 @@ function buildHandle(parts: {
   return { url, tokens, close };
 }
 
-function listen(server: Server, port?: number): Promise<string> {
+function bindOnce(server: Server, port: number): Promise<number> {
   return new Promise((done, fail) => {
-    server.once('error', (error: NodeJS.ErrnoException) => {
+    const onError = (error: NodeJS.ErrnoException): void => {
+      server.off('listening', onListening);
       fail(
         error.code === 'EADDRINUSE'
           ? new DaemonError('PORT_IN_USE', `Port ${port} is already bound`)
           : error,
       );
-    });
-    server.listen(port ?? 0, HOST, () => {
-      done(`http://${HOST}:${(server.address() as AddressInfo).port}`);
-    });
+    };
+    const onListening = (): void => {
+      server.off('error', onError);
+      done((server.address() as AddressInfo).port);
+    };
+
+    // `once` on both, each removing the other: a retry re-enters this function
+    // on the same server object, and a listener left behind from a previous
+    // attempt would settle the wrong promise.
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, HOST);
   });
+}
+
+/**
+ * Binds, refusing to hand back a port `fetch` and browsers will not connect to.
+ *
+ * An explicit `--port` is honoured or rejected, never silently moved: someone
+ * who asked for a specific port and got a different one has a worse problem
+ * than an error message. Only an ephemeral bind retries. See `ports.ts`.
+ */
+async function listen(server: Server, port?: number): Promise<string> {
+  if (port !== undefined) {
+    if (isBlockedPort(port)) {
+      throw new DaemonError(
+        'PORT_BLOCKED',
+        `Port ${port} is on the WHATWG blocked-port list, so browsers and fetch refuse it even though a server can bind it. Choose another port.`,
+      );
+    }
+    return `http://${HOST}:${await bindOnce(server, port)}`;
+  }
+
+  try {
+    const assigned = await pickUsablePort(
+      () => bindOnce(server, 0),
+      () => new Promise<void>((closed) => server.close(() => closed())),
+    );
+    return `http://${HOST}:${assigned}`;
+  } catch (error) {
+    if (error instanceof NoUsablePortError) {
+      throw new DaemonError('PORT_BLOCKED', error.message);
+    }
+    throw error;
+  }
 }
 
 /**

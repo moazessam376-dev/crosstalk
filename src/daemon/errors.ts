@@ -16,6 +16,7 @@ export type DaemonErrorCode =
   | 'UNKNOWN_ROUTE'
   | 'DAEMON_ALREADY_RUNNING'
   | 'PORT_IN_USE'
+  | 'PORT_BLOCKED'
   | 'PAYLOAD_TOO_LARGE'
   | 'EVENT_KIND_NOT_APPENDABLE';
 

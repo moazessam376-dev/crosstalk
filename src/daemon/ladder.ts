@@ -5,6 +5,7 @@ import type { ParticipantId } from '../contracts/participant.js';
 import { HUMAN_ID } from '../contracts/room.js';
 import { FLOOR } from '../contracts/room.js';
 import { adjudicatorFor, nextRung, planLadder } from '../core/ladder.js';
+import { responderFor } from '../core/claims.js';
 import { currentRungOf } from '../core/decisions.js';
 import type { HubState } from '../core/projection.js';
 
@@ -210,6 +211,8 @@ export async function expireRung(
  */
 export class LadderTimers {
   readonly #timers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Who has proposed a discriminating test, by decision. */
+  readonly #proposals = new Map<string, Set<ParticipantId>>();
   readonly #fire: (decisionId: string, reason: string) => void;
 
   constructor(fire: (decisionId: string, reason: string) => void) {
@@ -223,10 +226,20 @@ export class LadderTimers {
       this.#set(event.decisionId, rungTimeoutMs(decision, event.index, config));
       return;
     }
+    if (event.kind === 'test_proposed') {
+      const seen = this.#proposals.get(event.decisionId) ?? new Set<ParticipantId>();
+      seen.add(event.from);
+      this.#proposals.set(event.decisionId, seen);
+      return;
+    }
     // A settled decision stops counting. Otherwise a dispute that ended hours
     // ago fires `rung_entered` on a settled argument, and with `human` on the
     // ladder that pages a person at 4am.
     if (event.kind === 'decision_resolved') this.disarm(event.decisionId);
+  }
+
+  proposalsFor(decisionId: string): ReadonlySet<ParticipantId> {
+    return this.#proposals.get(decisionId) ?? new Set();
   }
 
   /**
@@ -238,6 +251,11 @@ export class LadderTimers {
     for (const event of [...log].sort((a, b) => a.seq - b.seq)) {
       if (event.kind === 'rung_entered') {
         entered.set(event.decisionId, { index: event.index, at: Date.parse(event.ts) });
+      }
+      if (event.kind === 'test_proposed') {
+        const seen = this.#proposals.get(event.decisionId) ?? new Set<ParticipantId>();
+        seen.add(event.from);
+        this.#proposals.set(event.decisionId, seen);
       }
     }
 
@@ -278,4 +296,25 @@ export class LadderTimers {
     if (typeof timer.unref === 'function') timer.unref();
     this.#timers.set(decisionId, timer);
   }
+}
+
+
+/**
+ * Why a `discriminating_test` rung failed.
+ *
+ * Fewer than two proposals names who was silent, because §12 counts falsifiers
+ * that failed to yield a test *per participant* — "inconclusive" against both
+ * would charge the side that did produce one. Two or more with the claim still
+ * unresolved is genuinely inconclusive.
+ */
+export function testRungReason(
+  proposed: ReadonlySet<ParticipantId>,
+  decision: Decision,
+  state: HubState,
+): string {
+  const claim = decision.claimId === undefined ? undefined : state.claims.get(decision.claimId);
+  if (claim === undefined) return 'test_inconclusive';
+
+  const silent = [claim.raisedBy, responderFor(claim, state)].filter((who) => !proposed.has(who));
+  return silent.length === 0 ? 'test_inconclusive' : `no_test_from:${silent.join(',')}`;
 }

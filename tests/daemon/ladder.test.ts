@@ -263,7 +263,10 @@ describe('rung timers', () => {
 
         const failed = log.filter((e) => e.kind === 'rung_failed');
         expect(failed).toHaveLength(1);
-        expect(failed[0]).toMatchObject({ rung: 'discriminating_test', index: 0, reason: 'timeout' });
+        // Neither disputant proposed, so the reason names both rather than
+        // saying only that time ran out — §12 charges it per participant.
+        expect(failed[0]).toMatchObject({ rung: 'discriminating_test', index: 0 });
+        expect((failed[0] as { reason: string }).reason).toBe('no_test_from:leader,codex');
         // ...and the ladder moved on rather than stopping.
         expect(log.filter((e) => e.kind === 'rung_entered')).toHaveLength(2);
       },
@@ -329,13 +332,113 @@ describe('a rung nobody can answer', () => {
 
         const failed = log.filter((e) => e.kind === 'rung_failed');
         expect(failed.map((e) => (e as { reason: string }).reason)).toEqual([
-          'timeout',
+          'no_test_from:codex,cursor',
           'no_uninvolved_peer',
         ]);
         // Entered discriminating_test, third_agent, then leader.
         expect(log.filter((e) => e.kind === 'rung_entered')).toHaveLength(3);
         const last = log.filter((e) => e.kind === 'rung_entered').at(-1);
         expect(last).toMatchObject({ rung: 'leader', index: 2 });
+      },
+      configWithTimeouts('[discriminating_test, third_agent, leader]', '      discriminating_test: 1s'),
+    );
+  });
+});
+
+const PROPOSAL = {
+  command: 'npm test -- economy',
+  predicts: 'the focused ledger check prints two rows',
+  sha: 'abc1234',
+};
+
+describe('the discriminating test rung', () => {
+  it('records a proposal from each disputant and leaves the rung standing', async () => {
+    // No timeout configured for rung 0, so nothing expires under the test.
+    await withDaemon(
+      async (daemon) => {
+        await respondTimes(daemon, 4);
+
+        expect((await post(daemon, '/decisions/D-1/test', PROPOSAL, 'leader')).status).toBe(201);
+        expect((await post(daemon, '/decisions/D-1/test', PROPOSAL, 'codex')).status).toBe(201);
+
+        const log = await events(daemon);
+        expect(log.filter((e) => e.kind === 'test_proposed')).toHaveLength(2);
+        expect(log.filter((e) => e.kind === 'rung_failed')).toHaveLength(0);
+      },
+      configWithTimeouts('[discriminating_test, third_agent, leader]', '      third_agent: 30m'),
+    );
+  });
+
+  it('refuses a proposal with no prediction', async () => {
+    await withDaemon(
+      async (daemon) => {
+        await respondTimes(daemon, 4);
+        const response = await post(daemon, '/decisions/D-1/test', { ...PROPOSAL, predicts: '' }, 'leader');
+        expect(response.status).toBe(422);
+        expect((await response.json() as { error: { code: string } }).error.code).toBe(
+          'TEST_WITHOUT_PREDICTION',
+        );
+      },
+      configWithTimeouts('[discriminating_test, third_agent, leader]', '      third_agent: 30m'),
+    );
+  });
+
+  it('refuses a proposal with no commit', async () => {
+    // Two disputants running one command at two commits get a difference
+    // explained by the diff, not by who is right.
+    await withDaemon(
+      async (daemon) => {
+        await respondTimes(daemon, 4);
+        const response = await post(daemon, '/decisions/D-1/test', { command: 'x', predicts: 'y' }, 'leader');
+        expect(response.status).toBe(400);
+      },
+      configWithTimeouts('[discriminating_test, third_agent, leader]', '      third_agent: 30m'),
+    );
+  });
+
+  it('refuses a proposal when the ladder is not on that rung', async () => {
+    await withDaemon(
+      async (daemon) => {
+        await respondTimes(daemon, 4);
+        const response = await post(daemon, '/decisions/D-1/test', PROPOSAL, 'leader');
+        expect(response.status).toBe(409);
+        expect((await response.json() as { error: { code: string } }).error.code).toBe('RUNG_NOT_ACTIVE');
+      },
+      configWithTimeouts('[leader]', '      third_agent: 30m'),
+    );
+  });
+
+  it('names the silent participant when only one proposed', { timeout: 20000 }, async () => {
+    await withDaemon(
+      async (daemon) => {
+        await respondTimes(daemon, 4);
+        await post(daemon, '/decisions/D-1/test', PROPOSAL, 'leader');
+
+        const log = await waitFor(
+          daemon,
+          (l) => l.filter((e) => e.kind === 'rung_entered').length > 1,
+        );
+        const failed = log.find((e) => e.kind === 'rung_failed') as { reason: string };
+        // §5.5: the ledger counts a falsifier that failed to yield a test, and
+        // it counts it against the participant who did not produce one. The
+        // leader proposed; codex did not.
+        expect(failed.reason).toBe('no_test_from:codex');
+        expect(log.filter((e) => e.kind === 'rung_entered').length).toBeGreaterThan(1);
+      },
+      configWithTimeouts('[discriminating_test, third_agent, leader]', '      discriminating_test: 1s'),
+    );
+  });
+
+  it('reports test_inconclusive when both proposed and the claim is unresolved', { timeout: 20000 }, async () => {
+    await withDaemon(
+      async (daemon) => {
+        await respondTimes(daemon, 4);
+        await post(daemon, '/decisions/D-1/test', PROPOSAL, 'leader');
+        await post(daemon, '/decisions/D-1/test', PROPOSAL, 'codex');
+
+        const log = await waitFor(daemon, (l) => l.some((e) => e.kind === 'rung_failed'));
+        const failed = log.find((e) => e.kind === 'rung_failed') as { reason: string };
+        expect(failed.reason).toBe('test_inconclusive');
       },
       configWithTimeouts('[discriminating_test, third_agent, leader]', '      discriminating_test: 1s'),
     );

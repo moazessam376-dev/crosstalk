@@ -13,7 +13,8 @@ import type { ParticipantId } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { EventLog } from '../core/log.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
-import { LadderTimers, SYSTEM_ID, expireRung } from './ladder.js';
+import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js';
+import { currentRungOf } from '../core/decisions.js';
 
 import {
   DAEMON_STATUS,
@@ -31,6 +32,7 @@ import {
   addressesParticipant,
   board,
   castVote,
+  proposeTest,
   createTask,
   myTasks,
   openDecision,
@@ -304,7 +306,15 @@ class Daemon {
   /** A rung ran out of time. No request is in flight, so the daemon signs it. */
   async #expireRung(decisionId: string, reason: string): Promise<void> {
     try {
-      await expireRung(this.#context(SYSTEM_ID), decisionId, reason);
+      const decision = this.#state.decisions.get(decisionId);
+      const current = decision === undefined ? undefined : currentRungOf(decision, this.#state);
+      // `discriminating_test` says *why* it failed rather than only that it
+      // did: the ledger charges a missing test to the side that owed it.
+      const actual =
+        current?.rung === 'discriminating_test' && decision !== undefined
+          ? testRungReason(this.#ladderTimers.proposalsFor(decisionId), decision, this.#state)
+          : reason;
+      await expireRung(this.#context(SYSTEM_ID), decisionId, actual);
     } catch {
       // A failed escalation must not take the daemon down with it; the rung
       // stays where it is and the next response re-evaluates.
@@ -451,6 +461,9 @@ class Daemon {
 
     const vote = matchPath(path, '/decisions/:id/vote');
     if (vote) return (ctx, body) => castVote(ctx, vote[0]!, body);
+
+    const test = matchPath(path, '/decisions/:id/test');
+    if (test) return (ctx, body) => proposeTest(ctx, test[0]!, body);
 
     return undefined;
   }

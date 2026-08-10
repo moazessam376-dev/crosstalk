@@ -109,6 +109,42 @@ export async function enterRung(
   return events;
 }
 
+/**
+ * A claim that has been settled stops its ladder.
+ *
+ * The ordinary end of an escalated dispute is `concede`, `accept` or `amend` —
+ * none of which touch the decision. Without this the timer stays armed and
+ * later fires `rung_entered` on an argument that ended hours ago, and with
+ * `human` on the ladder that pages a person about a settled dispute.
+ *
+ * A claim reopened later by staleness does not revive this decision; a fresh
+ * escalation opens a new one.
+ */
+export async function closeLadderIfResolved(
+  ctx: LadderContext,
+  claimId: string,
+): Promise<CrosstalkEvent[]> {
+  const claim = ctx.state.claims.get(claimId);
+  if (claim === undefined || claim.state !== 'resolved') return [];
+
+  const events: CrosstalkEvent[] = [];
+  for (const decision of ctx.state.decisions.values()) {
+    if (decision.claimId !== claimId || decision.method !== 'ladder') continue;
+    if (decision.outcome !== undefined) continue;
+
+    events.push(
+      await ctx.append({
+        kind: 'decision_resolved',
+        from: ctx.who,
+        room: `dispute:${claimId}`,
+        decisionId: decision.id,
+        outcome: 'claim_resolved',
+      }),
+    );
+  }
+  return events;
+}
+
 function hasUnresolvedLadder(claimId: string, state: HubState): boolean {
   for (const decision of state.decisions.values()) {
     if (decision.claimId === claimId && decision.method === 'ladder' && decision.outcome === undefined) {

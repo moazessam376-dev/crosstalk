@@ -13,7 +13,7 @@ import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { validateTransition } from '../core/tasks.js';
 
 import { DaemonError } from './errors.js';
-import { escalateIfNeeded } from './ladder.js';
+import { closeLadderIfResolved, escalateIfNeeded } from './ladder.js';
 
 export interface HandlerContext {
   /** Derived from the presenting token. Never read from a body. */
@@ -90,6 +90,8 @@ export async function respondToClaim(
   // Automatic: no agent has to know the ladder exists, and none can decline to
   // escalate. `ctx.state` is a getter, so this reads the response just written.
   events.push(...(await escalateIfNeeded(ctx, claimId)));
+  // ...and a response that settles the claim stops the ladder it opened.
+  events.push(...(await closeLadderIfResolved(ctx, claimId)));
   return events;
 }
 

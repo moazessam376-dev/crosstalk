@@ -46,6 +46,30 @@ The daemon serves the built hub from `dist/ui` at `/`, same-origin — which is 
 - **G** implements `/`, `/config.json` and the bootstrap redirect.
 - **I** fetches `/config.json`, falls back to the fixture when it 404s, and never hard-codes a port.
 
+## 3. `GET /stream` does not exist — found by probe, after the briefs went out
+
+Contract §6 specifies SSE at `GET /stream`. **The daemon returns `404 UNKNOWN_ROUTE`.** Every other route in §5 is implemented; PR #4 is titled "daemon, SSE, MCP, CLI" and landed D1 only, because D2 and D3 were never started.
+
+Verified against a real daemon built from `dist/`:
+
+```
+GET /health                    200   (unauthenticated, leaks nothing)
+GET /events  (no token)        401
+POST /events kind:message      201
+POST /events with `from` set   403   (identity is derived, not accepted)
+GET /stream                    404   {"code":"UNKNOWN_ROUTE"}
+```
+
+**No test claimed otherwise.** Track D shipped D1 and did not fabricate coverage for the rest; the gap is scope, not a false green. Cookie auth — the half of §6 that is hard — is implemented and tested.
+
+**Owner: Track G, ahead of the CLI.** Track I cannot connect a live hub to a route that 404s, and the demo has no live surface without it. It is ~40 lines against a contract section Track G wrote.
+
+**Track I ships a fallback regardless.** Poll `GET /events?since=` when `/stream` 404s. `since` is exclusive (§5.1), so a poll that saw `seq` 42 asks for `since=42`. This is inside `src/ui/**` and depends on nothing from Track G, so neither track can be blocked by the other's timing.
+
+### One unexplained observation, offered as a report and not a diagnosis
+
+The probe process ended with `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c:76` after `daemon.close()`. It may well be the probe cancelling a stream reader mid-flight rather than anything in the daemon. **One occurrence, no isolation run, no theory** — recorded so it is not lost, explicitly not a finding. Tonight already produced three confident diagnoses of a flake that turned out to be none of them.
+
 ## What this does not settle
 
 Anything inside a track's own files. `ct`'s output format, the MCP tool names, the hub's connection-state design — those are each one track's call, and I would rather read them in a handoff than specify them here.

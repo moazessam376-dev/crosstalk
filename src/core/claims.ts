@@ -93,10 +93,7 @@ function validateResponseAuthority(input: ClaimResponseInput, claim: Claim, stat
       );
     }
 
-    const expectedResponder =
-      claim.against === 'brief' || claim.against === 'spec'
-        ? briefOwner(state)
-        : claim.against;
+    const expectedResponder = responderFor(claim, state);
     if (input.from !== expectedResponder) {
       throw new ProtocolError(
         'NOT_CLAIM_RESPONDER',
@@ -107,16 +104,27 @@ function validateResponseAuthority(input: ClaimResponseInput, claim: Claim, stat
   }
 
   if (claim.state === 'contested') {
-    if (input.verdict !== 'concede' && input.verdict !== 'amend' && input.verdict !== 'uphold') {
+    // A dispute alternates. Whoever answered last does not answer again, or an
+    // `uphold` returns the claim to a state only the raiser can leave and the
+    // participant being upheld against gets exactly one turn in the argument.
+    const respondersTurn = claim.lastResponder !== undefined && claim.lastResponder === claim.raisedBy;
+    const eligible = respondersTurn ? responderFor(claim, state) : claim.raisedBy;
+    const verdicts = respondersTurn ? TRIAGE_VERDICTS : CONTEST_VERDICTS;
+
+    // Authority before legality: answering out of turn is `NOT_CLAIM_RESPONDER`
+    // whatever verdict it carries. Reporting the verdict as illegal would tell
+    // the wrong participant to try a different one.
+    if (input.from !== eligible) {
+      throw new ProtocolError(
+        'NOT_CLAIM_RESPONDER',
+        'Participant ' + input.from + ' is not authorized to respond to claim ' + claim.id +
+          '; it is ' + eligible + "'s turn",
+      );
+    }
+    if (!(verdicts as readonly ClaimVerdict[]).includes(input.verdict)) {
       throw new ProtocolError(
         'ILLEGAL_CLAIM_RESPONSE',
         'Claim ' + claim.id + ' is contested and cannot accept a ' + input.verdict + ' response',
-      );
-    }
-    if (input.from !== claim.raisedBy) {
-      throw new ProtocolError(
-        'NOT_CLAIM_RESPONDER',
-        'Participant ' + input.from + ' is not authorized to respond to claim ' + claim.id,
       );
     }
     return;
@@ -141,6 +149,23 @@ function validateResponseAuthority(input: ClaimResponseInput, claim: Claim, stat
     'ILLEGAL_CLAIM_RESPONSE',
     'Claim ' + claim.id + ' is ' + claim.state + ' and cannot receive responses',
   );
+}
+
+/** How the target of a claim answers it. */
+const TRIAGE_VERDICTS = ['accept', 'contest', 'clarify'] as const;
+/** How the raiser answers a contest. */
+const CONTEST_VERDICTS = ['concede', 'amend', 'uphold'] as const;
+
+/**
+ * Who is expected to answer this claim.
+ *
+ * Never compare against `claim.against` directly: for a `brief`/`spec` claim it
+ * is a literal, not a participant, so the comparison matches nobody and the
+ * alternation falls through undefined. That is the claim shape this project's
+ * own plan reviews use.
+ */
+export function responderFor(claim: Claim, state: HubState): ParticipantId {
+  return claim.against === 'brief' || claim.against === 'spec' ? briefOwner(state) : claim.against;
 }
 
 function briefOwner(state: HubState): ParticipantId {

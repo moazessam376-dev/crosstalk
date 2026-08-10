@@ -68,6 +68,9 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
           evidence: [...claim.evidence, ...event.evidence],
           rounds: claim.rounds + 1,
           state: stateForVerdict(event.verdict),
+          // Derived here, never authored: the validator reads it to decide
+          // whose turn it is, and a self-reported turn is not a turn.
+          lastResponder: event.from,
           ...(resolution === undefined ? {} : { resolution }),
         });
       }

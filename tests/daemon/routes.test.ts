@@ -588,3 +588,62 @@ describe('GET /config.json', () => {
     }
   });
 });
+
+describe('a dispute is an argument, not one turn', () => {
+  // The acceptance criterion verbatim: before A1 this sequence ended with
+  // ILLEGAL_CLAIM_RESPONSE on the worker's second contest, so the leader could
+  // uphold forever and the worker got one turn.
+  it('accepts the responder contesting again after an uphold, at round 3', async () => {
+    await withDaemon(async (daemon) => {
+      await post(daemon, '/claims', CLAIM, 'leader');
+      const contest = {
+        verdict: 'contest',
+        rationale: 'built this way because replay determinism needs a single pass',
+        falsifier: 'the focused ledger check would print two rows rather than one',
+        evidence: [ev('counter-1')],
+      };
+
+      expect((await post(daemon, '/claims/C-1/response', contest, 'codex')).status).toBe(201);
+      expect(
+        (await post(daemon, '/claims/C-1/response', { verdict: 'uphold', evidence: [ev('new-1')] }, 'leader'))
+          .status,
+      ).toBe(201);
+
+      const second = await post(
+        daemon,
+        '/claims/C-1/response',
+        { ...contest, evidence: [ev('counter-2')] },
+        'codex',
+      );
+      expect(second.status).toBe(201);
+
+      const { events } = await readJson<EventsResponse>(await get(daemon, '/events', 'leader'));
+      const raised = events.find((e) => e.kind === 'claim_raised');
+      expect(raised).toBeDefined();
+      const responses = events.filter((e) => e.kind === 'claim_response');
+      expect(responses).toHaveLength(3);
+    });
+  });
+
+  it('refuses the responder answering twice in a row', async () => {
+    await withDaemon(async (daemon) => {
+      await post(daemon, '/claims', CLAIM, 'leader');
+      const contest = {
+        verdict: 'contest',
+        rationale: 'built this way because replay determinism needs a single pass',
+        falsifier: 'the focused ledger check would print two rows rather than one',
+        evidence: [ev('counter-1')],
+      };
+      await post(daemon, '/claims/C-1/response', contest, 'codex');
+
+      const again = await post(
+        daemon,
+        '/claims/C-1/response',
+        { ...contest, evidence: [ev('counter-2')] },
+        'codex',
+      );
+      expect(again.status).toBe(403);
+      expect((await readJson<WireError>(again)).error.code).toBe('NOT_CLAIM_RESPONDER');
+    });
+  });
+});

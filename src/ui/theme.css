@@ -667,3 +667,9 @@ button:focus-visible {
   font-family: var(--font-mono);
   font-size: var(--size-mono);
 }
+
+.vote-question {
+  margin: 0;
+  padding: 8px 10px 0;
+  color: var(--text-secondary);
+}

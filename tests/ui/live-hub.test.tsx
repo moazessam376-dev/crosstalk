@@ -300,9 +300,9 @@ describe('C3 the human can rule from the hub', () => {
     await waitFor(() => expect(deliver).toBeDefined());
     for (const line of logged) deliver!(new MessageEvent('message', { data: line }));
 
-    const rationale = await screen.findByTestId('vote-rationale');
+    const rationale = await screen.findByTestId('vote-rationale-D-09');
     fireEvent.change(rationale, { target: { value: 'The replay run settles it.' } });
-    fireEvent.click(screen.getByTestId('vote-option-once'));
+    fireEvent.click(screen.getByTestId('vote-option-D-09-once'));
 
     await waitFor(() => expect(calls.some((call) => call.url.includes('/vote'))).toBe(true));
     const vote = calls.find((call) => call.url.includes('/vote'))!;

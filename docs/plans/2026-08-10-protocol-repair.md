@@ -62,6 +62,7 @@ What landed, and the claim that caused each:
 | `rung_entered { decisionId, rung, index, adjudicator? }` | A/C-3, B/1 |
 | `rung_failed { decisionId, rung, reason }` | A/C-6, B/1 |
 | `test_proposed { decisionId, claimId, command, predicts, sha }` | A/C-11 |
+| `room` **required** on `evidence_stale` (`dispute:<claimId>`) and `rebase_notice` (`task:<taskId>`) | A/C-12 |
 | `Decision.skipped?: SkippedRung[]` | A/C-2, B/1 |
 | `Claim.lastResponder?: ParticipantId` | A/C-5 |
 | `RUNG_NOT_ACTIVE`, `NOT_ADJUDICATOR`, `RULING_WITHOUT_FALSIFIER`, `TEST_WITHOUT_PREDICTION`, `NOT_TASK_AUTHORITY` | various |
@@ -115,6 +116,7 @@ Modify `src/daemon/handlers.ts`, `src/core/decisions.ts`, `src/daemon/server.ts`
 - `tally(decision: Decision, state: HubState): string | null`. The signature change is load-bearing and deliberate: `Decision` carries no roles, so nothing in the old signature could tell a leader from a worker. `authoritativeVote` returning the first voter who voted is a **live bug today**, not only under ladders — a worker's vote already resolves a `method: 'leader'` decision.
 - For `method: 'ladder'`, resolve by the **current rung** (rule 1 above): `third_agent` → the adjudicator's vote from the last `rung_entered`; `leader` → the leader's; `human` → `@human`'s; `vote` → majority; `discriminating_test` → always `null`.
 - A `vote_cast` at a `third_agent` rung without a falsifier is `RULING_WITHOUT_FALSIFIER`.
+- A `vote_cast` at a `third_agent` rung from anyone **other than the named adjudicator** is `NOT_ADJUDICATOR`. This is what that frozen code is for. `voters` deliberately holds everyone who could be asked at *any* rung, so without this refusal the leader could vote at rung 2 and pre-empt the peer whose rung it is — and if the leader wants to decide, the ladder has a rung for that, one further along.
 - `GET /config.json` gains `maxRounds: config.policy.dispute.maxRounds`. **This is Track C's dependency — land it in your first commit.**
 
 **Acceptance.** A voter in `await_turn` receives `decision_opened` — including a leader on a worker-vs-worker dispute. A ladder at rung `leader` resolves on the leader's vote and **not** on a worker's. `method: 'leader'` with voters `['codex','leader']` and only `codex` voting resolves to nothing. `/config.json` returns the loaded value, not a constant.
@@ -227,7 +229,9 @@ Modify `src/cli/init.ts`. Test `tests/cli/mcp-merge.test.ts`.
 ## Track C — the hub
 
 **Owns** `src/ui/` and nothing else. Branch `ct/track-c-hub`. One PR.
-**Blocked until Task 0 is on `main`** — the fixture depends on the frozen types.
+**Not blocked.** Branch from `origin/ct/plan-repair`, which carries the frozen
+types, and rebase onto `main` when PR #10 lands. Revision 1 said "blocked until
+Task 0 is on `main`"; moving the branch point is what makes that reason false.
 
 Visual reference: `docs/design/2026-08-10-hub.dc.html`. Read the `{{ }}` bindings
 as seams where live data enters and the rest as a visual spec — density, surface

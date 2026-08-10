@@ -51,6 +51,8 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_LIMIT = 1000;
 /** Spec §6.2: return by ~50s regardless of the requested timeout, to stay inside harness tool timeouts. */
 const AWAIT_CAP_S = 50;
+/** Contract §6. Long enough to be cheap, short enough to beat an idle reaper. */
+const HEARTBEAT_MS = 15_000;
 
 export interface DaemonHandle {
   url: string;
@@ -201,6 +203,11 @@ export function tokenFilename(id: ParticipantId): string {
   return id.startsWith('@') ? id.slice(1) : id;
 }
 
+interface Subscriber {
+  response: ServerResponse;
+  heartbeat: NodeJS.Timeout;
+}
+
 interface Waiter {
   who: ParticipantId;
   resolve(events: CrosstalkEvent[]): void;
@@ -218,6 +225,7 @@ class Daemon {
   /** In-flight joins, not a done-set: concurrent first requests must all wait on the same append. */
   readonly #joins = new Map<ParticipantId, Promise<CrosstalkEvent[]>>();
   readonly #waiters = new Set<Waiter>();
+  readonly #subscribers = new Set<Subscriber>();
   readonly #delivered = new Map<ParticipantId, number>();
   #writeTail: Promise<unknown> = Promise.resolve();
 
@@ -240,6 +248,11 @@ class Daemon {
 
   /** Resolves every pending long poll so close() cannot hang on a 50s timer. */
   async drainWaiters(): Promise<void> {
+    for (const subscriber of [...this.#subscribers]) {
+      clearInterval(subscriber.heartbeat);
+      this.#subscribers.delete(subscriber);
+      subscriber.response.end();
+    }
     for (const waiter of [...this.#waiters]) {
       clearTimeout(waiter.timer);
       this.#waiters.delete(waiter);
@@ -287,6 +300,10 @@ class Daemon {
     }
     if (path === '/events' && method === 'GET') {
       send(response, 200, await this.#readEvents(url));
+      return;
+    }
+    if (path === '/stream' && method === 'GET') {
+      await this.#openStream(request, response, url);
       return;
     }
     if (path === '/await' && method === 'GET') {
@@ -491,6 +508,49 @@ class Daemon {
     return events.length > 0 ? this.#deliver(who, events) : { idle: true };
   }
 
+  /**
+   * Server-sent events. Contract §6.
+   *
+   * Frames carry no `event:` name on purpose: the hub subscribes with
+   * `stream.onmessage`, which only ever fires for the default type. A named
+   * frame would leave it connected, silent, and reporting `connected` — the
+   * blank-screen failure this project has already shipped once.
+   */
+  async #openStream(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+    // The browser resends Last-Event-ID on reconnect; `?since=` is for
+    // everything that is not a browser. Both are exclusive, like /events.
+    const header = request.headers['last-event-id'];
+    const resumeFrom = readNonNegativeInt(
+      typeof header === 'string' ? header : url.searchParams.get('since'),
+      0,
+      'Last-Event-ID',
+    );
+
+    response.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+      // Nothing proxies loopback today, but a buffering proxy turns a live
+      // stream into a stalled page and the symptom looks like a dead daemon.
+      'x-accel-buffering': 'no',
+    });
+
+    for (const event of await this.#log.readFrom(resumeFrom + 1)) writeFrame(response, event);
+
+    const heartbeat = setInterval(() => {
+      // A comment line: EventSource ignores it, and it keeps the connection
+      // from being reaped by an idle timeout somewhere in between.
+      response.write(':hb\n\n');
+    }, HEARTBEAT_MS);
+
+    const subscriber: Subscriber = { response, heartbeat };
+    this.#subscribers.add(subscriber);
+    request.on('close', () => {
+      clearInterval(heartbeat);
+      this.#subscribers.delete(subscriber);
+    });
+  }
+
   #deliver(who: ParticipantId, events: CrosstalkEvent[]): { events: CrosstalkEvent[] } {
     this.#delivered.set(who, events[events.length - 1]!.seq);
     return { events };
@@ -592,6 +652,7 @@ class Daemon {
     this.#writeTail = queued.catch(() => {});
     const event = await queued;
     this.#wake(event);
+    for (const subscriber of this.#subscribers) writeFrame(subscriber.response, event);
     return event;
   }
 
@@ -644,6 +705,11 @@ function matchPath(path: string, pattern: string): string[] | undefined {
     if (segment !== actual[index]) return undefined;
   }
   return captured;
+}
+
+/** `id:` is the seq, so Last-Event-ID resume needs no separate cursor. */
+function writeFrame(response: ServerResponse, event: CrosstalkEvent): void {
+  response.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`);
 }
 
 function wire(

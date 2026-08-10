@@ -1,7 +1,7 @@
 import type { Participant, ParticipantId } from './participant.js';
 import type { Claim, ClaimVerdict, Evidence } from './claim.js';
 import type { Task, TaskState, Acknowledgement, CritiqueRecord } from './task.js';
-import type { Decision } from './decision.js';
+import type { Decision, LadderRung } from './decision.js';
 import type { RoomId } from './room.js';
 
 export type EventKind =
@@ -20,6 +20,11 @@ export type EventKind =
   | 'decision_opened'
   | 'vote_cast'
   | 'decision_resolved'
+  // The ladder, made observable. Without these, a dispute that escalated
+  // through three rungs and one that never left the first are the same log.
+  | 'rung_entered'
+  | 'test_proposed'
+  | 'rung_failed'
   | 'brief_updated';
 
 export interface EventBase {
@@ -58,9 +63,63 @@ export type CrosstalkEvent =
   | (EventBase & { kind: 'evidence_added'; claimId: string; evidence: Evidence })
   | (EventBase & { kind: 'evidence_stale'; claimId: string; sha: string })
   | (EventBase & { kind: 'rebase_notice'; taskId: string; newBase: string })
-  | (EventBase & { kind: 'decision_opened'; decision: Decision })
-  | (EventBase & { kind: 'vote_cast'; decisionId: string; option: string; rationale: string })
-  | (EventBase & { kind: 'decision_resolved'; decisionId: string; outcome: string })
+  // `room` is required on every decision event, not inherited as optional from
+  // EventBase. `addressesParticipant` wakes a participant only for an event
+  // carrying a room they are in, so a roomless decision reached nobody: a voter
+  // parked in `await_turn` was never told the vote it was named in existed.
+  // Requiring it makes the compiler find every append site, rather than a
+  // reviewer finding one of them.
+  | (EventBase & { kind: 'decision_opened'; room: RoomId; decision: Decision })
+  | (EventBase & {
+      kind: 'vote_cast';
+      room: RoomId;
+      decisionId: string;
+      option: string;
+      rationale: string;
+      /** Required at the `third_agent` rung: a ruling is a claim and carries
+       *  the same burden as any other (spec §5.3). */
+      falsifier?: string;
+    })
+  | (EventBase & { kind: 'decision_resolved'; room: RoomId; decisionId: string; outcome: string })
+  | (EventBase & {
+      kind: 'rung_entered';
+      room: RoomId;
+      decisionId: string;
+      rung: LadderRung;
+      index: number;
+      /**
+       * Who is authoritative at this rung. Set for `third_agent`, and chosen
+       * *here* rather than at open time: "uninvolved" is a property that decays
+       * — the peer picked when the ladder opened may have raised or received
+       * its own claim before rung 2 is reached.
+       */
+      adjudicator?: ParticipantId;
+    })
+  | (EventBase & {
+      kind: 'test_proposed';
+      room: RoomId;
+      decisionId: string;
+      claimId: string;
+      command: string;
+      /** What the proposer says this prints if they are right. A command
+       *  nobody has predicted an outcome for discriminates nothing. */
+      predicts: string;
+      /**
+       * The commit `predicts` is asserted at. Required, for the same reason
+       * `Evidence.sha` is: two disputants running one command at two commits
+       * get a difference explained by the diff between them, not by who is
+       * right — and the rung then records an inconclusive falsifier against
+       * both when the real fault was that nobody named a commit.
+       */
+      sha: string;
+    })
+  | (EventBase & {
+      kind: 'rung_failed';
+      room: RoomId;
+      decisionId: string;
+      rung: LadderRung;
+      reason: string;
+    })
   | (EventBase & { kind: 'brief_updated'; participant: ParticipantId; version: string });
 
 /**

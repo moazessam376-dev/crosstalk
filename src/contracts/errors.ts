@@ -21,6 +21,15 @@ export type ErrorCode =
   | 'NON_TERMINAL_LADDER'
   | 'NOT_ELIGIBLE_VOTER'
   | 'VOTE_WITHOUT_RATIONALE'
+  // The ladder. A rung is a state, so acting at the wrong one is a protocol
+  // error the agent should see in-band and correct, not a transport complaint.
+  | 'RUNG_NOT_ACTIVE'
+  | 'NOT_ADJUDICATOR'
+  | 'RULING_WITHOUT_FALSIFIER'
+  | 'TEST_WITHOUT_PREDICTION'
+  // Task authority. Legality and permission are different questions:
+  // ILLEGAL_TRANSITION says the move is impossible, this says it is not yours.
+  | 'NOT_TASK_AUTHORITY'
   // Lookups.
   | 'UNKNOWN_CLAIM'
   | 'UNKNOWN_TASK'

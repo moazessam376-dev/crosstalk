@@ -62,6 +62,12 @@ function summarise(event: CrosstalkEvent): string {
       return `${event.decisionId} ${event.option}`;
     case 'decision_resolved':
       return `${event.decisionId} ${event.outcome}`;
+    case 'rung_entered':
+      return `${event.decisionId} rung ${event.index} ${event.rung}${event.adjudicator === undefined ? '' : ` (${event.adjudicator})`}`;
+    case 'rung_failed':
+      return `${event.decisionId} ${event.rung} failed: ${truncate(event.reason)}`;
+    case 'test_proposed':
+      return `${event.claimId} ${truncate(event.command)} @${event.sha}`;
     case 'participant_joined':
       return `${event.participant.id} (${event.participant.role})`;
     case 'participant_left':

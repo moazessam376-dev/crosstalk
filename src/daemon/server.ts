@@ -1,14 +1,16 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { mkdir, writeFile, unlink } from 'node:fs/promises';
+import { mkdir, writeFile, unlink, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+
+import { resolveHubDist, sendHubMissing, serveAsset } from './hub.js';
 import type { AddressInfo } from 'node:net';
 
 import type { CrosstalkConfig } from '../contracts/config.js';
 import type { CrosstalkEvent, DraftEvent, EventKind } from '../contracts/events.js';
 import { ProtocolError } from '../contracts/errors.js';
 import type { ParticipantId } from '../contracts/participant.js';
-import { HUMAN_ID } from '../contracts/room.js';
+import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { EventLog } from '../core/log.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
 
@@ -49,6 +51,8 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_LIMIT = 1000;
 /** Spec §6.2: return by ~50s regardless of the requested timeout, to stay inside harness tool timeouts. */
 const AWAIT_CAP_S = 50;
+/** Contract §6. Long enough to be cheap, short enough to beat an idle reaper. */
+const HEARTBEAT_MS = 15_000;
 
 export interface DaemonHandle {
   url: string;
@@ -60,6 +64,8 @@ export interface DaemonHandle {
 export interface StartDaemonOptions {
   repo: string;
   port?: number;
+  /** Overrides where the built hub is read from. Defaults beside the package's own code. */
+  hubDist?: string;
 }
 
 export async function startDaemon(opts: StartDaemonOptions): Promise<DaemonHandle> {
@@ -76,10 +82,10 @@ export async function startDaemon(opts: StartDaemonOptions): Promise<DaemonHandl
   let log: EventLog | undefined;
   let server: Server | undefined;
   try {
-    const tokens = await mintTokens(config, stateDir);
+    const tokens = await loadOrMintTokens(config, stateDir);
     log = await EventLog.open(join(stateDir, 'events.jsonl'));
 
-    const daemon = new Daemon(config, tokens, log);
+    const daemon = new Daemon(config, tokens, log, opts.hubDist ?? resolveHubDist(import.meta.url));
     await daemon.init();
     server = createServer((request, response) => {
       void daemon.handle(request, response);
@@ -155,15 +161,30 @@ function listen(server: Server, port?: number): Promise<string> {
   });
 }
 
-async function mintTokens(
+/**
+ * Reuses a token already on disk, minting only what is missing.
+ *
+ * `crosstalk init` writes tokens and embeds one of them in `.mcp.json`, which
+ * is static. Re-minting on every start would invalidate that file the second
+ * time anyone runs `crosstalk up`, and the agent whose token went stale would
+ * see its tools fail with a 401 it had no way to explain.
+ */
+async function loadOrMintTokens(
   config: CrosstalkConfig,
   stateDir: string,
 ): Promise<Map<ParticipantId, string>> {
   const tokens = new Map<ParticipantId, string>();
   for (const participant of config.participants) {
+    const path = join(stateDir, 'tokens', tokenFilename(participant.id));
+    const existing = await readFile(path, 'utf8').then((raw) => raw.trim()).catch(() => '');
+    if (existing !== '') {
+      tokens.set(participant.id, existing);
+      continue;
+    }
+
     const token = randomBytes(32).toString('hex');
     tokens.set(participant.id, token);
-    await writeFile(join(stateDir, 'tokens', tokenFilename(participant.id)), token, {
+    await writeFile(path, token, {
       encoding: 'utf8',
       // A no-op on Windows. `doctor` says so rather than claiming a protection we do not have.
       mode: 0o600,
@@ -182,6 +203,11 @@ export function tokenFilename(id: ParticipantId): string {
   return id.startsWith('@') ? id.slice(1) : id;
 }
 
+interface Subscriber {
+  response: ServerResponse;
+  heartbeat: NodeJS.Timeout;
+}
+
 interface Waiter {
   who: ParticipantId;
   resolve(events: CrosstalkEvent[]): void;
@@ -194,16 +220,24 @@ class Daemon {
   readonly #config: CrosstalkConfig;
   readonly #byToken: Map<string, ParticipantId>;
   readonly #log: EventLog;
+  readonly #hubDist: string;
   #state: HubState;
   /** In-flight joins, not a done-set: concurrent first requests must all wait on the same append. */
   readonly #joins = new Map<ParticipantId, Promise<CrosstalkEvent[]>>();
   readonly #waiters = new Set<Waiter>();
+  readonly #subscribers = new Set<Subscriber>();
   readonly #delivered = new Map<ParticipantId, number>();
   #writeTail: Promise<unknown> = Promise.resolve();
 
-  constructor(config: CrosstalkConfig, tokens: Map<ParticipantId, string>, log: EventLog) {
+  constructor(
+    config: CrosstalkConfig,
+    tokens: Map<ParticipantId, string>,
+    log: EventLog,
+    hubDist: string,
+  ) {
     this.#config = config;
     this.#log = log;
+    this.#hubDist = hubDist;
     this.#byToken = new Map([...tokens].map(([id, token]) => [token, id]));
     this.#state = project([]);
   }
@@ -214,6 +248,11 @@ class Daemon {
 
   /** Resolves every pending long poll so close() cannot hang on a 50s timer. */
   async drainWaiters(): Promise<void> {
+    for (const subscriber of [...this.#subscribers]) {
+      clearInterval(subscriber.heartbeat);
+      this.#subscribers.delete(subscriber);
+      subscriber.response.end();
+    }
     for (const waiter of [...this.#waiters]) {
       clearTimeout(waiter.timer);
       this.#waiters.delete(waiter);
@@ -240,18 +279,31 @@ class Daemon {
     const method = request.method ?? 'GET';
 
     if (path === '/health' && method === 'GET') {
-      // The only unauthenticated route, and it carries no log data.
+      // The only unauthenticated route that answers with data, and it carries
+      // nothing from the log.
       send(response, 200, { ok: true, version: 1, pid: process.pid });
       return;
     }
+
+    if (method === 'GET' && await this.#serveFrontDoor(url, path, response)) return;
 
     const who = this.#authenticate(request);
     const joined = await this.#ensureJoined(who);
     const ctx = this.#context(who);
 
     // Reads first: none of them append.
+    if (path === '/config.json' && method === 'GET') {
+      // The hub learns who it is from the cookie it was bootstrapped with,
+      // rather than from anything baked into the bundle at build time.
+      send(response, 200, { version: 1, self: who, streamUrl: '/stream', room: FLOOR });
+      return;
+    }
     if (path === '/events' && method === 'GET') {
       send(response, 200, await this.#readEvents(url));
+      return;
+    }
+    if (path === '/stream' && method === 'GET') {
+      await this.#openStream(request, response, url);
       return;
     }
     if (path === '/await' && method === 'GET') {
@@ -340,6 +392,41 @@ class Daemon {
     };
   }
 
+  /**
+   * The unauthenticated surface: the bootstrap redirect and the static bundle.
+   *
+   * The shell is served without a credential deliberately — it is the same
+   * bundle shipped in the npm package and holds no session data. Everything
+   * that reads the log still authenticates (contract §3).
+   */
+  async #serveFrontDoor(url: URL, path: string, response: ServerResponse): Promise<boolean> {
+    const bootstrap = url.searchParams.get('t');
+    if (path === '/' && bootstrap !== null) {
+      if (!this.#byToken.has(bootstrap)) {
+        throw new DaemonError('UNAUTHENTICATED', 'That bootstrap token is not a participant token');
+      }
+      // 302 to '/' so the token leaves the address bar before the hub loads:
+      // it is never typed, never in history beyond one entry, and never sent
+      // as a Referer from the page itself.
+      response.writeHead(302, {
+        location: '/',
+        'set-cookie': `ct_token=${bootstrap}; HttpOnly; SameSite=Strict; Path=/`,
+        'cache-control': 'no-store',
+      });
+      response.end();
+      return true;
+    }
+
+    if (path !== '/' && !path.startsWith('/assets/') && path !== '/favicon.ico') return false;
+
+    if (await serveAsset(response, this.#hubDist, path)) return true;
+    if (path === '/') {
+      sendHubMissing(response, this.#hubDist);
+      return true;
+    }
+    return false;
+  }
+
   #authenticate(request: IncomingMessage): ParticipantId {
     const header = request.headers.authorization ?? '';
     const bearer = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : undefined;
@@ -419,6 +506,49 @@ class Daemon {
     });
 
     return events.length > 0 ? this.#deliver(who, events) : { idle: true };
+  }
+
+  /**
+   * Server-sent events. Contract §6.
+   *
+   * Frames carry no `event:` name on purpose: the hub subscribes with
+   * `stream.onmessage`, which only ever fires for the default type. A named
+   * frame would leave it connected, silent, and reporting `connected` — the
+   * blank-screen failure this project has already shipped once.
+   */
+  async #openStream(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+    // The browser resends Last-Event-ID on reconnect; `?since=` is for
+    // everything that is not a browser. Both are exclusive, like /events.
+    const header = request.headers['last-event-id'];
+    const resumeFrom = readNonNegativeInt(
+      typeof header === 'string' ? header : url.searchParams.get('since'),
+      0,
+      'Last-Event-ID',
+    );
+
+    response.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+      // Nothing proxies loopback today, but a buffering proxy turns a live
+      // stream into a stalled page and the symptom looks like a dead daemon.
+      'x-accel-buffering': 'no',
+    });
+
+    for (const event of await this.#log.readFrom(resumeFrom + 1)) writeFrame(response, event);
+
+    const heartbeat = setInterval(() => {
+      // A comment line: EventSource ignores it, and it keeps the connection
+      // from being reaped by an idle timeout somewhere in between.
+      response.write(':hb\n\n');
+    }, HEARTBEAT_MS);
+
+    const subscriber: Subscriber = { response, heartbeat };
+    this.#subscribers.add(subscriber);
+    request.on('close', () => {
+      clearInterval(heartbeat);
+      this.#subscribers.delete(subscriber);
+    });
   }
 
   #deliver(who: ParticipantId, events: CrosstalkEvent[]): { events: CrosstalkEvent[] } {
@@ -522,6 +652,7 @@ class Daemon {
     this.#writeTail = queued.catch(() => {});
     const event = await queued;
     this.#wake(event);
+    for (const subscriber of this.#subscribers) writeFrame(subscriber.response, event);
     return event;
   }
 
@@ -574,6 +705,11 @@ function matchPath(path: string, pattern: string): string[] | undefined {
     if (segment !== actual[index]) return undefined;
   }
   return captured;
+}
+
+/** `id:` is the seq, so Last-Event-ID resume needs no separate cursor. */
+function writeFrame(response: ServerResponse, event: CrosstalkEvent): void {
+  response.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`);
 }
 
 function wire(

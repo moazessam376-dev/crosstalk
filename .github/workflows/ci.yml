@@ -51,5 +51,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      # Build before test, not after. `tests/cli/front-door.test.ts` asserts the
+      # daemon serves the hub at `/`, and the daemon serves it from `dist/ui` —
+      # which only exists once `vite build` has run. With the old ordering that
+      # test got a 503 from `sendHubMissing`, so every run on every platform was
+      # red for a reason that had nothing to do with the commit being tested.
       - run: npm run build
+      - run: npm test

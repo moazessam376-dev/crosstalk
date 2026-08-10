@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Claim, Evidence } from '../../src/contracts/claim.js';
 import type { Task, TaskState, CritiqueRecord, Acknowledgement } from '../../src/contracts/task.js';
-import { validateTransition } from '../../src/core/tasks.js';
+import { canTransition, validateTransition } from '../../src/core/tasks.js';
 import type { HubState } from '../../src/core/projection.js';
 
 describe('task gates', () => {
@@ -40,6 +40,39 @@ describe('task gates', () => {
     );
   });
 
+  // C-16: the table is NOT widened. `validateTransition` governs what the
+  // daemon accepts *from clients*, so a legal `submitted -> in_progress` lets
+  // the assignee pull its own task out of the review queue at will, with
+  // nothing recording that a rebase happened. The projection folds without
+  // validating, so `rebase_notice` still moves the task — the table's job is
+  // only to keep clients out of that leg.
+  it('refuses a client-authored submitted -> in_progress', () => {
+    const state = stateWithTask('T-1', 'submitted', {
+      acknowledgement: { restatement: 'build the log', ambiguities: [] },
+    });
+    expect(canTransition('submitted', 'in_progress')).toBe(false);
+    expect(() => validateTransition('T-1', 'in_progress', state)).toThrowError(
+      expect.objectContaining({ code: 'ILLEGAL_TRANSITION' }),
+    );
+  });
+
+  // The neighbours. Widening one entry must not widen the row: `submitted` is
+  // still a state you leave forwards through review, or backwards to redo the
+  // work — never sideways into a gate you have already passed.
+  it.each(['self_reviewed', 'accepted', 'merged'] as const)(
+    'still refuses submitted -> %s',
+    (target) => {
+      const state = stateWithTask('T-1', 'submitted', {
+        acknowledgement: { restatement: 'build the log', ambiguities: [] },
+        critique: { rounds: 1, findings: [], critic: 'codex subagent' },
+      });
+      expect(canTransition('submitted', target)).toBe(false);
+      expect(() => validateTransition('T-1', target, state)).toThrowError(
+        expect.objectContaining({ code: 'ILLEGAL_TRANSITION' }),
+      );
+    },
+  );
+
   it('rejects a transition not present in the table', () => {
     const state = stateWithTask('T-1', 'draft');
     expect(() => validateTransition('T-1', 'merged', state)).toThrowError(
@@ -54,6 +87,7 @@ function emptyState(): HubState {
     tasks: new Map(),
     claims: new Map(),
     decisions: new Map(),
+    rungs: new Map(),
     messages: [],
     lastSeq: 0,
   };

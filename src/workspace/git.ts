@@ -1,9 +1,12 @@
 import { execFile as execFileCallback } from 'node:child_process';
+import { realpath as realpathCallback } from 'node:fs';
 import { access, mkdir, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFile = promisify(execFileCallback);
+/** The OS view of a path: expands 8.3 short names, junctions and symlinks. */
+const realpathNative = promisify(realpathCallback.native);
 const GIT_DIR_PREFIX = 'refs/heads/';
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
@@ -37,6 +40,46 @@ export async function headSha(cwd: string): Promise<string> {
   return runGit(cwd, ['rev-parse', 'HEAD']);
 }
 
+/**
+ * The head of a named branch.
+ *
+ * Staleness is measured against `project.mainBranch` (spec §5.4), and `headSha`
+ * answers about whatever happens to be checked out. Nothing pins the daemon's
+ * checkout to the main branch, and inside one of the linked worktrees `init`
+ * creates it is pinned to something else by construction — so `rev-parse HEAD`
+ * compares every piece of evidence against the wrong commit.
+ *
+ * Resolved through `refs/heads/` rather than the bare name so a tag or a file
+ * of the same name cannot answer for the branch.
+ */
+export async function branchSha(cwd: string, branch: string): Promise<string> {
+  try {
+    return await runGit(cwd, ['rev-parse', '--verify', `refs/heads/${branch}`]);
+  } catch (error) {
+    throw new Error(
+      `No local branch "${branch}" in ${cwd}. Set project.mainBranch in .crosstalk/config.yaml to a branch this clone has, or check it out.`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * Whether `sha` names a commit this repository holds.
+ *
+ * Only ever asked after an ancestry check has already failed. Evidence can
+ * name a commit that was never pushed, or one that has since been pruned, and
+ * `merge-base --is-ancestor` exits 128 on an unknown object — indistinguishable
+ * from a broken repository unless somebody asks this question.
+ */
+export async function commitExists(sha: string, cwd: string): Promise<boolean> {
+  try {
+    await runGit(cwd, ['cat-file', '-e', `${sha}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function isAncestor(sha: string, of: string, cwd: string): Promise<boolean> {
   try {
     await runGit(cwd, ['merge-base', '--is-ancestor', sha, of]);
@@ -55,14 +98,27 @@ export async function createWorktree(repo: string, id: string, branch: string): 
   return worktree;
 }
 
-export async function removeWorktree(repo: string, id: string): Promise<void> {
+/**
+ * @param options.force  Pass `git worktree remove --force`, which is required
+ *   for any worktree holding untracked files. Every worktree `init` creates
+ *   holds one by construction — it writes the participant's brief inside it —
+ *   so `down --purge` cannot remove its own output without this. Defaults to
+ *   off: `down` on its own keeps everything, and `--purge` is the flag that
+ *   already says destruction is intended.
+ */
+export async function removeWorktree(
+  repo: string,
+  id: string,
+  options: { force?: boolean } = {},
+): Promise<void> {
   const root = resolve(repo);
   const worktree = join(root, '.crosstalk', 'worktrees', id);
   const existedBefore = await pathExists(worktree);
+  const args = ['worktree', 'remove', ...(options.force === true ? ['--force'] : []), worktree];
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      await runGit(root, ['worktree', 'remove', worktree]);
+      await runGit(root, args);
       return;
     } catch (error) {
       lastError = error;
@@ -92,18 +148,61 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function samePath(left: string, right: string): boolean {
-  const resolvedLeft = resolve(left);
-  const resolvedRight = resolve(right);
+/**
+ * Do two paths name the same directory?
+ *
+ * Canonicalised through `realpath.native` before comparing, because resolving
+ * and case-folding is not enough: on a Windows machine with 8.3 generation on,
+ * git reports a worktree's long path while Crosstalk constructs the short one,
+ * and the two compare as different. That is not cosmetic — it made
+ * `isRegisteredWorktree` answer "not registered" for a worktree that is, so
+ * `removeWorktree`'s fallback deleted a worktree holding uncommitted work with
+ * nobody having passed `force`. The same class covers junctions, symlinks and
+ * `/private` on macOS.
+ *
+ * Exported so there is one comparator rather than a copy per caller; the copy
+ * in `src/cli/init.ts` had the identical blind spot.
+ */
+export async function samePath(
+  left: string,
+  right: string,
+  realpathOf: PathResolver = realpathNative,
+): Promise<boolean> {
+  const [canonicalLeft, canonicalRight] = await Promise.all([
+    canonical(left, realpathOf),
+    canonical(right, realpathOf),
+  ]);
   if (process.platform === 'win32' || process.platform === 'darwin') {
-    return resolvedLeft.toLowerCase() === resolvedRight.toLowerCase();
+    return canonicalLeft.toLowerCase() === canonicalRight.toLowerCase();
   }
-  return resolvedLeft === resolvedRight;
+  return canonicalLeft === canonicalRight;
+}
+
+/**
+ * Injectable so the comparator can be tested against hard-coded short and long
+ * spellings rather than a manufactured 8.3 alias. Modern Windows often disables
+ * 8.3 generation on non-system volumes, which is exactly why this defect
+ * survived three machines and only surfaced on CI. Track B's design; adopted
+ * here so the two copies can become one.
+ */
+export type PathResolver = (path: string) => Promise<string>;
+
+/** `realpath` throws on a path that does not exist, which is a legitimate state here. */
+async function canonical(path: string, realpathOf: PathResolver): Promise<string> {
+  const resolved = resolve(path);
+  try {
+    return await realpathOf(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 async function isRegisteredWorktree(repo: string, worktree: string): Promise<boolean> {
   try {
-    return (await listWorktrees(repo)).some((entry) => samePath(entry.path, worktree));
+    for (const entry of await listWorktrees(repo)) {
+      if (await samePath(entry.path, worktree)) return true;
+    }
+    return false;
   } catch {
     return true;
   }

@@ -1,14 +1,28 @@
 import type { Claim, ClaimResolution, ClaimVerdict } from '../contracts/claim.js';
-import type { Decision } from '../contracts/decision.js';
+import type { Decision, LadderRung } from '../contracts/decision.js';
 import type { CrosstalkEvent } from '../contracts/events.js';
 import type { Participant, ParticipantId } from '../contracts/participant.js';
 import type { Task } from '../contracts/task.js';
+
+/** The live position of a ladder, from the last `rung_entered`. */
+export interface RungState {
+  rung: LadderRung;
+  index: number;
+  adjudicator?: ParticipantId;
+}
 
 export interface HubState {
   participants: Map<ParticipantId, Participant>;
   tasks: Map<string, Task>;
   claims: Map<string, Claim>;
   decisions: Map<string, Decision>;
+  /**
+   * By `decisionId`. `Decision.currentRung` is a snapshot taken at open time
+   * and the log is append-only, so it never moves; the live rung is the last
+   * `rung_entered`. Kept beside the decisions rather than folded into them so
+   * the snapshot stays exactly what was written.
+   */
+  rungs: Map<string, RungState>;
   messages: CrosstalkEvent[];
   lastSeq: number;
 }
@@ -68,6 +82,9 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
           evidence: [...claim.evidence, ...event.evidence],
           rounds: claim.rounds + 1,
           state: stateForVerdict(event.verdict),
+          // Derived here, never authored: the validator reads it to decide
+          // whose turn it is, and a self-reported turn is not a turn.
+          lastResponder: event.from,
           ...(resolution === undefined ? {} : { resolution }),
         });
       }
@@ -83,17 +100,33 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
     case 'evidence_stale': {
       const claim = state.claims.get(event.claimId);
       if (claim) {
-        state.claims.set(event.claimId, {
+        const next: Claim = {
           ...claim,
-          evidence: claim.evidence.map((evidence) =>
-            evidence.sha === event.sha ? { ...evidence, stale: true } : evidence,
+          evidence: claim.evidence.map((item) =>
+            item.sha === event.sha ? { ...item, stale: true } : item,
           ),
-        });
+        };
+        if (shouldReopen(next)) {
+          next.state = 'open';
+          // Deleted rather than set to `undefined`: an own key holding
+          // `undefined` survives into serialised state, and the projection is
+          // compared serialised.
+          delete next.resolution;
+        }
+        state.claims.set(event.claimId, next);
       }
       return state;
     }
-    case 'rebase_notice':
+    case 'rebase_notice': {
+      // Only from `submitted`. A task under review, accepted or merged is
+      // somebody else's to move, and a task already being worked on has
+      // nowhere to go.
+      const task = state.tasks.get(event.taskId);
+      if (task?.state === 'submitted') {
+        state.tasks.set(event.taskId, { ...task, state: 'in_progress' });
+      }
       return state;
+    }
     case 'decision_opened':
       state.decisions.set(event.decision.id, { ...event.decision, votes: { ...event.decision.votes } });
       return state;
@@ -114,11 +147,56 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
       }
       return state;
     }
+    case 'rung_entered':
+      // The live rung. `Decision.currentRung` stays the open-time snapshot.
+      state.rungs.set(event.decisionId, {
+        rung: event.rung,
+        index: event.index,
+        ...(event.adjudicator === undefined ? {} : { adjudicator: event.adjudicator }),
+      });
+      return state;
+    case 'test_proposed':
+      return state;
+    case 'rung_failed':
+      return state;
     case 'brief_updated':
       return state;
   }
 
   throw new Error(`Unknown event kind: ${(event as { kind?: string }).kind ?? '<missing>'}`);
+}
+
+/**
+ * Whether a resolved claim has just lost the last evidence that settled it.
+ *
+ * Spec §5.4: "a claim resolved solely by now-stale evidence reopens". One fresh
+ * piece is enough to keep it settled — a resolution standing on evidence the
+ * main branch still contains has not been undermined by a rebase somewhere
+ * else in the tree.
+ *
+ * `withdrawn` and `superseded` are excluded for the same reason the daemon's
+ * sweep excludes them: a conceded claim was abandoned by the person who raised
+ * it and an amended one has a successor carrying the argument. Neither is
+ * waiting on evidence, and resurrecting them would reopen an argument that
+ * ended for reasons no rebase touches. `upheld` is precisely the case this
+ * exists for.
+ *
+ * The `length > 0` guard is not decoration: `[].every(...)` is true, so without
+ * it a claim that never carried any evidence would reopen on the first stale
+ * event naming a sha it has never seen.
+ */
+function shouldReopen(claim: Claim): boolean {
+  if (claim.state !== 'resolved') return false;
+  if (claim.resolution === 'withdrawn' || claim.resolution === 'superseded') return false;
+  // C-17: *any* stale item, not all of them. `Claim.evidence` is a flat array
+  // mixing the raiser's support, counter-evidence and the accepter's fix
+  // evidence, and `Evidence` carries no field telling them apart. Under "all
+  // stale" a fix rebased away leaves the claim resolved because the raiser's
+  // older evidence is still an ancestor — a resolution nobody can verify.
+  //
+  // The asymmetry is the argument: a false reopen costs one cheap re-run, a
+  // false stay-resolved hides a regression behind a green record.
+  return claim.evidence.some((item) => item.stale === true);
 }
 
 function emptyState(): HubState {
@@ -127,6 +205,7 @@ function emptyState(): HubState {
     tasks: new Map(),
     claims: new Map(),
     decisions: new Map(),
+    rungs: new Map(),
     messages: [],
     lastSeq: 0,
   };

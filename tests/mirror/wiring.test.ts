@@ -232,6 +232,34 @@ async function settle(mirror: { drainNow(): Promise<unknown> }): Promise<void> {
   }
 }
 
+/**
+ * Raises a claim and returns the id the daemon assigned it.
+ *
+ * `id` is not accepted from the body — `validateRaise` assigns it. A test that
+ * hard-codes `C-1` passes only while it happens to match the generated id, which
+ * is exactly how this one first went green on a fresh repository and then failed
+ * on the next.
+ */
+async function raiseClaim(
+  daemon: DaemonHandle,
+  token: string,
+  taskId: string,
+): Promise<string> {
+  const response = await api(daemon, '/claims', token, {
+    against: 'codex',
+    target: 'src/economy.ts:41',
+    assertion: 'The refund path double-credits.',
+    severity: 'defect',
+    falsifier: 'One credit on a retried charge refutes this.',
+    taskId,
+  });
+  if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+  const events = (await response.json()) as { events?: { claim?: { id: string } }[] };
+  const id = events.events?.find((event) => event.claim?.id !== undefined)?.claim?.id;
+  if (id === undefined) throw new Error(`no claim id in raise response: ${JSON.stringify(events)}`);
+  return id;
+}
+
 /** Fails loudly on a refused request instead of quietly asserting on a no-op. */
 async function ok(pending: Promise<Response>): Promise<void> {
   const response = await pending;
@@ -239,3 +267,126 @@ async function ok(pending: Promise<Response>): Promise<void> {
     throw new Error(`${response.status}: ${await response.text()}`);
   }
 }
+
+/**
+ * The ladder reaching the published record, driven by a real escalation.
+ *
+ * `render.test.ts` proves the ladder renders *given* a history. This proves
+ * something hands it one: the events are emitted by Track A's engine when a
+ * dispute actually exceeds `maxRounds`, travel over `/stream`, and come out the
+ * far end inside the comment the mirror wrote.
+ */
+describe('an escalated dispute in the published record', () => {
+  it('publishes the rung the ladder entered, and does not for a dispute that never escalated', async () => {
+    const repo = await initialised();
+    await withDaemon(repo, async (daemon) => {
+      const leader = daemon.tokens.get('leader')!;
+      const codex = daemon.tokens.get('codex')!;
+      const human = (await readFile(humanTokenPath(repo), 'utf8')).trim();
+      const github = new FakeGitHub();
+
+      await ok(api(daemon, '/tasks', leader, newTask('T-20')));
+      await ok(api(daemon, '/tasks/T-20/state', leader, { state: 'assigned' }));
+
+      const mirror = await startMirror({
+        repo,
+        url: daemon.url,
+        token: human,
+        config: ENABLED,
+        transport: github,
+        intervalMs: 60_000,
+      });
+
+      const claimId = await raiseClaim(daemon, leader, 'T-20');
+
+      // Rounds increment per response and escalation fires above `maxRounds`,
+      // so the dispute has to be argued rather than asserted. Authority
+      // alternates: the target answers the raiser, the raiser answers back.
+      const turns = [
+        [codex, 'contest'],
+        [leader, 'uphold'],
+        [codex, 'contest'],
+        [leader, 'uphold'],
+        [codex, 'contest'],
+      ] as const;
+
+      // Both verdicts carry evidence: `contest` is refused without
+      // counter-evidence (CONTEST_WITHOUT_COUNTER_EVIDENCE) and `uphold`
+      // requires new evidence rather than a falsifier, per AGENTS.md rule 5.
+      let round = 0;
+      for (const [token, verdict] of turns) {
+        round += 1;
+        await ok(
+          api(daemon, `/claims/${claimId}/response`, token, {
+            verdict,
+            rationale: 'still disagree',
+            // A distinct sha per round: `uphold` requires *new* evidence, and
+            // re-posting the same commit is refused as UPHOLD_WITHOUT_NEW_EVIDENCE.
+            evidence: [
+              { kind: 'observation', output: `reran it, round ${round}`, sha: `deadbe${round}` },
+            ],
+            ...(verdict === 'contest' ? { falsifier: 'a passing retry refutes me' } : {}),
+          }),
+        );
+      }
+
+      await settle(mirror);
+      await mirror.stop();
+
+      const opened = [...mirror.state.decisions.values()].find((d) => d.claimId === claimId);
+      expect(opened).toBeDefined();
+
+      const comment = github.allComments().find((c) => c.body.includes(claimId));
+      expect(comment).toBeDefined();
+      expect(comment?.body).toContain('**Ladder**');
+      // The rung the engine actually entered, not a rung name we guessed.
+      const rung = mirror.state.rungs.get(opened!.id);
+      expect(rung).toBeDefined();
+      expect(comment?.body).toContain(rung!.rung);
+    });
+  });
+
+  /**
+   * The neighbouring case, on the same path: a claim settled without escalating
+   * must not grow a ladder section. This is what catches a mirror that prints
+   * one unconditionally, and it is the behaviour that shipped.
+   */
+  it('publishes no ladder for a claim conceded in one exchange', async () => {
+    const repo = await initialised();
+    await withDaemon(repo, async (daemon) => {
+      const leader = daemon.tokens.get('leader')!;
+      const codex = daemon.tokens.get('codex')!;
+      const human = (await readFile(humanTokenPath(repo), 'utf8')).trim();
+      const github = new FakeGitHub();
+
+      await ok(api(daemon, '/tasks', leader, newTask('T-21')));
+      await ok(api(daemon, '/tasks/T-21/state', leader, { state: 'assigned' }));
+
+      const mirror = await startMirror({
+        repo,
+        url: daemon.url,
+        token: human,
+        config: ENABLED,
+        transport: github,
+        intervalMs: 60_000,
+      });
+
+      const claimId = await raiseClaim(daemon, leader, 'T-21');
+      await ok(
+        api(daemon, `/claims/${claimId}/response`, codex, {
+          verdict: 'accept',
+          rationale: 'you are right',
+          // `accept` carries the evidence that closes it, same as any verdict.
+          evidence: [{ kind: 'observation', output: 'fixed and reran', sha: 'f1xed00' }],
+        }),
+      );
+
+      await settle(mirror);
+      await mirror.stop();
+
+      const comment = github.allComments().find((c) => c.body.includes(claimId));
+      expect(comment).toBeDefined();
+      expect(comment?.body).not.toContain('**Ladder**');
+    });
+  });
+});

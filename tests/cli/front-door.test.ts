@@ -202,3 +202,44 @@ describe('cli plumbing', () => {
     expect(exitCodeFor(500)).toBe(EXIT.daemon);
   });
 });
+
+describe('the SSE stream the hub subscribes to', () => {
+  it('sends default-typed frames with id set to seq, and resumes exclusively', async () => {
+    const repo = await initialised();
+    await withDaemon(repo, async (daemon) => {
+      const token = daemon.tokens.get('leader')!;
+      const say = (body: string): Promise<Response> =>
+        fetch(`${daemon.url}/events`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+          body: JSON.stringify({ kind: 'message', room: '#floor', body }),
+        });
+
+      await say('one');
+      await say('two');
+
+      const response = await fetch(`${daemon.url}/stream`, {
+        headers: { authorization: `Bearer ${token}`, 'last-event-id': '2' },
+      });
+      expect(response.headers.get('content-type')).toContain('text/event-stream');
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffered = '';
+      // Read until the backlog after seq 2 has arrived.
+      while (!buffered.includes('"body":"two"')) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+      }
+      await reader.cancel();
+
+      // Exclusive resume: seq 2 must not be redelivered.
+      expect(buffered).toContain('id: 3');
+      expect(buffered).not.toMatch(/^id: 2$/m);
+      // No `event:` name — the hub's stream.onmessage only fires for the
+      // default type, and a named frame is a silent blank screen.
+      expect(buffered).not.toMatch(/^event:/m);
+    });
+  });
+});

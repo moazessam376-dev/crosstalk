@@ -43,21 +43,69 @@ A local hub renders it: rooms for the group and 1:1, disputes shown with both si
 
 ## Status
 
-**Pre-implementation.** The design and plan are complete and public; the code is not written yet.
+**Working, and not yet used in anger.** The protocol, the daemon, the CLI, the
+hub and the GitHub mirror are implemented and tested on Windows, macOS and Linux.
+It has been run end to end on throwaway repositories and used to build itself —
+it has not been through a long real project with somebody else's agents.
+
+What runs today:
+
+| | |
+|---|---|
+| **The claim protocol** | `falsifier` required and lint-checked; `contest` needs rationale, counter-evidence and its own falsifier; `uphold` needs new evidence. Enforced at the API, not in a prompt. |
+| **Disputes that alternate** | Each side answers in turn until somebody concedes, amends or the round cap is reached. |
+| **The escalation ladder** | Past `maxRounds` the daemon opens it with no agent asking: `discriminating_test`, then an uninvolved peer, then the leader — each with a timeout, each skipped rung named with its reason. |
+| **Evidence that expires** | Every result carries the commit it ran at. When a merge orphans that commit the claim reopens, and a submitted task goes back to `in_progress`. |
+| **Two task gates** | Nothing reaches `in_progress` without the assignee restating the brief; nothing reaches `submitted` without a self-critique record. |
+| **The hub** | Loopback web UI, live over SSE, both sides' falsifiers side by side, the ladder's climb with skipped and failed rungs distinct. The human can post and vote. |
+| **The GitHub mirror** | One PR per task, one comment per claim edited in place, the ladder published rather than flattened, and repository-owner comments pulled back in as `@human`. |
+| **`doctor`** | Checks Node, git, the repo, harnesses, worktrees, briefs and the ladder's shape, and names the remedy for each. |
+
+Known gaps, so you find them here rather than at the wrong moment:
+
+- **`taskAcceptance.method` only works as `leader` or `human`.** `majority` and `unanimous` are accepted by config and strand the task — nothing maps a resolved decision onto a task state yet, and `doctor` does not refuse them. Use `leader`.
+- **Supervised lifecycle is not implemented.** Every agent is `attached`: you start it and paste the line `init` prints. Crosstalk does not spawn or restart agents.
+- **The tier-3 file inbox is not built.** Agents participate over MCP or the CLI.
+- **The ledger (§12) is not built.** The data is all in the log; nothing renders it yet.
+- **One real session, and it was this project.** Crosstalk was used to build the repair that made it work. That is a genuine test and a narrow one.
 
 - [Design spec](docs/specs/2026-08-09-crosstalk-design.md)
-- [v1 implementation plan](docs/plans/2026-08-09-crosstalk-v1.md)
+- [Protocol repair plan](docs/plans/2026-08-10-protocol-repair.md) — what was broken and how it was fixed
 - [Cross-platform rules](docs/CROSS-PLATFORM.md)
 
-## What it will need
+## What you need
 
 Crosstalk brings no agents with it — it's orchestration, not a model provider.
 
 - Node ≥ 20, git ≥ 2.5
-- A git repository
-- At least one agent harness installed and signed in (Claude Code, Codex, or Cursor). Two workers to use the full dispute ladder.
+- A git repository with at least one commit
+- At least one agent harness installed and signed in (Claude Code, Codex, or Cursor). **Two workers** to use the full dispute ladder — with one, the `third_agent` rung has nobody to call and is skipped, which `doctor` warns about at init rather than at the first dispute.
 
-No compiler, no Python, no Docker, no native modules — on Windows, macOS and Linux alike. `crosstalk doctor` checks all of it and names the remedy for anything missing.
+No compiler, no Python, no Docker, no native modules — on Windows, macOS and Linux alike. Two runtime dependencies, total. `crosstalk doctor` checks all of it and names the remedy for anything missing.
+
+**Not on npm yet.** `crosstalk-ai` is the intended package name and it is
+unpublished, so run it from a clone:
+
+```bash
+git clone https://github.com/moazessam376-dev/crosstalk && cd crosstalk
+npm ci
+npm run build
+```
+
+Then, from the repository you want the agents to work on:
+
+```bash
+node /path/to/crosstalk/dist/cli/index.js init     # crosstalk.yaml, a worktree and a brief per worker
+node /path/to/crosstalk/dist/cli/index.js doctor   # what is missing, and how to fix each thing
+node /path/to/crosstalk/dist/cli/index.js up       # starts the daemon, opens the hub
+```
+
+`init` writes a bearer token per participant under `.crosstalk/tokens/`,
+gitignores it, and references it from the MCP config by path rather than
+embedding it. `down --purge` removes the worktrees it created.
+
+`init` prints one line per agent to paste into it. Those lines are the whole
+onboarding.
 
 ## Contributing
 

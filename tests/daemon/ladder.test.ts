@@ -259,7 +259,15 @@ describe('rung timers', () => {
     await withDaemon(
       async (daemon) => {
         await respondTimes(daemon, 4);
-        const log = await waitFor(daemon, (l) => l.some((e) => e.kind === 'rung_failed'));
+        // Wait for the *last* thing the expiry writes, not the first.
+        // `expireRung` appends `rung_failed` and then `rung_entered`, so a poll
+        // that stops at the failure can observe the log between the two writes
+        // and see only one `rung_entered`. Load widens that window; it does not
+        // create it.
+        const log = await waitFor(
+          daemon,
+          (l) => l.filter((e) => e.kind === 'rung_entered').length === 2,
+        );
 
         const failed = log.filter((e) => e.kind === 'rung_failed');
         expect(failed).toHaveLength(1);
@@ -326,8 +334,12 @@ describe('a rung nobody can answer', () => {
           await post(daemon, '/claims/C-1/response', body, responderTurn ? 'cursor' : 'codex');
         }
 
-        const log = await waitFor(daemon, (l) =>
-          l.some((e) => e.kind === 'rung_failed' && e.reason === 'no_uninvolved_peer'),
+        // Same race as above: the third `rung_entered` lands after the second
+        // `rung_failed`, so wait for the ladder to have arrived rather than for
+        // it to have set off.
+        const log = await waitFor(
+          daemon,
+          (l) => l.filter((e) => e.kind === 'rung_entered').length === 3,
         );
 
         const failed = log.filter((e) => e.kind === 'rung_failed');

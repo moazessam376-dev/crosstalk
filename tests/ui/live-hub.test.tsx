@@ -369,3 +369,23 @@ describe('C1 the dispute screen against a real ladder log', () => {
     expect(screen.getByText('round 3 / 3')).toBeInTheDocument();
   });
 });
+
+describe('C3 the composer without a daemon', () => {
+  it('is still there, and says why it cannot post', async () => {
+    // The two canned buttons already behave this way: shown, and they explain
+    // themselves on click. A composer that vanishes instead is a different
+    // answer to the same question, and it also means `vite dev` and a static
+    // build show no composer at all.
+    const fixture = await readFile(resolve(process.cwd(), 'tests', 'fixtures', 'session-dispute.jsonl'), 'utf8');
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(fixture, { status: 200 }))));
+
+    render(createElement(Hub, { connection: { kind: 'fixture', reason: 'no daemon' } as HubConnection }));
+
+    const field = await screen.findByTestId('composer-input');
+    fireEvent.change(field, { target: { value: 'is anyone there' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+
+    expect(await screen.findByTestId('composer-error')).toHaveTextContent(/nobody to tell/i);
+    expect(valueOf(field)).toBe('is anyone there');
+  });
+});

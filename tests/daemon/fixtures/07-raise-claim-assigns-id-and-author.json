@@ -1,0 +1,32 @@
+{
+  "name": "the daemon assigns the claim id and the author",
+  "why": "Fails if a client-supplied `id` survives into the event — two participants could then mint the same claim id and the ledger would attribute one argument to both. `raisedBy` must come from the token, never from the body.",
+  "request": {
+    "method": "POST",
+    "path": "/claims",
+    "as": "leader",
+    "body": {
+      "id": "C-999",
+      "against": "codex",
+      "target": "src/economy.ts:41",
+      "assertion": "staffing coefficient applied twice",
+      "severity": "defect",
+      "falsifier": "produce() and consume() would reference different multipliers",
+      "evidence": [{ "kind": "command", "command": "npm test", "output": "ok", "sha": "abc1234" }]
+    }
+  },
+  "expect": {
+    "status": 201,
+    "bodyMatches": {
+      "events": [
+        { "kind": "participant_joined" },
+        {
+          "kind": "claim_raised",
+          "from": "leader",
+          "claim": { "id": "C-1", "raisedBy": "leader", "state": "open", "rounds": 0 }
+        }
+      ]
+    },
+    "bodyExcludes": ["C-999"]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "submit records a self_review and moves the task",
+  "why": "Fails with 409 GATE_NOT_SELF_REVIEWED if `self_review` is not appended, or is appended without setting `Task.critique` in the projection. This is the gate that no event in the log could satisfy at all until CT-D-1 was fixed, so it is the one pinned hardest: a regression here makes gate 2 unreachable again and every task stops at in_progress.",
+  "setup": [
+    {
+      "method": "POST",
+      "path": "/tasks",
+      "as": "leader",
+      "body": {
+        "id": "T-01",
+        "title": "Build the log",
+        "brief": "Append-only JSONL with seq assignment",
+        "specRefs": ["§4.1"],
+        "assignee": "codex",
+        "deps": [],
+        "acceptance": ["seq is monotonic"],
+        "branch": "ct/T-01-log"
+      }
+    },
+    { "method": "POST", "path": "/tasks/T-01/state", "as": "leader", "body": { "state": "assigned" } },
+    { "method": "POST", "path": "/tasks/T-01/ack", "as": "codex", "body": { "restatement": "build the append-only log", "ambiguities": [] } },
+    { "method": "POST", "path": "/tasks/T-01/state", "as": "codex", "body": { "state": "in_progress" } },
+    {
+      "method": "POST",
+      "path": "/tasks/T-01/submit",
+      "as": "codex",
+      "body": { "critique": { "rounds": 1, "findings": [], "critic": "codex subagent" }, "evidence": [] }
+    }
+  ],
+  "request": { "method": "POST", "path": "/tasks/T-01/state", "as": "codex", "body": { "state": "submitted" } },
+  "expect": {
+    "status": 201,
+    "eventsOfKind": { "kind": "task_state", "count": 1 },
+    "bodyMatches": { "events": [{ "kind": "task_state", "taskId": "T-01", "state": "submitted", "from": "codex" }] }
+  }
+}

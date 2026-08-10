@@ -1,0 +1,21 @@
+{
+  "name": "since is exclusive",
+  "why": "Fails if `since` is inclusive: seq 2 comes back from a `since=2` request, which makes every SSE reconnect redeliver one event forever. `EventLog.readFrom` is inclusive, so this is one `+ 1` away from being wrong.",
+  "setup": [
+    { "method": "POST", "path": "/events", "as": "leader", "body": { "kind": "message", "room": "#floor", "body": "one" } },
+    { "method": "POST", "path": "/events", "as": "leader", "body": { "kind": "message", "room": "#floor", "body": "two" } },
+    { "method": "POST", "path": "/events", "as": "leader", "body": { "kind": "message", "room": "#floor", "body": "three" } }
+  ],
+  "request": { "method": "GET", "path": "/events?since=2", "as": "leader" },
+  "expect": {
+    "status": 200,
+    "bodyMatches": {
+      "events": [
+        { "seq": 3, "kind": "message", "body": "two" },
+        { "seq": 4, "kind": "message", "body": "three" }
+      ],
+      "lastSeq": 4
+    },
+    "bodyExcludes": ["\"body\":\"one\""]
+  }
+}

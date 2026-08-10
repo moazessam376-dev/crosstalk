@@ -2,7 +2,7 @@
   "name": "crosstalk-ai",
   "version": "0.1.0",
   "description": "Multi-agent development where a code-review finding is a claim, not a command.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "engines": {
     "node": ">=20"

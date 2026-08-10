@@ -48,6 +48,22 @@ export interface Claim {
   resolution?: ClaimResolution;
   /** Incremented on every response. Compared against `policy.dispute.maxRounds`. */
   rounds: number;
+  /**
+   * Who answered last. A dispute alternates: the target answers the raiser,
+   * the raiser answers the target.
+   *
+   * Without this the validator could only ask "is this the raiser?", so an
+   * `uphold` returned the claim to `contested` — a state only the raiser could
+   * leave. The participant being upheld against got exactly one turn in the
+   * argument, which is the hierarchy this project exists to remove.
+   *
+   * Compared against `responderFor(claim, state)`, never against
+   * `claim.against` directly: for a `brief`/`spec` claim there is no
+   * participant of that name and the comparison would match nobody.
+   *
+   * Derived by the projection, never authored.
+   */
+  lastResponder?: ParticipantId;
   taskId?: string;
   /** Set on an amended claim, naming the claim it replaces. */
   supersedes?: string;

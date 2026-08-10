@@ -1,0 +1,9 @@
+{
+  "name": "a request with no credential is refused",
+  "why": "Fails with 200 if an unauthenticated caller is served. The refusal must also name no token: an error that echoes a valid credential hands one to whoever asked.",
+  "request": { "method": "GET", "path": "/events" },
+  "expect": {
+    "status": 401,
+    "bodyMatches": { "error": { "domain": "daemon", "code": "UNAUTHENTICATED" } }
+  }
+}

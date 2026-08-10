@@ -1,0 +1,19 @@
+{
+  "name": "append a message",
+  "why": "Fails if the happy path breaks, or if `from` is not derived from the presenting token — a message attributed to the wrong participant corrupts every ledger figure downstream.",
+  "request": {
+    "method": "POST",
+    "path": "/events",
+    "as": "codex",
+    "body": { "kind": "message", "room": "#floor", "body": "pushed T-01" }
+  },
+  "expect": {
+    "status": 201,
+    "bodyMatches": {
+      "events": [
+        { "kind": "participant_joined", "from": "codex" },
+        { "kind": "message", "from": "codex", "room": "#floor", "body": "pushed T-01" }
+      ]
+    }
+  }
+}

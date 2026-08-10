@@ -1,0 +1,21 @@
+{
+  "name": "a claim with no falsifier is refused in the protocol domain",
+  "why": "Fails with 201 if the falsifier rule is not enforced at the transport. Fails with 400 MALFORMED_BODY if the daemon's own field check runs first — which is subtler and worse, because it replaces the project's central rule with a transport complaint at the moment an agent needs to read and correct it.",
+  "request": {
+    "method": "POST",
+    "path": "/claims",
+    "as": "leader",
+    "body": {
+      "against": "codex",
+      "target": "src/economy.ts:41",
+      "assertion": "staffing coefficient applied twice",
+      "severity": "defect",
+      "falsifier": "",
+      "evidence": [{ "kind": "command", "command": "npm test", "output": "ok", "sha": "abc1234" }]
+    }
+  },
+  "expect": {
+    "status": 422,
+    "bodyMatches": { "error": { "domain": "protocol", "code": "MISSING_FALSIFIER" } }
+  }
+}

@@ -30,6 +30,15 @@ From `AGENTS.md`; they bind every task.
 6. **`node:path` always, `execFile` never `exec`.**
 7. **Green on one platform is not done.** CI is Windows, macOS and Linux.
 8. **Don't edit `src/contracts/` or `tests/fixtures/`** — frozen. Raise a claim.
+   *Scope of rule 8, ruled:* frozen means the existing files are not to be
+   **edited**. **Adding** a new fixture is permitted — `tests/fixtures/session-basic.jsonl`
+   and `session-dispute.jsonl` stay byte-identical, and nothing may be added that
+   an existing test reads. Track C owns `tests/fixtures/session-ladder.jsonl`;
+   Track A's fixtures go under `tests/daemon/fixtures/`.
+   **A track owns the tests for the source it owns**, even where the path does
+   not sit under it: `tests/ui/` is Track C's, `tests/cli/` and `tests/harness/`
+   are Track B's, `tests/core/`, `tests/daemon/` and `tests/workspace/` are
+   Track A's, `tests/mirror/` is Track D's.
 9. **Scratch goes under `.crosstalk/`.**
 
 Plan-specific:
@@ -262,15 +271,19 @@ exactly — every layer tested with the prop passed in, and `App` never passing 
 
 **Acceptance.** With `maxRounds: 5`, header and channel row both read `/ 5` and agree. Past the maximum both show the true round. Fixture mode renders no `3` anywhere. Escalating to a `human` rung badges the channel.
 
-### C3 — the human can speak, and the README is true
+### C3 — the human can speak, and can rule
 
-Create `src/ui/layout/Composer.tsx`. Modify `src/ui/layout/Stream.tsx`, `src/ui/state/humanAction.ts`, `src/ui/theme.css`, `README.md`.
+Create `src/ui/layout/Composer.tsx`. Modify `src/ui/layout/Stream.tsx`, `src/ui/state/humanAction.ts`, `src/ui/theme.css`.
 
 - A composer under the stream posting to the active room as `@human` via `POST /events`, `kind: "message"`. Reuse `postHumanAction`'s error handling; its 401 message is already right.
 - Enter sends, Shift+Enter newlines, empty sends nothing, the field clears **only** on a confirmed 201.
-- `README.md` Status: what actually runs. Do not claim the ladder works until Track A merges.
+- **Casting a vote on any open decision `@human` is eligible for**, via the existing `POST /decisions/:id/vote`. No new route, and not optional: A3 makes `human` a reachable ladder rung and A2 resolves that rung on `@human`'s vote, so without this the hub cannot terminate a dispute that escalated to the person with terminal authority. A rung nobody can answer from the UI is the same hole as a decision nobody is told about. A vote requires a rationale — the daemon returns `VOTE_WITHOUT_RATIONALE`, so the control must collect one rather than send an empty string.
 
-**Acceptance.** Enter issues one `POST /events` with the active room; the field clears. A failed post keeps the text and shows the reason — losing what someone typed is not an acceptable failure mode. Whitespace-only sends nothing.
+`README.md` is **not** Track C's, and not Track B's. The leader holds it and
+writes it once all four tracks merge: the Status section is the one file that
+cannot be truthful until then.
+
+**Acceptance.** Enter issues one `POST /events` with the active room; the field clears. A failed post keeps the text and shows the reason — losing what someone typed is not an acceptable failure mode. Whitespace-only sends nothing. A decision at the `human` rung can be resolved from the hub, and a vote submitted with no rationale is refused client-side rather than round-tripping a 422.
 
 ---
 
@@ -327,4 +340,13 @@ Create `src/mirror/poll.ts`. Modify `src/daemon/server.ts` **by request to Track
 ## Out of scope
 
 Supervised lifecycle / `spawn`; `policy.planning` as executable code; the tier-3
-file inbox; the ledger and PR-list UI surfaces. Raise a claim if you disagree.
+file inbox; the ledger and PR-list UI surfaces.
+
+**Three of §10.3's five human affordances are deferred, not dropped:** amend a
+brief, resolve a dispute directly, and force the ladder to the next rung. Each
+needs a daemon route that does not exist, which would be Track A's to add, and
+none of them is required for a dispute to terminate. The composer and the vote
+**are** in scope (C3) — the vote because A3 makes `human` a reachable rung and
+without it the hub cannot answer one.
+
+Raise a claim if you disagree with any of this.

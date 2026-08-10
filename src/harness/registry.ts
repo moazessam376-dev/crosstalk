@@ -86,7 +86,7 @@ export async function loadRegistry(): Promise<Map<string, HarnessDescriptor>> {
   return registry;
 }
 
-function resolveConfigPath(configPath: string, cwd: string): string {
+export function resolveConfigPath(configPath: string, cwd: string): string {
   if (configPath === '~') return homedir();
   if (configPath.startsWith('~/') || configPath.startsWith(`~${sep}`) || configPath.startsWith('~\\')) {
     return join(homedir(), configPath.slice(2));

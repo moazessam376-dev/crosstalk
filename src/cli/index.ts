@@ -4,21 +4,21 @@ import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import type { CrosstalkEvent } from '../contracts/events.js';
-import { doctor } from '../harness/doctor.js';
+import { doctor, type Finding } from '../harness/doctor.js';
 import { loadConfig } from '../daemon/config.js';
 import { startDaemon } from '../daemon/server.js';
 import { resolveHubDist } from '../daemon/hub.js';
 import { HUMAN_ID } from '../contracts/room.js';
 
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
-import { runInit } from './init.js';
+import { preflight, purgeWorkspaces, runInit } from './init.js';
 import { openBrowser } from './open.js';
 import { bold, dim, emit, eventLine, table } from './output.js';
 
 const USAGE = `crosstalk — multi-agent development where a finding is a claim, not a command
 
   crosstalk init [--participant id:role:harness[:model]]... [--force]
-  crosstalk up   [--port N] [--no-open]
+  crosstalk up   [--port N] [--no-open] [--force]
   crosstalk down [--as <id>] [--purge]
   crosstalk doctor
 
@@ -137,14 +137,30 @@ async function cmdInit(argv: string[]): Promise<number> {
     force: flags['force'] === true,
   });
 
-  emit({ config: result.configPath, mcp: result.mcpPath, participants: result.kickoff }, flags['json'] === true, () => {
+  emit({ config: result.configPath, mcp: result.mcp, participants: result.kickoff }, flags['json'] === true, () => {
+    const written = result.mcp.filter((entry) => entry.written);
+    const manual = result.mcp.filter((entry) => !entry.written);
     const lines = [
       `${bold('Crosstalk initialised')} in ${resolve(repo)}`,
       '',
       `  crosstalk.yaml   ${result.configPath}`,
-      `  .mcp.json        ${result.mcpPath}`,
+      ...written.map((entry) => `  mcp ${entry.participantId.padEnd(12)} ${entry.path}`),
       `  tokens           ${join(stateDir(repo), 'tokens')} (${result.tokens.size})`,
       '',
+      // Named, never silent: a participant Crosstalk could not register has to
+      // be told to the user, or the agent falls back to the CLI and nobody
+      // knows why.
+      ...(manual.length === 0
+        ? []
+        : [
+            bold('Add these by hand — Crosstalk did not write them:'),
+            '',
+            ...manual.flatMap((entry) => [
+              `  ${bold(entry.participantId)}  ${dim(entry.reason ?? '')}`,
+              ...JSON.stringify({ mcpServers: { crosstalk: entry.entry } }, null, 2).split('\n').map((line) => `    ${line}`),
+              '',
+            ]),
+          ]),
       bold('Paste one line into each agent:'),
       '',
       ...result.kickoff.flatMap((entry) => [`  ${bold(entry.id)}`, `    ${entry.line}`, '']),
@@ -159,6 +175,7 @@ async function cmdUp(argv: string[]): Promise<number> {
   const { flags } = read(argv, {
     port: { type: 'string' },
     'no-open': { type: 'boolean', default: false },
+    force: { type: 'boolean', default: false },
   });
   const repo = resolve(str(flags, 'repo') ?? '.');
   const portRaw = str(flags, 'port');
@@ -168,6 +185,12 @@ async function cmdUp(argv: string[]): Promise<number> {
   }
 
   const config = await loadConfig(repo);
+
+  // Before anything binds. A rejected configuration that started anyway is
+  // design §11's validation existing only on paper.
+  const findings = await preflight(repo, flags['force'] === true);
+  if (findings.length > 0) process.stdout.write(`${formatFindings(findings)}\n\n`);
+
   const daemon = await startDaemon({ repo, ...(port === undefined ? {} : { port }) });
 
   const humanToken = daemon.tokens.get(HUMAN_ID);
@@ -224,6 +247,9 @@ async function cmdDown(argv: string[]): Promise<number> {
     await rm(join(stateDir(repo), file), { force: true });
   }
   if (flags['purge'] === true) {
+    // Before the tokens, because purging is driven from the config and a
+    // half-removed worktree is harder to explain than a stale token.
+    await purgeWorkspaces(repo);
     await rm(join(stateDir(repo), 'tokens'), { recursive: true, force: true });
   }
 
@@ -244,15 +270,19 @@ async function cmdDoctor(argv: string[]): Promise<number> {
   const repo = resolve(str(flags, 'repo') ?? '.');
   const findings = await doctor(await loadConfig(repo), repo);
 
-  emit(findings, flags['json'] === true, () => {
-    if (findings.length === 0) return 'No findings. Everything doctor checks is in order.';
-    return findings
-      .map((finding) => `${finding.level === 'reject' ? bold('REJECT') : 'warn  '}  ${finding.code}\n    ${finding.message}\n    ${dim(`remedy: ${finding.remedy}`)}`)
-      .join('\n\n');
-  });
+  emit(findings, flags['json'] === true, () =>
+    findings.length === 0 ? 'No findings. Everything doctor checks is in order.' : formatFindings(findings),
+  );
 
   // Warnings never block: each one names a capability lost, not a fault.
   return findings.some((finding) => finding.level === 'reject') ? EXIT.protocol : EXIT.ok;
+}
+
+/** One rendering, so `up`'s preflight and `doctor` cannot drift apart. */
+function formatFindings(findings: readonly Finding[]): string {
+  return findings
+    .map((finding) => `${finding.level === 'reject' ? bold('REJECT') : 'warn  '}  ${finding.code}\n    ${finding.message}\n    ${dim(`remedy: ${finding.remedy}`)}`)
+    .join('\n\n');
 }
 
 async function withClient<T>(argv: string[], extra: ParseArgsConfig['options'], fn: (client: DaemonClient, flags: Flags, rest: string[]) => Promise<T>): Promise<T> {

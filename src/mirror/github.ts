@@ -154,6 +154,7 @@ interface GhComment {
   id: number;
   body: string;
   author_association: string;
+  user?: { login?: string };
 }
 
 /**
@@ -227,13 +228,19 @@ export class GhTransport implements GitHubTransport {
       id: comment.id,
       body: comment.body,
       authorAssociation: comment.author_association,
+      ...(comment.user?.login === undefined ? {} : { authorLogin: comment.user.login }),
     }));
   }
 
   async createComment(number: number, body: string): Promise<MirrorComment> {
     const stdout = await this.#run(ghArgs.createComment(number, body));
     const created = JSON.parse(stdout) as GhComment;
-    return { id: created.id, body: created.body, authorAssociation: created.author_association };
+    return {
+      id: created.id,
+      body: created.body,
+      authorAssociation: created.author_association,
+      ...(created.user?.login === undefined ? {} : { authorLogin: created.user.login }),
+    };
   }
 
   async updateComment(id: number, body: string): Promise<void> {

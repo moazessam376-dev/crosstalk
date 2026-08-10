@@ -209,6 +209,9 @@ export async function startMirror(options: StartMirrorOptions): Promise<MirrorHa
     try {
       await pollInbound({
         mode: options.config.github.mode,
+        ...(options.config.github.humanLogin === undefined
+          ? {}
+          : { humanLogin: options.config.github.humanLogin }),
         comments: async () => {
           // The same discovered numbers the outbound half uses. Reading
           // `task.pr` here would poll nothing: the mirror cannot write it.
@@ -218,6 +221,7 @@ export async function startMirror(options: StartMirrorOptions): Promise<MirrorHa
             id: comment.id,
             body: comment.body,
             authorAssociation: comment.authorAssociation ?? 'NONE',
+            ...(comment.authorLogin === undefined ? {} : { authorLogin: comment.authorLogin }),
           }));
         },
         alreadyDelivered: (id) => seen.has(id),

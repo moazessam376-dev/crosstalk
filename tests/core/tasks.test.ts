@@ -40,15 +40,20 @@ describe('task gates', () => {
     );
   });
 
-  // A5: a `rebase_notice` sends a submitted task back to `in_progress`, and the
-  // work that follows has to be able to climb out again — so the return leg is
-  // a legal transition rather than a state only the projection can reach.
-  it('permits submitted -> in_progress, the leg a rebase notice sends a task down', () => {
+  // C-16: the table is NOT widened. `validateTransition` governs what the
+  // daemon accepts *from clients*, so a legal `submitted -> in_progress` lets
+  // the assignee pull its own task out of the review queue at will, with
+  // nothing recording that a rebase happened. The projection folds without
+  // validating, so `rebase_notice` still moves the task — the table's job is
+  // only to keep clients out of that leg.
+  it('refuses a client-authored submitted -> in_progress', () => {
     const state = stateWithTask('T-1', 'submitted', {
       acknowledgement: { restatement: 'build the log', ambiguities: [] },
     });
-    expect(canTransition('submitted', 'in_progress')).toBe(true);
-    expect(() => validateTransition('T-1', 'in_progress', state)).not.toThrow();
+    expect(canTransition('submitted', 'in_progress')).toBe(false);
+    expect(() => validateTransition('T-1', 'in_progress', state)).toThrowError(
+      expect.objectContaining({ code: 'ILLEGAL_TRANSITION' }),
+    );
   });
 
   // The neighbours. Widening one entry must not widen the row: `submitted` is

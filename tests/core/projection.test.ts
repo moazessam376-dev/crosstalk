@@ -187,17 +187,34 @@ describe('evidence_stale reopens a claim that has nothing left to stand on', () 
     expect(claim.evidence.every((item) => item.stale === true)).toBe(true);
   });
 
-  it('leaves a claim resolved while one fresh piece still holds it up', () => {
+  it('reopens when any one piece of evidence goes stale', () => {
+    // C-17. `Claim.evidence` is a flat array with no field separating the
+    // accepter's fix evidence from the raiser's support, so "all stale" keeps
+    // a claim resolved when the *fix* was rebased away and the raiser's older
+    // evidence was not — a resolution nobody can verify, which is the class
+    // §5.4 exists to eliminate. Any-stale is the conservative approximation of
+    // §5.4's "solely" that a flat array admits.
     const state = replay([
       ...answeredClaim('C-1', 'accept', [ev('sha-raiser')], [ev('sha-fix')]),
-      stale('C-1', 'sha-raiser'),
+      stale('C-1', 'sha-fix'),
     ]);
     const claim = state.claims.get('C-1')!;
 
+    expect(claim.state).toBe('open');
+    expect(claim.resolution).toBeUndefined();
+    expect(claim.evidence.filter((item) => item.stale === true)).toHaveLength(1);
+  });
+
+  it('leaves a resolved claim alone while every piece is still fresh', () => {
+    // The neighbouring case: any-stale must not become always-reopen.
+    const state = replay([
+      ...answeredClaim('C-3', 'accept', [ev('sha-raiser')], [ev('sha-fix')]),
+      stale('C-3', 'a-sha-this-claim-never-carried'),
+    ]);
+    const claim = state.claims.get('C-3')!;
+
     expect(claim.state).toBe('resolved');
     expect(claim.resolution).toBe('upheld');
-    // The marking still happened — this is not "the event was ignored".
-    expect(claim.evidence.filter((item) => item.stale === true)).toHaveLength(1);
   });
 
   it('does not reopen a claim that carries no evidence at all', () => {

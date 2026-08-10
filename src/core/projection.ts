@@ -188,7 +188,15 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
 function hasNothingLeftToStandOn(claim: Claim): boolean {
   if (claim.state !== 'resolved') return false;
   if (claim.resolution === 'withdrawn' || claim.resolution === 'superseded') return false;
-  return claim.evidence.length > 0 && claim.evidence.every((item) => item.stale === true);
+  // C-17: *any* stale item, not all of them. `Claim.evidence` is a flat array
+  // mixing the raiser's support, counter-evidence and the accepter's fix
+  // evidence, and `Evidence` carries no field telling them apart. Under "all
+  // stale" a fix rebased away leaves the claim resolved because the raiser's
+  // older evidence is still an ancestor — a resolution nobody can verify.
+  //
+  // The asymmetry is the argument: a false reopen costs one cheap re-run, a
+  // false stay-resolved hides a regression behind a green record.
+  return claim.evidence.some((item) => item.stale === true);
 }
 
 function emptyState(): HubState {

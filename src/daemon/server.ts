@@ -14,6 +14,7 @@ import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { EventLog } from '../core/log.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
 import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js';
+import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
 import { currentRungOf } from '../core/decisions.js';
 
 import {
@@ -89,7 +90,13 @@ export async function startDaemon(opts: StartDaemonOptions): Promise<DaemonHandl
     const tokens = await loadOrMintTokens(config, stateDir);
     log = await EventLog.open(join(stateDir, 'events.jsonl'));
 
-    const daemon = new Daemon(config, tokens, log, opts.hubDist ?? resolveHubDist(import.meta.url));
+    const daemon = new Daemon(
+      config,
+      tokens,
+      log,
+      opts.hubDist ?? resolveHubDist(import.meta.url),
+      opts.repo,
+    );
     await daemon.init();
     server = createServer((request, response) => {
       void daemon.handle(request, response);
@@ -280,16 +287,25 @@ class Daemon {
   readonly #ladderTimers = new LadderTimers((decisionId, reason) => {
     void this.#expireRung(decisionId, reason);
   });
+  #stalenessPoll: ReturnType<typeof setInterval> | undefined;
+  /** One sweep at a time: two overlapping ones both read state before either's
+   *  marks land, and emit the same `evidence_stale` twice. */
+  #sweeping: Promise<void> | undefined;
+
+  /** Absolute path to the clone. `config.project.repo` is relative to the config file. */
+  readonly #repo: string;
 
   constructor(
     config: CrosstalkConfig,
     tokens: Map<ParticipantId, string>,
     log: EventLog,
     hubDist: string,
+    repo: string,
   ) {
     this.#config = config;
     this.#log = log;
     this.#hubDist = hubDist;
+    this.#repo = repo;
     this.#byToken = new Map([...tokens].map(([id, token]) => [token, id]));
     this.#state = project([]);
   }
@@ -301,6 +317,52 @@ class Daemon {
     // `rung_entered`; one restarted past the deadline advances immediately
     // rather than losing the rung.
     this.#ladderTimers.rearm(log, this.#state, this.#config, Date.now());
+
+    // A merge that landed while the daemon was down is the common case and
+    // nothing else will notice it.
+    await this.#sweepStaleness();
+    // Crosstalk does not own the user's git and cannot hook their merges, so
+    // it polls. Unref'd, or close() waits on the timer.
+    this.#stalenessPoll = setInterval(() => {
+      void this.#sweepStaleness();
+    }, STALENESS_POLL_MS);
+    if (typeof this.#stalenessPoll.unref === 'function') this.#stalenessPoll.unref();
+  }
+
+  /**
+   * Re-evaluate evidence against the main branch.
+   *
+   * Never throws: `checkStaleness` rejects when `mainBranch` is not a branch of
+   * the clone, and an unhandled rejection inside a timer takes the daemon with
+   * it. A repo we cannot read is a reason to stay quiet, not to die.
+   */
+  async #sweepStaleness(): Promise<void> {
+    if (this.#sweeping !== undefined) return this.#sweeping;
+
+    const daemon = this;
+    const sweep = (async () => {
+      try {
+        await checkStaleness({
+          repo: daemon.#repo,
+          mainBranch: daemon.#config.project.mainBranch,
+          who: SYSTEM_ID,
+          // A getter, so a sweep that awaits a git call still sees the state
+          // its own appends produced.
+          get state(): HubState {
+            return daemon.#state;
+          },
+          append: (draft: DraftEvent) => daemon.#append(draft),
+        });
+      } catch {
+        // Reported nowhere on purpose: a poll that logged on every tick in a
+        // repo without the branch would drown the console. The next sweep
+        // retries in 30s.
+      } finally {
+        daemon.#sweeping = undefined;
+      }
+    })();
+    this.#sweeping = sweep;
+    return sweep;
   }
 
   /** A rung ran out of time. No request is in flight, so the daemon signs it. */
@@ -337,6 +399,7 @@ class Daemon {
 
   async close(): Promise<void> {
     this.#ladderTimers.stop();
+    if (this.#stalenessPoll !== undefined) clearInterval(this.#stalenessPoll);
     await this.#writeTail.catch(() => {});
     await this.#log.close();
   }
@@ -741,6 +804,11 @@ class Daemon {
     });
     this.#writeTail = queued.catch(() => {});
     const event = await queued;
+    // Scheduled outside the write queue on purpose: `checkStaleness` appends,
+    // and appending from inside the queue callback deadlocks on it.
+    if (event.kind === 'task_state' && event.state === 'merged') {
+      setImmediate(() => void this.#sweepStaleness());
+    }
     this.#wake(event);
     for (const subscriber of this.#subscribers) writeFrame(subscriber.response, event);
     return event;

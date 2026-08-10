@@ -1,16 +1,62 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { execFile as execFileCallback } from 'node:child_process';
+import { access, mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 
 import { startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
 import { resolveAsset } from '../../src/daemon/hub.js';
 import { browserCommand } from '../../src/cli/open.js';
 import { exitCodeFor, EXIT } from '../../src/cli/client.js';
-import { runInit } from '../../src/cli/init.js';
+import { runInit, purgeWorkspaces } from '../../src/cli/init.js';
+import { doctor } from '../../src/harness/doctor.js';
+import { listWorktrees } from '../../src/workspace/git.js';
+
+const execFile = promisify(execFileCallback);
+
+/**
+ * These tests drive real git — `AGENTS.md` forbids mocking it — and creating a
+ * repository, adding a worktree, purging it and re-initialising is a dozen
+ * subprocess spawns. On Windows under a loaded runner that overruns vitest's
+ * 5s default, which showed up as one failure in five consecutive runs of an
+ * otherwise green suite. The work is legitimate; the default is not.
+ */
+const GIT_TEST_TIMEOUT = 30_000;
 
 async function tempRepo(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'ct-cli-'));
+}
+
+/**
+ * A real throwaway repository, never a mock — `AGENTS.md`. `init` creates git
+ * worktrees, and a worktree cannot be added to a directory git does not own.
+ */
+async function gitRepo(): Promise<string> {
+  const repo = await tempRepo();
+  await execFile('git', ['init', '-q', '-b', 'main', '.'], { cwd: repo, windowsHide: true });
+  await execFile('git', ['config', 'user.email', 'test@crosstalk.invalid'], { cwd: repo, windowsHide: true });
+  await execFile('git', ['config', 'user.name', 'crosstalk test'], { cwd: repo, windowsHide: true });
+  await mkdir(join(repo, 'src'), { recursive: true });
+  await writeFile(join(repo, 'src', 'index.ts'), 'export {};\n', 'utf8');
+  // A worktree needs a commit to branch from.
+  await execFile('git', ['add', '-A'], { cwd: repo, windowsHide: true });
+  await execFile('git', ['commit', '-qm', 'initial'], { cwd: repo, windowsHide: true });
+  return repo;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  return access(path).then(() => true, () => false);
+}
+
+/** `git check-ignore` exits 0 when a rule matches and 1 when none does. */
+async function isIgnored(cwd: string, path: string): Promise<boolean> {
+  try {
+    await execFile('git', ['check-ignore', '-q', '--', path], { cwd, windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function initialised(): Promise<string> {
@@ -94,6 +140,73 @@ describe('crosstalk init', () => {
       });
     }
   });
+});
+
+describe('init builds the workspace it promises', () => {
+  it('leaves doctor with zero BRIEF_STALE findings on a repo it just created', async () => {
+    const repo = await gitRepo();
+    const { config } = await runInit({ repo, participants: [], force: false });
+
+    const stale = (await doctor(config, repo)).filter((f) => f.code === 'BRIEF_STALE');
+    // The product's first two commands must not disagree about a file one of
+    // them just wrote. Baseline before B1 is two on the default roster.
+    expect(stale.map((f) => f.message)).toEqual([]);
+  }, GIT_TEST_TIMEOUT);
+
+  it('creates one registered worktree per worker, and none for the leader or @human', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+
+    const registered = (await listWorktrees(repo)).map((w) => resolve(w.path));
+    expect(registered).toContain(resolve(repo, '.crosstalk', 'worktrees', 'codex'));
+    // The leader owns the primary checkout and @human never gets one, so a
+    // worktree for either would be the §7 two-agents-one-checkout failure.
+    expect(registered).not.toContain(resolve(repo, '.crosstalk', 'worktrees', 'leader'));
+    expect(registered).not.toContain(resolve(repo, '.crosstalk', 'worktrees', 'human'));
+  }, GIT_TEST_TIMEOUT);
+
+  it('leaves no .mcp.json committable, at the root or inside a worker worktree', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+    const worktree = join(repo, '.crosstalk', 'worktrees', 'codex');
+    await writeFile(join(worktree, '.mcp.json'), '{}\n', 'utf8');
+
+    // A linked worktree resolves .mcp.json against its own root, which the
+    // top-level .gitignore's `.crosstalk/` rule cannot match. The token in
+    // that file would ride out on the worker's next `git add -A`.
+    expect(await isIgnored(repo, '.mcp.json')).toBe(true);
+    expect(await isIgnored(worktree, '.mcp.json')).toBe(true);
+    // The neighbouring case that must NOT be ignored, or the rule is too broad.
+    expect(await isIgnored(worktree, 'src/index.ts')).toBe(false);
+  }, GIT_TEST_TIMEOUT);
+
+  it('purges every worktree it created, and re-initialises cleanly afterwards', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+    const worktree = resolve(repo, '.crosstalk', 'worktrees', 'codex');
+    expect((await listWorktrees(repo)).map((w) => resolve(w.path))).toContain(worktree);
+
+    await purgeWorkspaces(repo);
+
+    expect((await listWorktrees(repo)).map((w) => resolve(w.path))).not.toContain(worktree);
+    expect(await pathExists(worktree)).toBe(false);
+
+    // `down --purge` leaves the branch behind, so a second `init` has to adopt
+    // it rather than fail on `worktree add -b`.
+    await runInit({ repo, participants: [], force: true });
+    expect((await listWorktrees(repo)).map((w) => resolve(w.path))).toContain(worktree);
+  }, GIT_TEST_TIMEOUT);
+
+  it('preserves a worker\'s uncommitted file when init --force re-runs', async () => {
+    const repo = await gitRepo();
+    await runInit({ repo, participants: [], force: false });
+    const scratch = join(repo, '.crosstalk', 'worktrees', 'codex', 'WORK-IN-PROGRESS.txt');
+    await writeFile(scratch, 'half-finished\n', 'utf8');
+
+    await runInit({ repo, participants: [], force: true });
+
+    expect(await readFile(scratch, 'utf8')).toBe('half-finished\n');
+  }, GIT_TEST_TIMEOUT);
 });
 
 describe('the hub front door', () => {

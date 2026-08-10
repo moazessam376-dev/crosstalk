@@ -11,7 +11,7 @@ import { resolveHubDist } from '../daemon/hub.js';
 import { HUMAN_ID } from '../contracts/room.js';
 
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
-import { runInit } from './init.js';
+import { purgeWorkspaces, runInit } from './init.js';
 import { openBrowser } from './open.js';
 import { bold, dim, emit, eventLine, table } from './output.js';
 
@@ -224,6 +224,9 @@ async function cmdDown(argv: string[]): Promise<number> {
     await rm(join(stateDir(repo), file), { force: true });
   }
   if (flags['purge'] === true) {
+    // Before the tokens, because purging is driven from the config and a
+    // half-removed worktree is harder to explain than a stale token.
+    await purgeWorkspaces(repo);
     await rm(join(stateDir(repo), 'tokens'), { recursive: true, force: true });
   }
 

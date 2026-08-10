@@ -54,6 +54,7 @@ function emptyState(): HubState {
     tasks: new Map(),
     claims: new Map(),
     decisions: new Map(),
+    rungs: new Map(),
     messages: [],
     lastSeq: 0,
   };

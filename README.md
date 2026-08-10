@@ -54,7 +54,7 @@ What runs today:
 |---|---|
 | **The claim protocol** | `falsifier` required and lint-checked; `contest` needs rationale, counter-evidence and its own falsifier; `uphold` needs new evidence. Enforced at the API, not in a prompt. |
 | **Disputes that alternate** | Each side answers in turn until somebody concedes, amends or the round cap is reached. |
-| **The escalation ladder** | Past `maxRounds` the daemon opens it with no agent asking: `discriminating_test`, then an uninvolved peer, then the leader — each with a timeout, each skipped rung named with its reason. |
+| **The escalation ladder** | Past `maxRounds` the daemon opens it with no agent asking: `discriminating_test`, then an uninvolved peer, then the leader. The non-terminal rungs each expire on a timeout; the last one waits for a decision rather than expiring, because a ladder that ran off its own end would resolve nothing. Every skipped rung is named with its reason. |
 | **Evidence that expires** | Every result carries the commit it ran at. When a merge orphans that commit the claim reopens, and a submitted task goes back to `in_progress`. |
 | **Two task gates** | Nothing reaches `in_progress` without the assignee restating the brief; nothing reaches `submitted` without a self-critique record. |
 | **The hub** | Loopback web UI, live over SSE, both sides' falsifiers side by side, the ladder's climb with skipped and failed rungs distinct. The human can post and vote. |

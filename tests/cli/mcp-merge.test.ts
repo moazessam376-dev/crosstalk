@@ -27,7 +27,13 @@ let repo = '';
 async function tempRepo(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'ct-mcp-merge-'));
   dirs.push(dir);
-  await execFile('git', ['init'], { cwd: dir, windowsHide: true });
+  await execFile('git', ['init', '-q', '-b', 'main'], { cwd: dir, windowsHide: true });
+  await execFile('git', ['config', 'user.email', 'test@crosstalk.invalid'], { cwd: dir, windowsHide: true });
+  await execFile('git', ['config', 'user.name', 'crosstalk test'], { cwd: dir, windowsHide: true });
+  await writeFile(join(dir, 'README.md'), '# probe\n', 'utf8');
+  // A worker worktree needs a commit to branch from, and B3 writes into one.
+  await execFile('git', ['add', '-A'], { cwd: dir, windowsHide: true });
+  await execFile('git', ['commit', '-qm', 'initial'], { cwd: dir, windowsHide: true });
   return dir;
 }
 
@@ -91,6 +97,62 @@ describe('crosstalk init and an existing .mcp.json', () => {
     await runInit({ repo, participants: [], force: false });
 
     expect((await read(join(repo, '.mcp.json')))['mcpServers']['crosstalk']).toBeDefined();
+  }, 60_000);
+
+  it('gives every MCP-capable participant its own registration and its own token', async () => {
+    const result = await runInit({
+      repo,
+      participants: ['leader:leader:claude-code-app', 'w:worker:cursor-app'],
+      force: false,
+    });
+
+    // Each lands in its own workspace at its own harness's path — one shared
+    // registration means two agents present one token, and `from` is the field
+    // the ledger attributes by.
+    const leaderEntry = (await read(join(repo, '.mcp.json')))['mcpServers']['crosstalk'];
+    const workerEntry = (await read(join(repo, '.crosstalk', 'worktrees', 'w', '.cursor', 'mcp.json')))['mcpServers']['crosstalk'];
+
+    expect(leaderEntry['env']['CROSSTALK_TOKEN_FILE']).toContain('tokens');
+    expect(workerEntry['env']['CROSSTALK_TOKEN_FILE']).toContain('tokens');
+    expect(leaderEntry['env']['CROSSTALK_TOKEN_FILE']).not.toBe(workerEntry['env']['CROSSTALK_TOKEN_FILE']);
+
+    // Referenced, never embedded: this file is not a place for a live token.
+    expect(leaderEntry['env']).not.toHaveProperty('CROSSTALK_TOKEN');
+    expect(workerEntry['env']).not.toHaveProperty('CROSSTALK_TOKEN');
+
+    // And the two token files really do hold different secrets.
+    const [leaderToken, workerToken] = await Promise.all([
+      readFile(leaderEntry['env']['CROSSTALK_TOKEN_FILE'] as string, 'utf8'),
+      readFile(workerEntry['env']['CROSSTALK_TOKEN_FILE'] as string, 'utf8'),
+    ]);
+    expect(leaderToken.trim()).not.toBe(workerToken.trim());
+    expect(result.mcp.filter((r) => r.written)).toHaveLength(2);
+  }, 60_000);
+
+  it('writes nothing for a harness it cannot register, and prints it instead', async () => {
+    // The shipped default roster: codex-app declares `mcp: unverified` and has
+    // no mcpConfigPath at all. Without this branch B3 goes green while the
+    // symptom it exists to fix — a worker with no registration — survives.
+    const result = await runInit({ repo, participants: [], force: false });
+
+    const codex = result.mcp.find((entry) => entry.participantId === 'codex');
+    expect(codex?.written).toBe(false);
+    expect(codex?.reason).toMatch(/unverified|mcpConfigPath/i);
+    // Printed, so the user can add it by hand rather than being told nothing.
+    expect(JSON.stringify(codex?.entry)).toContain('CROSSTALK_TOKEN_FILE');
+
+    // The neighbouring case that must still be written.
+    expect(result.mcp.find((entry) => entry.participantId === 'leader')?.written).toBe(true);
+  }, 60_000);
+
+  it('refuses to write outside the repository it was pointed at', async () => {
+    // codex-cli's mcpConfigPath is ~/.codex/config.toml. Editing a file in the
+    // user's home directory is not something `init` on a repo may do.
+    const result = await runInit({ repo, participants: ['l:leader:claude-code-app', 'c:worker:codex-cli'], force: false });
+
+    const codex = result.mcp.find((entry) => entry.participantId === 'c');
+    expect(codex?.written).toBe(false);
+    expect(codex?.reason).toMatch(/outside the repository/i);
   }, 60_000);
 
   // Refusing is the point: rewriting JSON we could not parse is how the

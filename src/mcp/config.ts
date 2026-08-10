@@ -42,15 +42,48 @@ export async function loadMcpConfig(env: NodeJS.ProcessEnv = process.env): Promi
     );
   }
 
-  const token = env['CROSSTALK_TOKEN'];
-  if (token === undefined || token.trim() === '') {
+  const token = await resolveToken(env);
+  const repo = resolve(repoRaw);
+  return { repo, token, url: env['CROSSTALK_URL'] ?? (await discoverUrl(repo)) };
+}
+
+/**
+ * `CROSSTALK_TOKEN` wins when both are set, so CLI use and `CROSSTALK_TOKEN=…`
+ * one-liners are unchanged.
+ *
+ * `.mcp.json` carries `CROSSTALK_TOKEN_FILE` rather than the token itself: a
+ * live bearer token does not belong in a config file, and that file also holds
+ * machine-specific absolute paths, so it is neither shareable nor safe to
+ * commit. A token file that is missing or empty fails here, loudly, rather
+ * than reaching the daemon as an empty string and coming back as a 401 with
+ * nothing to explain it.
+ */
+async function resolveToken(env: NodeJS.ProcessEnv): Promise<string> {
+  const direct = env['CROSSTALK_TOKEN'];
+  if (direct !== undefined && direct.trim() !== '') return direct.trim();
+
+  const path = env['CROSSTALK_TOKEN_FILE'];
+  if (path === undefined || path.trim() === '') {
     throw new ConfigError(
-      'CROSSTALK_TOKEN is not set. Each participant has its own token — one shared token would make `from` self-asserted and the ledger unreadable.',
+      'Neither CROSSTALK_TOKEN nor CROSSTALK_TOKEN_FILE is set. Each participant has its own token — one shared token would make `from` self-asserted and the ledger unreadable. `crosstalk init` writes CROSSTALK_TOKEN_FILE into the registration.',
     );
   }
 
-  const repo = resolve(repoRaw);
-  return { repo, token, url: env['CROSSTALK_URL'] ?? (await discoverUrl(repo)) };
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch {
+    throw new ConfigError(
+      `CROSSTALK_TOKEN_FILE points at ${path}, which could not be read. Run \`crosstalk init\` in the repository to mint it, or set CROSSTALK_TOKEN directly.`,
+    );
+  }
+
+  if (raw.trim() === '') {
+    throw new ConfigError(
+      `CROSSTALK_TOKEN_FILE points at ${path}, which is empty. Delete it and run \`crosstalk init\` to mint a new token.`,
+    );
+  }
+  return raw.trim();
 }
 
 /**

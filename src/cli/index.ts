@@ -137,14 +137,30 @@ async function cmdInit(argv: string[]): Promise<number> {
     force: flags['force'] === true,
   });
 
-  emit({ config: result.configPath, mcp: result.mcpPath, participants: result.kickoff }, flags['json'] === true, () => {
+  emit({ config: result.configPath, mcp: result.mcp, participants: result.kickoff }, flags['json'] === true, () => {
+    const written = result.mcp.filter((entry) => entry.written);
+    const manual = result.mcp.filter((entry) => !entry.written);
     const lines = [
       `${bold('Crosstalk initialised')} in ${resolve(repo)}`,
       '',
       `  crosstalk.yaml   ${result.configPath}`,
-      `  .mcp.json        ${result.mcpPath}`,
+      ...written.map((entry) => `  mcp ${entry.participantId.padEnd(12)} ${entry.path}`),
       `  tokens           ${join(stateDir(repo), 'tokens')} (${result.tokens.size})`,
       '',
+      // Named, never silent: a participant Crosstalk could not register has to
+      // be told to the user, or the agent falls back to the CLI and nobody
+      // knows why.
+      ...(manual.length === 0
+        ? []
+        : [
+            bold('Add these by hand — Crosstalk did not write them:'),
+            '',
+            ...manual.flatMap((entry) => [
+              `  ${bold(entry.participantId)}  ${dim(entry.reason ?? '')}`,
+              ...JSON.stringify({ mcpServers: { crosstalk: entry.entry } }, null, 2).split('\n').map((line) => `    ${line}`),
+              '',
+            ]),
+          ]),
       bold('Paste one line into each agent:'),
       '',
       ...result.kickoff.flatMap((entry) => [`  ${bold(entry.id)}`, `    ${entry.line}`, '']),

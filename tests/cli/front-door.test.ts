@@ -133,13 +133,17 @@ describe('crosstalk init', () => {
     const minted = JSON.parse(await readFile(join(repo, '.mcp.json'), 'utf8')) as {
       mcpServers: { crosstalk: { env: Record<string, string> } };
     };
-    const embedded = minted.mcpServers.crosstalk.env['CROSSTALK_TOKEN'];
+    // The registration references the token file rather than embedding the
+    // token, so what has to stay stable is what that file holds.
+    const tokenFile = minted.mcpServers.crosstalk.env['CROSSTALK_TOKEN_FILE']!;
+    expect(tokenFile).toBeTruthy();
 
     for (let run = 0; run < 2; run += 1) {
       await withDaemon(repo, async (daemon) => {
-        // Re-minting on every start would invalidate the token baked into
-        // .mcp.json, and the agent holding it would see a 401 it could not explain.
-        expect([...daemon.tokens.values()]).toContain(embedded);
+        // Re-minting on every start would invalidate the token the registration
+        // points at, and the agent holding it would see a 401 it could not explain.
+        const referenced = (await readFile(tokenFile, 'utf8')).trim();
+        expect([...daemon.tokens.values()]).toContain(referenced);
       });
     }
   });

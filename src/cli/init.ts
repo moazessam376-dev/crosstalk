@@ -1,14 +1,22 @@
+import { execFile as execFileCallback } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { stringify } from 'yaml';
 
 import { DEFAULT_POLICY, type CrosstalkConfig } from '../contracts/config.js';
 import type { Participant, Role } from '../contracts/participant.js';
 import { HUMAN_ID } from '../contracts/room.js';
+import { loadConfig } from '../daemon/config.js';
 import { distPath } from '../daemon/paths.js';
 import { tokenFilename } from '../daemon/server.js';
+import { writeBrief } from '../harness/brief.js';
+import { loadRegistry, probeTier, type HarnessDescriptor } from '../harness/registry.js';
+import { createWorktree, isRepo, listWorktrees, removeWorktree } from '../workspace/git.js';
 import { CliError, EXIT, stateDir } from './client.js';
+
+const execFile = promisify(execFileCallback);
 
 export interface InitOptions {
   repo: string;
@@ -63,10 +71,172 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     tokens.set(participant.id, token);
   }
 
+  await ensureWorkspaces(repo, participants);
   const mcpPath = await writeMcpConfig(repo, participants, tokens);
   await ensureGitignored(repo);
+  await writeBriefs(repo, participants, config.policy);
 
   return { configPath, mcpPath, tokens, config, kickoff: kickoffLines(repo, participants) };
+}
+
+/**
+ * Every worker gets its own checkout, on `ct/<id>-base` off the current head.
+ *
+ * `init` used to write `workspace: .crosstalk/worktrees/<id>` into the config
+ * and never create the directory, so two agents shared the leader's working
+ * tree — the failure design §7 exists to prevent.
+ *
+ * Existing worktrees are reused, never recreated: `init --force` must not
+ * destroy a worker's uncommitted work.
+ */
+async function ensureWorkspaces(repo: string, participants: Participant[]): Promise<void> {
+  const root = resolve(repo);
+  // Not a repository is `doctor`'s REPOSITORY_UNAVAILABLE to report, not ours
+  // to crash on. B2 makes `up` refuse to start on it.
+  if (!(await isRepo(root))) return;
+
+  await excludeTokensFromEveryWorktree(root);
+
+  for (const participant of participants) {
+    if (participant.role !== 'worker') continue;
+    const worktree = join(root, '.crosstalk', 'worktrees', participant.id);
+    if (!(await isRegistered(root, worktree))) {
+      await addWorktree(root, participant.id, `ct/${participant.id}-base`, worktree);
+    }
+  }
+}
+
+/**
+ * The other half of `ensureWorkspaces`, for `down --purge`. AGENTS.md rule 9:
+ * anything created under `.crosstalk/` has to be findable and removable here,
+ * or a reviewer cannot tell a stray directory from an abandoned one.
+ *
+ * Driven from the config rather than from whatever is on disk, so it removes
+ * what Crosstalk created and never a worktree the user added themselves.
+ */
+export async function purgeWorkspaces(repo: string): Promise<void> {
+  const root = resolve(repo);
+  let config: CrosstalkConfig;
+  try {
+    config = await loadConfig(root);
+  } catch {
+    // No config left to say what we made. `down --purge` still succeeds.
+    return;
+  }
+
+  for (const participant of config.participants) {
+    if (participant.role !== 'worker') continue;
+    const worktree = join(root, '.crosstalk', 'worktrees', participant.id);
+    if (!(await isRegistered(root, worktree))) continue;
+
+    try {
+      await removeWorktree(root, participant.id);
+    } catch {
+      // `removeWorktree` runs `git worktree remove` without `--force`, which
+      // refuses any worktree holding untracked files — and `init` writes the
+      // participant's brief into every worktree it creates, so that is all of
+      // them. Raised with Track A, who own that helper; until it takes a force
+      // option, `--purge` does here what the flag already promises.
+      await execFile('git', ['worktree', 'remove', '--force', worktree], { cwd: root, windowsHide: true });
+    }
+  }
+
+  // Drops any administrative entry whose directory is already gone, so a later
+  // `init` sees a clean list rather than a stale registration.
+  await execFile('git', ['worktree', 'prune'], { cwd: root, windowsHide: true }).catch(() => undefined);
+}
+
+function samePath(left: string, right: string): boolean {
+  const [a, b] = [resolve(left), resolve(right)];
+  return process.platform === 'win32' || process.platform === 'darwin'
+    ? a.toLowerCase() === b.toLowerCase()
+    : a === b;
+}
+
+async function isRegistered(root: string, worktree: string): Promise<boolean> {
+  try {
+    return (await listWorktrees(root)).some((entry) => samePath(entry.path, worktree));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `createWorktree` always passes `-b`, which fails when the branch survives its
+ * worktree — exactly what `down --purge` then `init` leaves behind. Falling
+ * back to a checkout of the existing branch keeps re-initialising idempotent.
+ */
+async function addWorktree(root: string, id: string, branch: string, worktree: string): Promise<void> {
+  try {
+    await createWorktree(root, id, branch);
+  } catch {
+    await mkdir(dirname(worktree), { recursive: true });
+    await execFile('git', ['worktree', 'add', worktree, branch], { cwd: root, windowsHide: true });
+  }
+}
+
+/**
+ * A linked worktree resolves `.mcp.json` against its own root, so the
+ * top-level `.gitignore`'s `.crosstalk/` rule does not match it and the
+ * participant token B3 writes there lands untracked-but-stageable on a branch
+ * the worker is expected to push.
+ *
+ * `info/exclude` rather than a `.gitignore`: the ignore file belongs to the
+ * user, and Crosstalk should not be editing one inside their branch.
+ *
+ * It goes in the **common** git dir, not the per-worktree one. Git reads
+ * `info/exclude` only from the common directory — verified, because the
+ * per-worktree copy is silently ignored — which is convenient: one write
+ * covers the primary checkout and every linked worktree at once.
+ */
+async function excludeTokensFromEveryWorktree(root: string): Promise<void> {
+  let gitDir: string;
+  try {
+    const { stdout } = await execFile('git', ['rev-parse', '--git-common-dir'], { cwd: root, windowsHide: true });
+    gitDir = resolve(root, stdout.trim());
+  } catch {
+    return;
+  }
+
+  const path = join(gitDir, 'info', 'exclude');
+  const current = await readFile(path, 'utf8').catch(() => '');
+  if (/^\.mcp\.json$/m.test(current)) return;
+
+  const prefix = current === '' || current.endsWith('\n') ? '' : '\n';
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(
+    path,
+    `${current}${prefix}\n# Crosstalk writes this participant's bearer token here.\n.mcp.json\n`,
+    'utf8',
+  );
+}
+
+/**
+ * The brief `doctor` expects, written at the same probed tier `doctor` checks
+ * against — otherwise `init` and `doctor` disagree about a file `init` wrote
+ * seconds earlier, which is what BRIEF_STALE was reporting on every fresh repo.
+ */
+async function writeBriefs(
+  repo: string,
+  participants: Participant[],
+  policy: CrosstalkConfig['policy'],
+): Promise<void> {
+  let registry: Map<string, HarnessDescriptor>;
+  try {
+    registry = await loadRegistry();
+  } catch {
+    return;
+  }
+
+  for (const participant of participants) {
+    // `@human` runs no harness — it participates through the hub in a browser.
+    if (participant.id === HUMAN_ID) continue;
+    const descriptor = registry.get(participant.harness);
+    if (descriptor === undefined) continue;
+
+    const tier = participant.transport ?? (await probeTier(descriptor, resolve(repo, participant.workspace)));
+    await writeBrief(participant, descriptor, policy, tier, repo);
+  }
 }
 
 /**
@@ -146,14 +316,31 @@ async function readJsonObject(path: string): Promise<Record<string, unknown> | u
   }
 }
 
-/** Tokens must never be committable. */
+/**
+ * Tokens must never be committable — in either of the two places one lands.
+ *
+ * `.mcp.json` carries a participant's bearer token in `env.CROSSTALK_TOKEN` and
+ * sits at the repository root, where nothing ignored it. That was survivable
+ * while every checkout was private; it is not now that `init` runs against
+ * public repositories.
+ */
 async function ensureGitignored(repo: string): Promise<void> {
   const path = join(repo, '.gitignore');
   const current = await readFile(path, 'utf8').catch(() => '');
-  if (/^\.crosstalk\/?$/m.test(current) || /^\.crosstalk\/tokens\/?$/m.test(current)) return;
 
-  const addition = `${current.endsWith('\n') || current === '' ? '' : '\n'}\n# Crosstalk runtime state — tokens live here and must never be committed\n.crosstalk/\n`;
-  await writeFile(path, current + addition, 'utf8');
+  const covered = (pattern: RegExp): boolean => pattern.test(current);
+  const additions: string[] = [];
+
+  if (!covered(/^\.crosstalk\/?$/m) && !covered(/^\.crosstalk\/tokens\/?$/m)) {
+    additions.push('# Crosstalk runtime state — tokens live here and must never be committed', '.crosstalk/');
+  }
+  if (!covered(/^\/?\.mcp\.json$/m)) {
+    additions.push("# Crosstalk writes this participant's bearer token here", '.mcp.json');
+  }
+  if (additions.length === 0) return;
+
+  const prefix = current.endsWith('\n') || current === '' ? '' : '\n';
+  await writeFile(path, `${current}${prefix}\n${additions.join('\n')}\n`, 'utf8');
 }
 
 function kickoffLines(repo: string, participants: Participant[]): { id: string; line: string }[] {

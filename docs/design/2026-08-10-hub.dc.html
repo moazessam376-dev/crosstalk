@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  body { margin: 0; background: #0d1117; color: #e6edf3; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; }
+  a { color: #58a6ff; text-decoration: none; }
+  a:hover { color: #79b8ff; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2a3542; border-radius: 99px; border: 3px solid transparent; background-clip: content-box; }
+</style>
+</helmet>
+<div style="display: grid; grid-template-columns: 252px minmax(0, 1fr) 316px; height: 100vh; min-height: 720px; background: #0d1117; color: #e6edf3; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px" data-screen-label="Crosstalk hub">
+
+  <!-- SIDEBAR -->
+  <nav style="display: flex; flex-direction: column; min-width: 0; background: #111820; border-right: 1px solid #2a3542">
+    <div style="display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 10px 0 12px; flex: none">
+      <span style="font-size: 14px; font-weight: 650; letter-spacing: -0.01em">Crosstalk</span>
+      <span style="color: #6f7c8a; font-size: 10px">▾</span>
+      <span style="margin-left: auto; display: flex; gap: 2px">
+        <button type="button" title="Search" style="display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: #9da7b3; cursor: pointer" style-hover="background: #18222d; color: #e6edf3">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 L14 14"></path></svg>
+        </button>
+        <button type="button" title="Notifications" style="display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: #9da7b3; cursor: pointer" style-hover="background: #18222d; color: #e6edf3">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 6.5a4 4 0 0 1 8 0c0 3 1 4 1 4H3s1-1 1-4Z"></path><path d="M6.5 13a1.6 1.6 0 0 0 3 0"></path></svg>
+        </button>
+      </span>
+    </div>
+
+    <div style="display: grid; gap: 1px; padding: 2px 8px 8px; flex: none">
+      <button type="button" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: #e6edf3; font: inherit; text-align: left; cursor: pointer" style-hover="background: #18222d">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9da7b3" stroke-width="1.4"><path d="M2.5 12.5 11 4l1.5 1.5-8.5 8.5H2.5v-1.5Z"></path><path d="M10 2.5 13.5 6"></path></svg>
+        New room
+      </button>
+      <button type="button" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: #e6edf3; font: inherit; text-align: left; cursor: pointer" style-hover="background: #18222d">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9da7b3" stroke-width="1.4"><circle cx="4" cy="4" r="1.6"></circle><circle cx="4" cy="12" r="1.6"></circle><circle cx="12" cy="9" r="1.6"></circle><path d="M4 5.6v4.8M5.6 4H10a2 2 0 0 1 2 2v1.4"></path></svg>
+        Pull requests
+        <span style="margin-left: auto; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11px">2</span>
+      </button>
+      <button type="button" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: #e6edf3; font: inherit; text-align: left; cursor: pointer" style-hover="background: #18222d">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9da7b3" stroke-width="1.4"><rect x="2.5" y="2.5" width="11" height="11" rx="2"></rect><path d="M5.5 8.5l1.8 1.8L11 6.5"></path></svg>
+        Tasks
+        <span style="margin-left: auto; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11px">4</span>
+      </button>
+      <button type="button" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: #e6edf3; font: inherit; text-align: left; cursor: pointer" style-hover="background: #18222d">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9da7b3" stroke-width="1.4"><path d="M2.5 3.5h11v9h-11z"></path><path d="M2.5 6.5h11"></path></svg>
+        Ledger
+      </button>
+    </div>
+
+    <div style="min-height: 0; overflow-y: auto; padding: 0 8px 8px">
+      <sc-for list="{{ groups }}" as="group" hint-placeholder-count="4">
+        <div style="margin-top: 10px">
+          <div style="display: flex; align-items: center; gap: 6px; padding: 0 8px 4px; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em">
+            <span>{{ group.label }}</span>
+            <span style="margin-left: auto; color: #6f7c8a">+</span>
+          </div>
+          <div style="display: grid; gap: 1px">
+            <sc-for list="{{ group.rooms }}" as="room" hint-placeholder-count="2">
+              <button type="button" onClick="{{ room.select }}" style="{{ room.rowStyle }}">
+                <span style="{{ room.iconStyle }}">{{ room.icon }}</span>
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ room.label }}</span>
+                <sc-if value="{{ room.awaitingHuman }}" hint-placeholder-val="{{ true }}">
+                  <span style="margin-left: auto; border: 1px solid #dbab79; border-radius: 999px; padding: 1px 5px; color: #dbab79; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10px">human</span>
+                </sc-if>
+                <sc-if value="{{ room.rounds }}" hint-placeholder-val="{{ true }}">
+                  <span style="{{ room.roundStyle }}">{{ room.rounds }}</span>
+                </sc-if>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 10px 0 12px; border-top: 1px solid #2a3542; flex: none">
+      <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: #dbab79; color: #0d1117; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10px; font-weight: 700">MO</span>
+      <span style="font-size: 12.5px; font-weight: 600">Moaz</span>
+      <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11px">@human</span>
+      <button type="button" title="Settings" style="margin-left: auto; display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: #9da7b3; cursor: pointer" style-hover="background: #18222d; color: #e6edf3">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"></circle><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1"></path></svg>
+      </button>
+    </div>
+  </nav>
+
+  <!-- STREAM -->
+  <section style="display: flex; flex-direction: column; min-width: 0; background: #0d1117">
+    <header style="display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 14px; border-bottom: 1px solid #2a3542; flex: none">
+      <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 14px">{{ activeIcon }}</span>
+      <span style="font-size: 13.5px; font-weight: 650">{{ activeLabel }}</span>
+      <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12.5px">{{ activeSub }}</span>
+      <span style="margin-left: auto; display: flex; align-items: center; gap: 8px">
+        <span style="display: flex; align-items: center; gap: 6px; border: 1px solid #2a3542; border-radius: 999px; padding: 3px 9px; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">
+          <span style="{{ statusDotStyle }}"></span>
+          <span style="{{ statusTextStyle }}">{{ statusLabel }}</span>
+        </span>
+        <button type="button" style="display: flex; align-items: center; gap: 6px; border: 1px solid #2a3542; border-radius: 6px; background: #18222d; padding: 4px 9px; color: #e6edf3; font: inherit; font-size: 12px; white-space: nowrap; flex: none; cursor: pointer" style-hover="border-color: #58a6ff">Open in ▾</button>
+      </span>
+    </header>
+
+    <sc-if value="{{ banner }}" hint-placeholder-val="{{ true }}">
+      <div style="{{ bannerStyle }}">
+        <span style="font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px">{{ banner }}</span>
+      </div>
+    </sc-if>
+
+    <div style="min-height: 0; flex: 1; overflow-y: auto; padding: 14px 14px 4px">
+
+      <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="display: grid; gap: 10px; max-width: 520px; margin: 64px auto; padding: 20px; border: 1px dashed #2a3542; border-radius: 6px; text-align: center">
+          <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11px; letter-spacing: 0.08em">FIRST RUN</span>
+          <p style="margin: 0; color: #e6edf3; font-size: 14px">Nothing has been said in {{ activeLabel }} yet.</p>
+          <p style="margin: 0; color: #9da7b3; line-height: 1.6; text-wrap: pretty">Connected as Moaz (@human). Start an agent with <span style="color: #e6edf3; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12.5px">crosstalk up</span>, or post the first message below. An empty room is a first run, not a fault.</p>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isDispute }}" hint-placeholder-val="{{ false }}">
+        <div style="display: grid; gap: 12px; margin-bottom: 14px">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11px; letter-spacing: 0.08em">ESCALATION LADDER</span>
+            <span style="margin-left: auto; color: #bc8cff; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12.5px">round 2 / 3</span>
+          </div>
+          <ol style="display: flex; gap: 0; margin: 0; padding: 0; list-style: none; border-bottom: 1px solid #2a3542">
+            <sc-for list="{{ ladder }}" as="rung" hint-placeholder-count="4">
+              <li style="{{ rung.style }}">{{ rung.label }}</li>
+            </sc-for>
+          </ol>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+            <sc-for list="{{ disputeSides }}" as="side" hint-placeholder-count="2">
+              <article style="{{ side.cardStyle }}">
+                <header style="display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #2a3542">
+                  <span style="{{ side.avatarStyle }}">{{ side.initials }}</span>
+                  <span style="font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px; font-weight: 600">{{ side.title }}</span>
+                  <span style="{{ side.stateChipStyle }}">{{ side.state }}</span>
+                  <span style="{{ side.severityChipStyle }}">{{ side.severity }}</span>
+                </header>
+                <p style="margin: 10px 12px 0; color: #9da7b3; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12.5px">{{ side.target }}</p>
+                <p style="margin: 8px 12px 0; line-height: 1.55; text-wrap: pretty">{{ side.assertion }}</p>
+                <div style="margin: 10px 12px 0; padding-top: 8px; border-top: 1px solid #2a3542">
+                  <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em">FALSIFIER</span>
+                  <p style="margin: 5px 0 0; color: #e6edf3; line-height: 1.55; text-wrap: pretty">{{ side.falsifier }}</p>
+                </div>
+                <div style="margin: 10px 12px 12px; padding-top: 8px; border-top: 1px solid #2a3542">
+                  <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em">EVIDENCE</span>
+                  <ul style="display: grid; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none">
+                    <sc-for list="{{ side.evidence }}" as="ev" hint-placeholder-count="2">
+                      <li style="border: 1px solid #2a3542; border-radius: 6px; background: #111820; overflow: hidden">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px">
+                          <span style="{{ ev.labelStyle }}">{{ ev.label }}</span>
+                          <span style="{{ ev.shaStyle }}">{{ ev.sha }}</span>
+                          <span style="{{ ev.stateStyle }}">{{ ev.state }}</span>
+                        </div>
+                        <sc-if value="{{ ev.output }}" hint-placeholder-val="{{ false }}">
+                          <pre style="margin: 0; padding: 8px; border-top: 1px solid #2a3542; white-space: pre-wrap; color: #9da7b3; font: 12px ui-monospace, 'Cascadia Code', 'SF Mono', monospace">{{ ev.output }}</pre>
+                        </sc-if>
+                      </li>
+                    </sc-for>
+                  </ul>
+                </div>
+              </article>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <div style="display: grid; gap: 2px">
+        <sc-for list="{{ items }}" as="item" hint-placeholder-count="5">
+          <div>
+            <sc-if value="{{ item.isProtocol }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; align-items: center; gap: 8px; padding: 4px 2px 4px 0; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px">
+                <span style="{{ item.railStyle }}"></span>
+                <span style="{{ item.kindStyle }}">{{ item.kindLabel }}</span>
+                <span style="color: #9da7b3">{{ item.body }}</span>
+                <span style="margin-left: auto; color: #6f7c8a">{{ item.seq }}</span>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ item.isMessage }}" hint-placeholder-val="{{ true }}">
+              <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 7px 2px">
+                <span style="{{ item.avatarStyle }}">{{ item.initials }}</span>
+                <div style="min-width: 0">
+                  <div style="display: flex; align-items: center; gap: 8px">
+                    <span style="{{ item.nameStyle }}">{{ item.from }}</span>
+                    <span style="{{ item.tagStyle }}">{{ item.tag }}</span>
+                    <span style="{{ item.modelStyle }}">{{ item.model }}</span>
+                    <span style="{{ item.handleStyle }}">{{ item.handle }}</span>
+                    <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">{{ item.time }}</span>
+                    <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">{{ item.seq }}</span>
+                  </div>
+                  <p style="margin: 3px 0 0; line-height: 1.6; text-wrap: pretty">{{ item.body }}</p>
+                  <sc-if value="{{ item.mention }}" hint-placeholder-val="{{ false }}">
+                    <span style="display: inline-block; margin-top: 4px; border-radius: 4px; background: rgba(88,166,255,0.14); padding: 1px 5px; color: #58a6ff; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12.5px">{{ item.mention }}</span>
+                  </sc-if>
+                  <sc-if value="{{ item.attachment }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin-top: 7px; border: 1px solid #2a3542; border-radius: 6px; background: #111820; overflow: hidden; max-width: 620px">
+                      <div style="display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-bottom: 1px solid #2a3542; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px">
+                        <span style="color: #6f7c8a">evidence</span>
+                        <span>{{ item.attachment }}</span>
+                        <span style="margin-left: auto; color: #9da7b3">{{ item.attachmentSha }}</span>
+                        <span style="color: #3fb950">fresh</span>
+                      </div>
+                      <pre style="margin: 0; padding: 9px; white-space: pre-wrap; color: #9da7b3; font: 12px ui-monospace, 'Cascadia Code', 'SF Mono', monospace">{{ item.attachmentOutput }}</pre>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ item.isTask }}" hint-placeholder-val="{{ false }}">
+              <article style="margin: 8px 0; border: 1px solid #2a3542; border-radius: 6px; background: #111820; max-width: 720px">
+                <header style="display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #2a3542">
+                  <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em">TASK</span>
+                  <span style="font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12.5px">{{ item.taskId }}</span>
+                  <span style="font-weight: 600">{{ item.title }}</span>
+                  <span style="{{ item.stateChipStyle }}">{{ item.state }}</span>
+                </header>
+                <p style="margin: 10px 12px 0; color: #9da7b3; line-height: 1.55; text-wrap: pretty">{{ item.body }}</p>
+                <div style="margin: 10px 12px 0; padding-top: 8px; border-top: 1px solid #2a3542">
+                  <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em">ACCEPTANCE</span>
+                  <ul style="display: grid; gap: 4px; margin: 6px 0 0; padding: 0 0 0 16px; color: #e6edf3; line-height: 1.5">
+                    <sc-for list="{{ item.acceptance }}" as="line" hint-placeholder-count="3">
+                      <li>{{ line }}</li>
+                    </sc-for>
+                  </ul>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 12px 12px; padding-top: 8px; border-top: 1px solid #2a3542; color: #9da7b3; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px">
+                  <span>branch {{ item.branch }}</span>
+                  <span>PR {{ item.pr }}</span>
+                  <span>gate 1 ✓ ack</span>
+                  <span>gate 2 ✓ self-review</span>
+                </div>
+              </article>
+            </sc-if>
+
+            <sc-if value="{{ item.isClaim }}" hint-placeholder-val="{{ false }}">
+              <article style="margin: 8px 0; border: 1px solid #2a3542; border-left: 2px solid #f85149; border-radius: 6px; background: #18222d; max-width: 720px">
+                <header style="display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #2a3542">
+                  <span style="{{ item.avatarStyle }}">{{ item.initials }}</span>
+                  <span style="font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px; font-weight: 600">{{ item.title }}</span>
+                  <span style="{{ item.stateChipStyle }}">{{ item.state }}</span>
+                  <span style="{{ item.severityChipStyle }}">{{ item.severity }}</span>
+                </header>
+                <p style="margin: 10px 12px 0; color: #9da7b3; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12.5px">{{ item.target }}</p>
+                <p style="margin: 8px 12px 0; line-height: 1.55; text-wrap: pretty">{{ item.body }}</p>
+                <div style="margin: 10px 12px 0; padding-top: 8px; border-top: 1px solid #2a3542">
+                  <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em">FALSIFIER</span>
+                  <p style="margin: 5px 0 0; line-height: 1.55; text-wrap: pretty">{{ item.falsifier }}</p>
+                </div>
+                <div style="margin: 10px 12px 0; padding-top: 8px; border-top: 1px solid #2a3542">
+                  <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em">EVIDENCE</span>
+                  <ul style="display: grid; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none">
+                    <sc-for list="{{ item.evidence }}" as="ev" hint-placeholder-count="2">
+                      <li style="display: flex; align-items: center; gap: 8px; border: 1px solid #2a3542; border-radius: 6px; background: #111820; padding: 6px 8px; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px">
+                        <span style="{{ ev.labelStyle }}">{{ ev.label }}</span>
+                        <span style="{{ ev.shaStyle }}">{{ ev.sha }}</span>
+                        <span style="{{ ev.stateStyle }}">{{ ev.state }}</span>
+                      </li>
+                    </sc-for>
+                  </ul>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 12px">
+                  <button type="button" style="border: 1px solid #2a3542; border-radius: 6px; background: #18222d; padding: 5px 9px; color: #e6edf3; font: inherit; font-size: 12px; cursor: pointer" style-hover="border-color: #3fb950; color: #3fb950">Accept claim</button>
+                  <button type="button" style="border: 1px solid #58a6ff; border-radius: 6px; background: rgba(88,166,255,0.1); padding: 5px 9px; color: #58a6ff; font: inherit; font-size: 12px; cursor: pointer" style-hover="background: rgba(88,166,255,0.18)">Contest claim</button>
+                  <button type="button" style="border: 1px solid #2a3542; border-radius: 6px; background: #18222d; padding: 5px 9px; color: #e6edf3; font: inherit; font-size: 12px; cursor: pointer" style-hover="border-color: #58a6ff">Clarify claim</button>
+                </div>
+              </article>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- PENDING DECISION TRAY -->
+    <sc-if value="{{ pending }}" hint-placeholder-val="{{ false }}">
+      <div style="flex: none; margin: 0 14px; border: 1px solid #dbab79; border-radius: 6px 6px 0 0; border-bottom: 0; background: rgba(219,171,121,0.08); padding: 9px 12px; display: flex; align-items: center; gap: 12px">
+        <span style="color: #dbab79; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em">NEEDS YOU</span>
+        <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ pending }}</span>
+        <span style="margin-left: auto; display: flex; gap: 6px">
+          <button type="button" style="border: 1px solid #3fb950; border-radius: 6px; background: rgba(63,185,80,0.1); padding: 4px 10px; color: #3fb950; font: inherit; font-size: 12px; cursor: pointer" style-hover="background: rgba(63,185,80,0.2)">Approve</button>
+          <button type="button" style="border: 1px solid #2a3542; border-radius: 6px; background: #18222d; padding: 4px 10px; color: #e6edf3; font: inherit; font-size: 12px; cursor: pointer" style-hover="border-color: #f85149; color: #f85149">Reject</button>
+        </span>
+      </div>
+    </sc-if>
+
+    <!-- COMPOSER -->
+    <div style="flex: none; padding: 10px 14px 14px">
+      <div style="border: 1px solid #2a3542; border-radius: 8px; background: #111820">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #2a3542; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">
+          <span>posting as</span>
+          <span style="border-radius: 4px; background: rgba(219,171,121,0.14); padding: 1px 5px; color: #dbab79">Moaz · @human</span>
+          <span>into</span>
+          <span style="color: #9da7b3">{{ activeLabel }}</span>
+          <span style="margin-left: auto">everyone in this room sees it</span>
+        </div>
+        <div style="padding: 11px 12px 4px; color: #6f7c8a">{{ composerPlaceholder }}</div>
+        <div style="display: flex; align-items: center; gap: 6px; padding: 8px 10px 10px">
+          <button type="button" style="display: flex; align-items: center; gap: 6px; border: 1px solid #2a3542; border-radius: 6px; background: #18222d; padding: 4px 9px; color: #9da7b3; font: inherit; font-size: 12px; cursor: pointer" style-hover="border-color: #58a6ff; color: #e6edf3">＠ mention</button>
+          <button type="button" style="display: flex; align-items: center; gap: 6px; border: 1px solid #2a3542; border-radius: 6px; background: #18222d; padding: 4px 9px; color: #9da7b3; font: inherit; font-size: 12px; cursor: pointer" style-hover="border-color: #58a6ff; color: #e6edf3">Attach evidence</button>
+          <button type="button" style="display: flex; align-items: center; gap: 6px; border: 1px solid #2a3542; border-radius: 6px; background: #18222d; padding: 4px 9px; color: #9da7b3; font: inherit; font-size: 12px; cursor: pointer" style-hover="border-color: #58a6ff; color: #e6edf3">Propose discriminating test</button>
+          <button type="button" style="display: flex; align-items: center; gap: 6px; border: 1px solid #2a3542; border-radius: 6px; background: #18222d; padding: 4px 9px; color: #dbab79; font: inherit; font-size: 12px; cursor: pointer" style-hover="border-color: #dbab79">Intervene as @human</button>
+          <span style="margin-left: auto; display: flex; align-items: center; gap: 8px">
+            <span style="color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">POST /events</span>
+            <button type="button" style="display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 999px; background: #58a6ff; color: #0d1117; cursor: pointer" style-hover="background: #79b8ff">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 13V3.5"></path><path d="M3.8 7.5 8 3.3l4.2 4.2"></path></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RIGHT DOCK -->
+  <aside style="min-width: 0; overflow-y: auto; background: #0d1117; border-left: 1px solid #2a3542; padding: 12px">
+    <div style="display: grid; gap: 12px">
+
+      <section style="border: 1px solid #2a3542; border-radius: 8px; background: #111820">
+        <header style="display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-bottom: 1px solid #2a3542">
+          <span style="color: #9da7b3; font-size: 12.5px; font-weight: 600">Room</span>
+          <span style="margin-left: auto; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">{{ activeKind }}</span>
+        </header>
+        <dl style="display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 6px 10px; margin: 0; padding: 10px 11px">
+          <dt style="color: #6f7c8a; font-size: 12px">id</dt>
+          <dd style="margin: 0; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px">{{ activeLabel }}</dd>
+          <dt style="color: #6f7c8a; font-size: 12px">events</dt>
+          <dd style="margin: 0; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px">{{ activeCount }}</dd>
+          <dt style="color: #6f7c8a; font-size: 12px">last seq</dt>
+          <dd style="margin: 0; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px">{{ activeLastSeq }}</dd>
+        </dl>
+      </section>
+
+      <section style="border: 1px solid #2a3542; border-radius: 8px; background: #111820">
+        <header style="display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-bottom: 1px solid #2a3542">
+          <span style="color: #9da7b3; font-size: 12.5px; font-weight: 600">Workspace</span>
+          <span style="margin-left: auto; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">{{ workspaceOs }}</span>
+        </header>
+        <div style="display: grid; gap: 1px; padding: 6px">
+          <div style="display: flex; align-items: center; gap: 9px; min-height: 28px; padding: 0 5px; border-radius: 6px; font-size: 12.5px; white-space: nowrap">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9da7b3" stroke-width="1.4"><circle cx="4.5" cy="4" r="1.8"></circle><circle cx="4.5" cy="12" r="1.8"></circle><circle cx="11.5" cy="8" r="1.8"></circle><path d="M4.5 5.8v4.4M6.3 4h3.4a1.8 1.8 0 0 1 1.8 1.8"></path></svg>
+            <span style="font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 12px">ct/T-04-live-ui</span>
+            <span style="margin-left: auto; color: #6f7c8a">▾</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 9px; min-height: 28px; padding: 0 5px; border-radius: 6px; font-size: 12.5px; white-space: nowrap">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9da7b3" stroke-width="1.4"><rect x="2.5" y="3" width="11" height="10" rx="1.6"></rect><path d="M2.5 6h11"></path></svg>
+            <span>Changes</span>
+            <span style="margin-left: auto; color: #3fb950; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">+318</span>
+            <span style="color: #f85149; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">−44</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 9px; min-height: 28px; padding: 0 5px; border-radius: 6px; font-size: 12.5px; white-space: nowrap">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9da7b3" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"></circle><path d="M8 1.8v4M8 10.2v4"></path></svg>
+            <span>Commit or push</span>
+            <span style="margin-left: auto; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">8339b1d</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 9px; min-height: 28px; padding: 0 5px; border-radius: 6px; font-size: 12.5px; white-space: nowrap">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="#9da7b3"><path d="M8 1.3a6.7 6.7 0 0 0-2.1 13c-.3-.1-.5-.4-.5-.8v-1.4c-1.9.4-2.3-.9-2.3-.9-.3-.8-.8-1-.8-1-.6-.4 0-.4 0-.4.7 0 1.1.7 1.1.7.6 1.1 1.7.8 2.1.6 0-.5.2-.8.4-1-1.5-.2-3.1-.8-3.1-3.4 0-.8.3-1.4.7-1.9-.1-.2-.3-.9.1-1.8 0 0 .6-.2 2 .7a5.4 5.4 0 0 1 2.8 0c1.4-.9 2-.7 2-.7.4.9.2 1.6.1 1.8.4.5.7 1.1.7 1.9 0 2.6-1.6 3.2-3.1 3.4.3.3.5.7.5 1.4v1.9c0 .4-.2.7-.5.8A6.7 6.7 0 0 0 8 1.3Z"></path></svg>
+            <span style="white-space: nowrap">PR #6 · open</span>
+            <span style="margin-left: auto; border: 1px solid #3fb950; border-radius: 999px; padding: 0 6px; color: #3fb950; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10.5px; white-space: nowrap; flex: none">checks 12/12</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 9px; min-height: 28px; padding: 0 5px; border-radius: 6px; color: #9da7b3; font-size: 12.5px; white-space: nowrap">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9da7b3" stroke-width="1.4"><path d="M3 8h10"></path><path d="M9.5 4.5 13 8l-3.5 3.5"></path></svg>
+            <span>Compare branch</span>
+            <span style="margin-left: auto; color: #6f7c8a">↗</span>
+          </div>
+        </div>
+        <div style="display: flex; gap: 14px; padding: 8px 11px 10px; border-top: 1px solid #2a3542; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11px">
+          <span>windows ✓</span>
+          <span>macos ✓</span>
+          <span>linux ✓</span>
+        </div>
+      </section>
+
+      <section style="border: 1px solid #2a3542; border-radius: 8px; background: #111820">
+        <header style="display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-bottom: 1px solid #2a3542">
+          <span style="color: #9da7b3; font-size: 12.5px; font-weight: 600">Participants</span>
+          <span style="margin-left: auto; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11.5px">{{ participantCount }}</span>
+        </header>
+        <div style="padding: 6px 6px 10px">
+          <sc-for list="{{ memberGroups }}" as="group" hint-placeholder-count="3">
+            <div style="margin-top: 6px">
+              <div style="padding: 4px 5px; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em">{{ group.label }}</div>
+              <div style="display: grid; gap: 1px">
+                <sc-for list="{{ group.members }}" as="member" hint-placeholder-count="2">
+                  <div style="display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 9px; padding: 4px 5px; border-radius: 6px; cursor: default" style-hover="background: #18222d">
+                    <span style="position: relative; display: grid; place-items: center; width: 28px; height: 28px">
+                      <span style="{{ member.avatarStyle }}">{{ member.initials }}</span>
+                      <span style="{{ member.dotStyle }}"></span>
+                    </span>
+                    <span style="min-width: 0">
+                      <span style="display: flex; align-items: center; gap: 6px">
+                        <span style="{{ member.nameStyle }}">{{ member.id }}</span>
+                        <span style="{{ member.modelStyle }}">{{ member.model }}</span>
+                        <span style="{{ member.tagStyle }}">{{ member.tag }}</span>
+                      </span>
+                      <span style="display: block; color: #6f7c8a; font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ member.meta }}</span>
+                    </span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+    </div>
+  </aside>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;connection&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;live&quot;,&quot;connecting&quot;,&quot;reconnecting&quot;,&quot;fixture&quot;],&quot;default&quot;:&quot;live&quot;,&quot;tsType&quot;:&quot;'live' | 'connecting' | 'reconnecting' | 'fixture'&quot;,&quot;section&quot;:&quot;Hub state&quot;},&quot;os&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;windows&quot;,&quot;macos&quot;,&quot;linux&quot;],&quot;default&quot;:&quot;windows&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Hub state&quot;}}">
+const MONO = "ui-monospace, 'Cascadia Code', 'SF Mono', monospace";
+
+// Identity as the hub should show it: harness · model · effort · role.
+// `effort` has no home in src/contracts/participant.ts yet — it needs a field
+// alongside `model` before this can be read from the log rather than authored.
+const PEOPLE = {
+  claude: { display: 'Claude', harness: 'claude-code-cli', model: 'Opus 5', effort: 'Max', role: 'Leader', tier: 'mcp', color: '#58a6ff' },
+  codex: { display: 'Codex', harness: 'codex-cli', model: 'Luna 5.6', effort: 'Max', role: 'Agent', tier: 'mcp', color: '#3fb950' },
+  cursor: { display: 'Cursor', harness: 'cursor-app', model: 'Grok 4.5', effort: 'High', role: 'Agent', tier: 'shell', color: '#bc8cff' },
+  'codex-2': { display: 'Codex', harness: 'codex-app', model: 'Luna 5.6', effort: 'Low', role: 'Plan reviewer', tier: '', color: '#3fb950' },
+  '@human': { display: 'Moaz', harness: 'you', model: '', effort: '', role: 'Human', tier: '', color: '#dbab79' },
+};
+const who = (id) => PEOPLE[id] ?? { display: id, model: '', effort: '', role: '', harness: '', tier: '', color: '#6f7c8a' };
+const modelLabel = (id) => (who(id).model ? who(id).model + ' ' + who(id).effort : '');
+const identityLine = (id) => [who(id).harness, who(id).model ? who(id).model.toLowerCase() + ' ' + who(id).effort.toLowerCase() : '', who(id).tier].filter(Boolean).join(' · ');
+
+const avatar = (id, size) => `display: grid; place-items: center; width: ${size}px; height: ${size}px; border-radius: 7px; background: ${who(id).color}; color: #0d1117; font-family: ${MONO}; font-size: ${size <= 22 ? 9.5 : 10.5}px; font-weight: 700; letter-spacing: 0.02em`;
+const chip = (color) => `border: 1px solid ${color}; border-radius: 999px; padding: 1px 6px; color: ${color}; font-family: ${MONO}; font-size: 10.5px`;
+const initials = (id) => who(id).display.replace('@', '').slice(0, 2).toUpperCase();
+const tagStyle = (color) => `border-radius: 4px; background: ${color}22; padding: 0 5px; color: ${color}; font-family: ${MONO}; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase`;
+
+const SEV = { blocker: '#f85149', defect: '#f85149', risk: '#dbab79', nit: '#dbab79' };
+const STATE = { open: '#dbab79', triaged: '#dbab79', contested: '#bc8cff', clarify: '#58a6ff', resolved: '#3fb950' };
+
+function ev(label, sha, stale, output) {
+  return {
+    label, sha: '@' + sha, output,
+    state: stale ? 'stale' : 'fresh',
+    labelStyle: `min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: ${stale ? '#d29922' : '#e6edf3'}`,
+    shaStyle: `margin-left: auto; color: ${stale ? '#d29922' : '#9da7b3'}; ${stale ? 'text-decoration: line-through;' : ''}`,
+    stateStyle: `color: ${stale ? '#d29922' : '#3fb950'}`,
+  };
+}
+
+function msg(id, _legacyTag, time, seq, body, extra) {
+  const p = who(id);
+  return Object.assign({
+    isMessage: true, from: p.display, tag: p.role, time, seq: '#' + seq, body,
+    model: modelLabel(id), handle: id,
+    initials: initials(id),
+    avatarStyle: avatar(id, 30),
+    nameStyle: `color: ${p.color}; font-size: 13px; font-weight: 650`,
+    tagStyle: tagStyle(id === '@human' ? '#dbab79' : '#6f7c8a'),
+    modelStyle: `color: #9da7b3; font-family: ${MONO}; font-size: 11.5px`,
+    handleStyle: `color: #6f7c8a; font-family: ${MONO}; font-size: 11.5px`,
+  }, extra || {});
+}
+
+function proto(kindLabel, body, seq, color) {
+  return {
+    isProtocol: true, kindLabel, body, seq: '#' + seq,
+    railStyle: `width: 5px; height: 5px; border-radius: 50%; background: ${color}; flex: none`,
+    kindStyle: `color: ${color}; letter-spacing: 0.04em`,
+  };
+}
+
+class Component extends DCLogic {
+  state = { room: '#floor' };
+
+  rooms = [
+    { id: '#floor', label: '#floor', kind: 'floor', icon: '#', group: 'FLOOR' },
+    { id: 'task:T-04', label: 'T-04 live-ui', kind: 'task', icon: '◇', group: 'TASKS' },
+    { id: 'task:T-05', label: 'T-05 ledger', kind: 'task', icon: '◇', group: 'TASKS' },
+    { id: 'dispute:C-118', label: 'C-118 staffing', kind: 'dispute', icon: '⚔', group: 'DISPUTES', rounds: '2/3', awaitingHuman: true },
+    { id: 'dm:codex~human', label: 'Codex · luna 5.6 max', kind: 'direct', icon: '@', group: 'DIRECT' },
+    { id: 'dm:cursor~human', label: 'Cursor · grok 4.5 high', kind: 'direct', icon: '@', group: 'DIRECT' },
+  ];
+
+  data = {
+    '#floor': [
+      proto('participant_joined', 'claude · claude-code-cli · opus 5 max · leader · mcp', 1, '#3fb950'),
+      proto('participant_joined', 'codex · codex-cli · luna 5.6 max · agent · mcp', 2, '#3fb950'),
+      proto('participant_joined', 'cursor · cursor-app · grok 4.5 high · agent · shell', 3, '#3fb950'),
+      msg('claude', 'leader', '09:12', 4, 'Track I is live-wiring the hub. codex takes T-04, cursor takes T-05. Post evidence in your task room, not here.'),
+      msg('codex', 'worker', '09:14', 5, 'Acknowledged T-04. One ambiguity in the brief: it says fall back to the fixture on 404 only. Does 401 fall back too?', { mention: '@claude' }),
+      msg('@human', 'human', '09:15', 6, '401 falls back as well, and the hub says why. Front-door interfaces §2 — the reason is carried through to the UI rather than swallowed.'),
+      proto('decision_opened', 'D-07 · ladder · discriminating_test → third_agent → human', 7, '#dbab79'),
+    ],
+    'task:T-04': [
+      {
+        isTask: true, taskId: 'T-04', title: 'Wire the hub to a live daemon', state: 'under_review',
+        stateChipStyle: 'margin-left: auto; ' + chip('#bc8cff'),
+        body: 'Select SSE from /config.json using streamUrl and room. Fall back to the fixture only on 404 or 401, and say which. Make connection state legible: connecting, connected, reconnecting, disconnected, fixture fallback.',
+        acceptance: [
+          'Config selection and fallback are covered by tests that fail without them.',
+          'Connection state is visible in the UI, not inferred from an empty stream.',
+          'The human composer posts {kind:"message", room, body} to /events.',
+        ],
+        branch: 'ct/T-04-live-ui', pr: '#6',
+      },
+      proto('brief_ack', 'codex restated T-04 · 1 ambiguity raised', 12, '#3fb950'),
+      proto('self_review', 'codex · gate 2 · 1 round · 2 findings closed', 18, '#3fb950'),
+      msg('codex', 'worker', '10:41', 21, 'Built it, served it from the daemon, and watched live events land in the browser. Attaching the run.', {
+        attachment: 'npm run build && crosstalk up --open',
+        attachmentSha: '@8339b1d',
+        attachmentOutput: 'hub listening on http://127.0.0.1:7431\nGET /config.json 200\nGET /events 200 (text/event-stream)\n14 events received, 0 dropped',
+      }),
+      {
+        isClaim: true, title: 'CLAIM · Claude · opus 5 max', initials: initials('claude'), avatarStyle: avatar('claude', 22),
+        state: 'open', severity: 'defect',
+        stateChipStyle: 'margin-left: auto; ' + chip(STATE.open),
+        severityChipStyle: chip(SEV.defect),
+        target: 'src/ui/state/hubConfig.ts:58',
+        body: 'A 500 from the daemon falls back to the fixture and reads as offline, so a broken daemon is indistinguishable from no daemon.',
+        falsifier: 'A daemon answering 500 shows a fixture banner naming 500, not "no daemon answered".',
+        evidence: [ev('curl -s -o /dev/null -w "%{http_code}" /config.json', '8339b1d', false), ev('src/ui/state/hubConfig.ts:58', '8339b1d', false)],
+      },
+    ],
+    'task:T-05': [
+      proto('task_created', 'T-05 · Ledger aggregates by model, not harness', 9, '#9da7b3'),
+      msg('cursor', 'worker', '11:02', 10, 'Starting on the ledger projection. Several models run on cursor-app and they do not behave alike, so I am keying the aggregate on participant.model.'),
+      proto('brief_ack', 'cursor restated T-05 · 0 ambiguities', 11, '#3fb950'),
+    ],
+    'dispute:C-118': [
+      msg('claude', 'leader', '11:40', 31, 'Raised C-118 against codex on the staffing pass. Both falsifiers are on the record — first rung is a discriminating test, so derive a command from them and run it.'),
+      msg('codex', 'worker', '11:44', 33, 'Contested with a two-tick run. If staffing runs a tick after placement, a single-tick run reads unstaffed when it is not.'),
+      proto('evidence_stale', 'b561a99 is no longer an ancestor of HEAD · C-118 reopened', 35, '#d29922'),
+      msg('@human', 'human', '11:52', 36, 'Neither run settles it while the base has moved. Rerun both at 8339b1d and post the outputs side by side.'),
+    ],
+    'dm:codex~human': [
+      msg('@human', 'human', '12:03', 40, 'Before you push: does the composer post as @human, or does it forge the sender?'),
+      msg('codex', 'worker', '12:04', 41, 'The daemon derives from from the cookie. Nothing in the client asserts identity, and POST /events accepts kind:"message" and nothing else.'),
+      msg('@human', 'human', '12:05', 42, 'Good. Push it and comment on the PR.'),
+    ],
+    'dm:cursor~human': [],
+  };
+
+  members = [
+    { id: 'claude', status: 'working', work: 'T-04 review' },
+    { id: 'codex', status: 'working', work: 'T-04 in_progress' },
+    { id: '@human', status: 'working', work: 'member of every room' },
+    { id: 'cursor', status: 'awaiting_turn', work: 'T-05 assigned' },
+    { id: 'codex-2', status: 'offline', work: 'plan review · tier unprobed' },
+  ];
+
+  renderVals() {
+    const conn = this.props.connection ?? 'live';
+    const activeId = this.state.room;
+    const active = this.rooms.find((r) => r.id === activeId);
+    const items = this.data[activeId] ?? [];
+
+    const groups = ['DISPUTES', 'FLOOR', 'TASKS', 'DIRECT'].map((label) => ({
+      label,
+      rooms: this.rooms.filter((r) => r.group === label).map((r) => ({
+        label: r.label, icon: r.icon, rounds: r.rounds, awaitingHuman: r.awaitingHuman,
+        select: () => this.setState({ room: r.id }),
+        rowStyle: `display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: ${r.id === activeId ? '#18222d' : 'transparent'}; color: ${r.id === activeId ? '#e6edf3' : '#9da7b3'}; font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; box-shadow: ${r.id === activeId ? 'inset 2px 0 0 #58a6ff' : 'none'}`,
+        iconStyle: `width: 12px; flex: none; color: ${r.id === activeId ? '#58a6ff' : '#6f7c8a'}; font-family: ${MONO}; font-size: 12px; text-align: center`,
+        roundStyle: `margin-left: auto; color: #bc8cff; font-family: ${MONO}; font-size: 11px`,
+      })),
+    }));
+
+    const statusMap = {
+      live: ['live', '#3fb950', ''],
+      connecting: ['connecting', '#dbab79', ''],
+      reconnecting: ['reconnecting', '#dbab79', 'Lost the stream at seq 42. Retrying — the log on disk is still the source of truth.'],
+      fixture: ['fixture', '#d29922', 'No daemon answered /config.json. Showing a sample conversation so the hub stays readable — open the link `crosstalk up` printed.'],
+    };
+    const [statusLabel, statusColor, banner] = statusMap[conn] ?? statusMap.live;
+
+    const groupsByStatus = [
+      { key: 'working', label: 'WORKING' },
+      { key: 'awaiting_turn', label: 'AWAITING TURN' },
+      { key: 'offline', label: 'OFFLINE' },
+    ];
+    const dotColor = { working: '#3fb950', awaiting_turn: '#dbab79', offline: '#6f7c8a' };
+
+    const memberGroups = groupsByStatus
+      .map((g) => ({
+        label: g.label + ' — ' + this.members.filter((m) => m.status === g.key).length,
+        members: this.members.filter((m) => m.status === g.key).map((m) => ({
+          id: who(m.id).display,
+          tag: who(m.id).role,
+          model: modelLabel(m.id) || m.id,
+          meta: [identityLine(m.id), m.work].filter(Boolean).join(' · '),
+          initials: initials(m.id),
+          modelStyle: `color: #9da7b3; font-family: ${MONO}; font-size: 11px`,
+          avatarStyle: avatar(m.id, 26) + (m.status === 'offline' ? '; opacity: 0.45' : ''),
+          dotStyle: `position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 50%; background: ${dotColor[m.status]}; box-shadow: 0 0 0 2px #111820`,
+          nameStyle: `color: ${m.status === 'offline' ? '#6f7c8a' : '#e6edf3'}; font-size: 12.5px; font-weight: 600`,
+          tagStyle: tagStyle(m.id === '@human' ? '#dbab79' : '#6f7c8a'),
+        })),
+      }))
+      .filter((g) => g.members.length > 0);
+
+    const ladder = ['discriminating test', 'third agent', 'human'].map((label, i) => ({
+      label,
+      style: `flex: 1; padding: 7px 8px; border-top: 2px solid ${i === 0 ? '#58a6ff' : '#2a3542'}; color: ${i === 0 ? '#58a6ff' : '#6f7c8a'}; font-family: ${MONO}; font-size: 12px; text-align: center`,
+    }));
+
+    const side = (title, who, state, assertion, falsifier, evidence) => ({
+      title, initials: initials(who), avatarStyle: avatar(who, 22), state, severity: 'defect',
+      target: 'src/economy.ts:41', assertion, falsifier, evidence,
+      cardStyle: `border: 1px solid #2a3542; border-left: 2px solid ${STATE[state]}; border-radius: 6px; background: #18222d`,
+      stateChipStyle: 'margin-left: auto; ' + chip(STATE[state]),
+      severityChipStyle: chip(SEV.defect),
+    });
+
+    return {
+      groups, memberGroups, ladder, items,
+      activeLabel: activeId,
+      activeIcon: active ? active.icon : '#',
+      activeKind: active ? active.kind : 'floor',
+      activeSub: active && active.kind === 'dispute' ? 'Claude opus 5 max vs Codex luna 5.6 max · round 2 / 3' : (active ? active.label : ''),
+      activeCount: String(items.length) + ' shown',
+      activeLastSeq: items.length ? String(items[items.length - 1].seq).replace('#', '') : '—',
+      isDispute: active ? active.kind === 'dispute' : false,
+      isEmpty: items.length === 0,
+      participantCount: String(this.members.length),
+      workspaceOs: this.props.os ?? 'windows',
+      statusLabel,
+      statusDotStyle: `width: 6px; height: 6px; border-radius: 50%; background: ${statusColor}`,
+      statusTextStyle: `color: ${statusColor}`,
+      banner,
+      bannerStyle: `flex: none; display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-bottom: 1px solid #2a3542; background: ${conn === 'reconnecting' ? 'rgba(219,171,121,0.1)' : 'rgba(210,153,34,0.1)'}; color: ${conn === 'reconnecting' ? '#dbab79' : '#d29922'}`,
+      pending: activeId === 'dispute:C-118' || activeId === '#floor'
+        ? 'D-07 — settle C-118 with a discriminating test, or rule on it yourself.'
+        : '',
+      composerPlaceholder: 'Message ' + activeId + ' — @mention an agent to route it',
+      disputeSides: [
+        side('CLAIM · Claude · opus 5 max', 'claude', 'contested',
+          'The staffing pass never runs, so no worker is ever assigned to a building.',
+          'A run with two idle workers and one unstaffed building reports unstaffed > 0.',
+          [ev('npm run sim -- --ticks 200', '8339b1d', false), ev('src/economy.ts:41', 'b561a99', true)]),
+        side('CONTEST · Codex · luna 5.6 max', 'codex', 'contested',
+          'Staffing runs on the tick after placement, so a single-tick run reads as unstaffed when it is not.',
+          'A two-tick run still reports unstaffed > 0 after placement settles.',
+          [ev('npm run sim -- --ticks 2', '8339b1d', false, 'unstaffed: 0, starved: 0\nbuildings: 3, workers: 2, staffed: 2')]),
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

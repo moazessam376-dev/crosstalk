@@ -85,22 +85,65 @@ async function writeMcpConfig(
     participants[0]!;
 
   const path = join(repo, '.mcp.json');
-  const config = {
-    mcpServers: {
-      crosstalk: {
-        command: 'node',
-        // Interfaces spec §1: absolute, because the package is unpublished.
-        args: [distPath(import.meta.url, 'mcp', 'index.js')],
-        env: {
-          CROSSTALK_REPO: resolve(repo),
-          CROSSTALK_TOKEN: tokens.get(agent.id) ?? '',
-        },
-      },
+  const entry = {
+    command: 'node',
+    // Interfaces spec §1: absolute, because the package is unpublished.
+    args: [distPath(import.meta.url, 'mcp', 'index.js')],
+    env: {
+      CROSSTALK_REPO: resolve(repo),
+      CROSSTALK_TOKEN: tokens.get(agent.id) ?? '',
     },
   };
 
-  await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  // Merge, never overwrite.
+  //
+  // This file belongs to the user, not to Crosstalk. Anyone running `init` on a
+  // real project is likely to already have MCP servers configured, and the
+  // first version of this function replaced the whole file — silently deleting
+  // every one of them. `crosstalk.yaml` and the tokens were already preserved
+  // across a re-init; this was the one path that was not, and it was the one
+  // that destroyed something the user wrote.
+  //
+  // An unparseable file is left alone and reported. Rewriting JSON we failed to
+  // understand is how the damage would happen twice.
+  const existing = await readJsonObject(path);
+  if (existing === 'unreadable') {
+    throw new CliError(
+      `${path} exists but is not valid JSON, so it cannot be merged safely.`,
+      EXIT.usage,
+      'Fix or move that file, then run `crosstalk init` again. Crosstalk will not rewrite JSON it could not read.',
+    );
+  }
+
+  const servers = isRecord(existing?.['mcpServers']) ? { ...existing['mcpServers'] } : {};
+  servers['crosstalk'] = entry;
+
+  const merged = { ...(existing ?? {}), mcpServers: servers };
+  await writeFile(path, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
   return path;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** `undefined` when absent, `'unreadable'` when present and not a JSON object. */
+async function readJsonObject(path: string): Promise<Record<string, unknown> | undefined | 'unreadable'> {
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+
+  if (raw.trim() === '') return undefined;
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isRecord(parsed) ? parsed : 'unreadable';
+  } catch {
+    return 'unreadable';
+  }
 }
 
 /** Tokens must never be committable. */

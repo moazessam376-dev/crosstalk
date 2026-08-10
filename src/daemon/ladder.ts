@@ -43,7 +43,7 @@ export async function escalateIfNeeded(
   if (claim.rounds <= ctx.config.policy.dispute.maxRounds) return [];
   if (hasUnresolvedLadder(claimId, ctx.state)) return [];
 
-  const plan = planLadder(ctx.config.policy.dispute.ladder, ctx.state);
+  const plan = planLadder(ctx.config.policy.dispute.ladder, ctx.config);
   const room = `dispute:${claimId}`;
   const decision: Decision = {
     id: `D-${ctx.state.decisions.size + 1}`,
@@ -80,7 +80,7 @@ export async function enterRung(
 
   const adjudicator =
     rung === 'third_agent' && decision.claimId !== undefined
-      ? adjudicatorFor(decision.claimId, ctx.state)
+      ? adjudicatorFor(decision.claimId, ctx.config, ctx.state)
       : undefined;
 
   return [

@@ -166,6 +166,33 @@ describe('the ladder climbs on its own', () => {
     });
   });
 
+  it('plans third_agent when the second worker is configured but has not connected', async () => {
+    // C-14, at the daemon level. `cursor` never polls, so it is absent from
+    // state.participants the whole time. The rung must survive that: agents
+    // attaching at different times is what `lifecycle: attached` means, and
+    // `skipped` is frozen into the log for good.
+    await withDaemon(async (daemon) => {
+      await post(daemon, '/claims', CLAIM, 'leader');
+      for (let k = 1; k <= 4; k += 1) {
+        const responderTurn = k % 2 === 1;
+        const body = responderTurn
+          ? {
+              verdict: 'contest',
+              rationale: 'built this way because replay determinism needs a single pass',
+              falsifier: 'the focused ledger check would print two rows rather than one',
+              evidence: [ev(`counter-${k}`)],
+            }
+          : { verdict: 'uphold', evidence: [ev(`new-${k}`)] };
+        await post(daemon, '/claims/C-1/response', body, responderTurn ? 'codex' : 'leader');
+      }
+
+      const opened = kindsOf(await events(daemon), 'decision_opened')[0]!;
+      const decision = (opened as Extract<CrosstalkEvent, { kind: 'decision_opened' }>).decision;
+      expect(decision.skipped).toEqual([]);
+      expect(decision.currentRung).toBe(0);
+    });
+  });
+
   it('addresses the decision to the leader, who is not in the dispute room', async () => {
     await withDaemon(async (daemon) => {
       // codex raises against cursor: a worker-vs-worker dispute, so

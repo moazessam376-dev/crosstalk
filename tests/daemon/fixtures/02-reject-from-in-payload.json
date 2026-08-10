@@ -1,0 +1,14 @@
+{
+  "name": "a payload may not set from",
+  "why": "Fails with 201 if a client can set `from` itself. Under a self-asserted `from` one buggy client silently corrupts the record of who said what, and nothing detects it — friction log entry 9, one layer down.",
+  "request": {
+    "method": "POST",
+    "path": "/events",
+    "as": "codex",
+    "body": { "kind": "message", "room": "#floor", "body": "spoofed", "from": "leader" }
+  },
+  "expect": {
+    "status": 403,
+    "bodyMatches": { "error": { "domain": "daemon", "code": "FROM_NOT_ALLOWED" } }
+  }
+}

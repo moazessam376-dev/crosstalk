@@ -1,0 +1,30 @@
+{
+  "name": "board returns metadata only",
+  "why": "Fails if any message body or task brief appears in the response. At three participants full visibility is harmless; at a dozen it is a noise flood, which is exactly why `board` is specified to carry no bodies. A widened projection would break this and nothing else.",
+  "setup": [
+    {
+      "method": "POST",
+      "path": "/tasks",
+      "as": "leader",
+      "body": {
+        "id": "T-01",
+        "title": "Build the log",
+        "brief": "SENTINEL-BRIEF-TEXT that has no business appearing on the board",
+        "specRefs": ["§4.1"],
+        "assignee": "codex",
+        "deps": [],
+        "acceptance": ["seq is monotonic"],
+        "branch": "ct/T-01-log"
+      }
+    },
+    { "method": "POST", "path": "/events", "as": "leader", "body": { "kind": "message", "room": "#floor", "body": "SENTINEL-CHATTER" } }
+  ],
+  "request": { "method": "GET", "path": "/board", "as": "cursor" },
+  "expect": {
+    "status": 200,
+    "bodyMatches": {
+      "tasks": [{ "id": "T-01", "title": "Build the log", "assignee": "codex", "state": "draft", "branch": "ct/T-01-log" }]
+    },
+    "bodyExcludes": ["SENTINEL-BRIEF-TEXT", "SENTINEL-CHATTER"]
+  }
+}

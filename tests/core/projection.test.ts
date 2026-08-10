@@ -100,3 +100,62 @@ function claimResponseEvents(verdict: ClaimVerdict): CrosstalkEvent[] {
     },
   ];
 }
+
+describe('lastResponder', () => {
+  // A1: the alternation is decided from this field, so the projection deriving
+  // it is what makes the validator able to ask "whose turn is it?" at all.
+  it('records who answered last, and moves it on the next response', () => {
+    const afterContest = project(responseSequence(['codex']));
+    expect(afterContest.claims.get('C-1')!.lastResponder).toBe('codex');
+
+    // The neighbouring case: a second response from the other side must move
+    // the field, not leave the first responder latched.
+    const afterUphold = project(responseSequence(['codex', 'leader']));
+    expect(afterUphold.claims.get('C-1')!.lastResponder).toBe('leader');
+    expect(afterUphold.claims.get('C-1')!.rounds).toBe(2);
+  });
+
+  it('is unset on a claim nobody has answered', () => {
+    expect(project(responseSequence([])).claims.get('C-1')!.lastResponder).toBeUndefined();
+  });
+});
+
+/** A raised claim followed by one `claim_response` per entry in `from`. */
+function responseSequence(from: string[]): CrosstalkEvent[] {
+  const events: CrosstalkEvent[] = [
+    {
+      seq: 1,
+      ts: '2026-08-09T00:00:00.000Z',
+      kind: 'claim_raised',
+      from: 'leader',
+      room: 'dispute:C-1',
+      claim: {
+        id: 'C-1',
+        raisedBy: 'leader',
+        against: 'codex',
+        target: 'src/example.ts:1',
+        assertion: 'Example claim',
+        severity: 'defect',
+        falsifier: 'If wrong, the focused projection test shows a different responder.',
+        evidence: [],
+        state: 'open',
+        rounds: 0,
+      },
+    },
+  ];
+  from.forEach((who, index) => {
+    events.push({
+      seq: index + 2,
+      ts: `2026-08-09T00:00:0${index + 1}.000Z`,
+      kind: 'claim_response',
+      from: who,
+      room: 'dispute:C-1',
+      claimId: 'C-1',
+      verdict: who === 'leader' ? 'uphold' : 'contest',
+      rationale: 'Focused projection response.',
+      falsifier: 'If wrong, this event will not project to the expected responder.',
+      evidence: [],
+    } as CrosstalkEvent);
+  });
+  return events;
+}

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { execFile as execFileCallback } from 'node:child_process';
+import { realpath as realpathCallback } from 'node:fs';
 import { access, mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -12,7 +13,7 @@ import { exitCodeFor, CliError, EXIT } from '../../src/cli/client.js';
 import { parse, stringify } from 'yaml';
 
 import type { CrosstalkConfig } from '../../src/contracts/config.js';
-import { runInit, purgeWorkspaces, preflight } from '../../src/cli/init.js';
+import { runInit, purgeWorkspaces, preflight, samePath, type PathResolver } from '../../src/cli/init.js';
 import { doctor } from '../../src/harness/doctor.js';
 import { listWorktrees } from '../../src/workspace/git.js';
 
@@ -50,6 +51,24 @@ async function gitRepo(): Promise<string> {
 
 async function pathExists(path: string): Promise<boolean> {
   return access(path).then(() => true, () => false);
+}
+
+const realpathNative = promisify(realpathCallback.native);
+
+/**
+ * The canonical on-disk spelling, lowercased.
+ *
+ * Deliberately not `samePath` — using the function under test to write the
+ * assertion would make these pass for the wrong reason. `realpath.native`
+ * directly is the independent check.
+ */
+async function canonicalPath(path: string): Promise<string> {
+  const absolute = resolve(path);
+  return (await realpathNative(absolute).catch(() => absolute)).toLowerCase();
+}
+
+async function registeredWorktrees(repo: string): Promise<string[]> {
+  return Promise.all((await listWorktrees(repo)).map((entry) => canonicalPath(entry.path)));
 }
 
 /** `git check-ignore` exits 0 when a rule matches and 1 when none does. */
@@ -149,6 +168,40 @@ describe('crosstalk init', () => {
   });
 });
 
+describe('two spellings of one path', () => {
+  // Hard-coded rather than manufactured: generating a real 8.3 alias needs a
+  // volume with short-name creation enabled, which is not something a test can
+  // assume. These are the exact spellings the GitHub Windows runner produces —
+  // os.tmpdir() hands out C:\Users\RUNNER~1\..., `git worktree list` reports
+  // C:\Users\runneradmin\..., and lowercasing does not bridge them.
+  const LONG = 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\ct-cli-a1\\.crosstalk\\worktrees\\codex';
+  const SHORT = 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\ct-cli-a1\\.crosstalk\\worktrees\\codex';
+  const OTHER = 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\ct-cli-a1\\.crosstalk\\worktrees\\cursor';
+
+  /** Stands in for `realpath.native`, the only thing that expands 8.3. */
+  const expand: PathResolver = async (path) => path.replace('RUNNER~1', 'runneradmin');
+
+  it('treats an 8.3 short path and its long form as one worktree', async () => {
+    expect(await samePath(SHORT, LONG, expand)).toBe(true);
+  });
+
+  it('still says no to a genuinely different worktree', async () => {
+    // The discrimination that matters: a comparator returning true whenever it
+    // is asked would satisfy the test above and be completely wrong. Both
+    // spellings resolve here, so this cannot pass by the resolver failing.
+    expect(await samePath(SHORT, OTHER, expand)).toBe(false);
+    expect(await samePath(LONG, OTHER, expand)).toBe(false);
+  });
+
+  it('falls back to the lexical comparison for a path that does not exist yet', async () => {
+    // The ordinary case the first time a worktree is created: realpath throws,
+    // and a worktree that is genuinely absent must still compare unequal.
+    const absent: PathResolver = async () => { throw new Error('ENOENT'); };
+    expect(await samePath(LONG, LONG, absent)).toBe(true);
+    expect(await samePath(LONG, OTHER, absent)).toBe(false);
+  });
+});
+
 describe('init builds the workspace it promises', () => {
   it('leaves doctor with zero BRIEF_STALE findings on a repo it just created', async () => {
     const repo = await gitRepo();
@@ -164,12 +217,15 @@ describe('init builds the workspace it promises', () => {
     const repo = await gitRepo();
     await runInit({ repo, participants: [], force: false });
 
-    const registered = (await listWorktrees(repo)).map((w) => resolve(w.path));
-    expect(registered).toContain(resolve(repo, '.crosstalk', 'worktrees', 'codex'));
+    // Canonicalised on both sides: `os.tmpdir()` is an 8.3 short path on the
+    // Windows runners and `git worktree list` reports the long form, so a
+    // literal string comparison fails there for a worktree that exists.
+    const registered = await registeredWorktrees(repo);
+    expect(registered).toContain(await canonicalPath(join(repo, '.crosstalk', 'worktrees', 'codex')));
     // The leader owns the primary checkout and @human never gets one, so a
     // worktree for either would be the §7 two-agents-one-checkout failure.
-    expect(registered).not.toContain(resolve(repo, '.crosstalk', 'worktrees', 'leader'));
-    expect(registered).not.toContain(resolve(repo, '.crosstalk', 'worktrees', 'human'));
+    expect(registered).not.toContain(await canonicalPath(join(repo, '.crosstalk', 'worktrees', 'leader')));
+    expect(registered).not.toContain(await canonicalPath(join(repo, '.crosstalk', 'worktrees', 'human')));
   }, GIT_TEST_TIMEOUT);
 
   it('leaves no .mcp.json committable, at the root or inside a worker worktree', async () => {
@@ -190,18 +246,19 @@ describe('init builds the workspace it promises', () => {
   it('purges every worktree it created, and re-initialises cleanly afterwards', async () => {
     const repo = await gitRepo();
     await runInit({ repo, participants: [], force: false });
-    const worktree = resolve(repo, '.crosstalk', 'worktrees', 'codex');
-    expect((await listWorktrees(repo)).map((w) => resolve(w.path))).toContain(worktree);
+    const worktree = join(repo, '.crosstalk', 'worktrees', 'codex');
+    const canonical = await canonicalPath(worktree);
+    expect(await registeredWorktrees(repo)).toContain(canonical);
 
     await purgeWorkspaces(repo);
 
-    expect((await listWorktrees(repo)).map((w) => resolve(w.path))).not.toContain(worktree);
+    expect(await registeredWorktrees(repo)).not.toContain(canonical);
     expect(await pathExists(worktree)).toBe(false);
 
     // `down --purge` leaves the branch behind, so a second `init` has to adopt
     // it rather than fail on `worktree add -b`.
     await runInit({ repo, participants: [], force: true });
-    expect((await listWorktrees(repo)).map((w) => resolve(w.path))).toContain(worktree);
+    expect(await registeredWorktrees(repo)).toContain(await canonicalPath(worktree));
   }, GIT_TEST_TIMEOUT);
 
   it('preserves a worker\'s uncommitted file when init --force re-runs', async () => {

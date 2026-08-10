@@ -121,3 +121,123 @@ describe('the deciding decision', () => {
     expect(body).not.toContain('yes');
   });
 });
+
+/**
+ * The ladder in the published record.
+ *
+ * Task 0 froze three event kinds and `Decision.skipped` so that "a dispute that
+ * escalated through three rungs and one that never left the first" stop being
+ * the same log. The mirror is the one consumer showing that record to someone
+ * who is not running Crosstalk, so it has to preserve the distinction the
+ * contracts were changed to create.
+ */
+describe('the ladder on a claim comment', () => {
+  const decision = {
+    id: 'D-07',
+    question: 'Does the refund path double-credit?',
+    options: ['yes', 'no'],
+    voters: ['leader', 'codex', '@human'],
+    method: 'ladder' as const,
+    outcome: 'yes',
+    rationale: [],
+    claimId: 'C-118',
+    votes: {},
+  };
+
+  const climbed = {
+    entered: [
+      { rung: 'discriminating_test' as const, index: 0 },
+      { rung: 'third_agent' as const, index: 1, adjudicator: 'codex' },
+      { rung: 'human' as const, index: 3 },
+    ],
+    failed: [{ rung: 'discriminating_test' as const, index: 0, reason: 'test_inconclusive' }],
+    tests: [
+      { command: 'npm test -- refund', predicts: 'one credit on a retried charge', sha: 'abc1234' },
+    ],
+    current: 3,
+  };
+
+  it('renders a line for every rung entered', () => {
+    const body = renderClaimComment(claim(), decision, climbed);
+
+    expect(body).toContain('discriminating_test');
+    expect(body).toContain('third_agent');
+    expect(body).toContain('human');
+  });
+
+  it('names the adjudicator chosen at the rung it was chosen at', () => {
+    expect(renderClaimComment(claim(), decision, climbed)).toContain('codex');
+  });
+
+  it('reports a failed rung with its reason', () => {
+    expect(renderClaimComment(claim(), decision, climbed)).toContain('test_inconclusive');
+  });
+
+  it('shows a proposed test with both what it predicts and the commit it is asserted at', () => {
+    const body = renderClaimComment(claim(), decision, climbed);
+
+    expect(body).toContain('npm test -- refund');
+    expect(body).toContain('one credit on a retried charge');
+    // C-11: two runs at two commits differ for reasons unrelated to who is right.
+    expect(body).toContain('abc1234');
+  });
+
+  it('names a skipped rung with its reason, so a degraded ladder is not a short one', () => {
+    const body = renderClaimComment(
+      claim(),
+      { ...decision, skipped: [{ rung: 'third_agent' as const, reason: 'no uninvolved peer' }] },
+      { entered: [{ rung: 'leader' as const, index: 2 }], failed: [], tests: [], current: 2 },
+    );
+
+    expect(body).toContain('no uninvolved peer');
+  });
+
+  /**
+   * `rung_failed.index` rather than pairing on the rung's name. A ladder may
+   * enter the same rung twice; name-matching is ambiguous outright there, which
+   * is why the field exists.
+   */
+  it('attaches a failure to the position that failed, not to a later rung of the same name', () => {
+    const repeated = {
+      entered: [
+        { rung: 'third_agent' as const, index: 1, adjudicator: 'codex' },
+        { rung: 'third_agent' as const, index: 3, adjudicator: 'leader' },
+      ],
+      failed: [{ rung: 'third_agent' as const, index: 1, reason: 'adjudicator became involved' }],
+      tests: [],
+      current: 3,
+    };
+
+    const lines = renderClaimComment(claim(), decision, repeated)
+      .split('\n')
+      .filter((line) => line.includes('third_agent'));
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('adjudicator became involved');
+    expect(lines[1]).not.toContain('adjudicator became involved');
+  });
+
+  /**
+   * The discrimination that matters, and the reason the flat case is in this
+   * file: it is the case that exists today, and it is what catches a renderer
+   * that prints a ladder section unconditionally.
+   */
+  it('renders an escalated dispute differently from one settled in a single exchange', () => {
+    const escalated = renderClaimComment(
+      claim({ state: 'resolved', resolution: 'upheld', rounds: 4 }),
+      decision,
+      climbed,
+    );
+    const flat = renderClaimComment(claim({ state: 'resolved', resolution: 'upheld', rounds: 1 }));
+
+    expect(escalated).not.toBe(flat);
+    expect(escalated).toContain('test_inconclusive');
+    expect(flat).not.toContain('test_inconclusive');
+  });
+
+  it('prints no ladder section at all for a claim that never opened one', () => {
+    const flat = renderClaimComment(claim({ state: 'resolved', resolution: 'withdrawn', rounds: 1 }));
+
+    expect(flat).not.toMatch(/ladder|rung/i);
+  });
+});

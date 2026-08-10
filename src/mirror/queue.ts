@@ -2,7 +2,7 @@ import type { Claim } from '../contracts/claim.js';
 import type { Decision } from '../contracts/decision.js';
 import type { Task, TaskState } from '../contracts/task.js';
 import type { GitHubTransport } from './github.js';
-import { claimMarker, findMarkedComment, renderClaimComment } from './render.js';
+import { claimMarker, findMarkedComment, renderClaimComment, type LadderHistory } from './render.js';
 
 /** Task lifecycle order, from `src/contracts/task.ts`. Compared by index. */
 const TASK_ORDER: readonly TaskState[] = [
@@ -108,8 +108,9 @@ export async function reconcileClaim(
   claim: Claim,
   pullNumber: number,
   decision?: Decision,
+  ladder?: LadderHistory,
 ): Promise<void> {
-  const body = renderClaimComment(claim, decision);
+  const body = renderClaimComment(claim, decision, ladder);
   const comments = await github.listComments(pullNumber);
   const existing = findMarkedComment(comments, claimMarker(claim.id));
 
@@ -125,7 +126,7 @@ export async function reconcileClaim(
 
 export type MirrorJob =
   | { kind: 'task'; task: Task }
-  | { kind: 'claim'; claim: Claim; pullNumber: number; decision?: Decision };
+  | { kind: 'claim'; claim: Claim; pullNumber: number; decision?: Decision; ladder?: LadderHistory };
 
 export interface DrainResult {
   completed: number;
@@ -141,7 +142,7 @@ async function apply(github: GitHubTransport, job: MirrorJob): Promise<void> {
     await reconcileTask(github, job.task);
     return;
   }
-  await reconcileClaim(github, job.claim, job.pullNumber, job.decision);
+  await reconcileClaim(github, job.claim, job.pullNumber, job.decision, job.ladder);
 }
 
 /**

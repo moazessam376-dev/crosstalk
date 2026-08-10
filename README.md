@@ -65,4 +65,23 @@ Adding support for a new agent harness should be a PR touching one YAML descript
 
 ## License
 
-MIT
+[PolyForm Noncommercial 1.0.0](LICENSE). Use it, run it, fork it, publish your
+changes — for any noncommercial purpose. Selling it, or building a commercial
+product or service on it, needs a separate licence; open an issue.
+
+Noncommercial is broad here and deliberately so: personal projects, study,
+research, hobby work, charities, schools and government all qualify under the
+licence's own terms. If you are an individual using this on your own code, you
+are covered.
+
+This is a source-available licence, not an OSI-approved open-source one. That
+is a real trade-off — some people and some organisations will not adopt it —
+and it is a deliberate choice rather than an oversight.
+
+**Contributions** are accepted under the same licence, inbound matching
+outbound: by opening a pull request you licence your contribution to the
+project under PolyForm Noncommercial 1.0.0 and confirm you have the right to do
+so. Nothing here is legal advice.
+
+Versions up to and including `70cd496` were published under MIT, and that grant
+cannot be withdrawn from anyone who received the code under it.

@@ -64,6 +64,9 @@ export const DAEMON_STATUS: Record<DaemonErrorCode, number> = {
   UNKNOWN_ROUTE: 404,
   DAEMON_ALREADY_RUNNING: 409,
   PORT_IN_USE: 409,
+  // Startup only, like PORT_IN_USE — thrown by `startDaemon`, never reaching
+  // HTTP. Mapped because the map is total over DaemonErrorCode on purpose.
+  PORT_BLOCKED: 409,
   PAYLOAD_TOO_LARGE: 413,
   EVENT_KIND_NOT_APPENDABLE: 422,
 };

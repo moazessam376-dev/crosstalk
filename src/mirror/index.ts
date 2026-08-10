@@ -1,11 +1,12 @@
 import { applyEvent, project } from '../core/projection.js';
 import { GhTransport, type GitHubTransport } from './github.js';
 import { MirrorQueue, type DrainResult } from './queue.js';
-import { renderClaimComment } from './render.js';
+import { renderClaimComment, type LadderHistory } from './render.js';
 import { commentRef, isPullable, pollInbound, postAsParticipant, renderInboundMessage } from './poll.js';
 
 import type { HubState } from '../core/projection.js';
 import type { CrosstalkEvent } from '../contracts/events.js';
+import type { Decision } from '../contracts/decision.js';
 import type { MirrorConfig } from '../contracts/config.js';
 
 export interface StartMirrorOptions {
@@ -88,6 +89,25 @@ export async function startMirror(options: StartMirrorOptions): Promise<MirrorHa
 
   const seen = new Set<number>();
 
+  /**
+   * Ladder history by decision id.
+   *
+   * `HubState` keeps only the live rung and discards `test_proposed` and
+   * `rung_failed`, which is right for the hub — it renders a position, not a
+   * history. The published record needs the climb, so it is accumulated here.
+   * Rebuilt from `since=0` on every start like everything else the mirror holds.
+   */
+  const ladders = new Map<string, Omit<LadderHistory, 'current'>>();
+
+  function ladderFor(decisionId: string): Omit<LadderHistory, 'current'> {
+    let history = ladders.get(decisionId);
+    if (history === undefined) {
+      history = { entered: [], failed: [], tests: [] };
+      ladders.set(decisionId, history);
+    }
+    return history;
+  }
+
   function absorb(event: CrosstalkEvent): void {
     state = applyEvent(state, event);
 
@@ -98,8 +118,38 @@ export async function startMirror(options: StartMirrorOptions): Promise<MirrorHa
       if (match?.[1] !== undefined) seen.add(Number(match[1]));
     }
 
+    if (event.kind === 'rung_entered') {
+      ladderFor(event.decisionId).entered.push({
+        rung: event.rung,
+        index: event.index,
+        ...(event.adjudicator === undefined ? {} : { adjudicator: event.adjudicator }),
+      });
+    }
+    if (event.kind === 'rung_failed') {
+      ladderFor(event.decisionId).failed.push({
+        rung: event.rung,
+        index: event.index,
+        reason: event.reason,
+      });
+    }
+    if (event.kind === 'test_proposed') {
+      ladderFor(event.decisionId).tests.push({
+        command: event.command,
+        predicts: event.predicts,
+        sha: event.sha,
+      });
+    }
+
     const task = state.tasks.get(taskIdOf(event));
     if (task !== undefined) queue.enqueue({ kind: 'task', task });
+  }
+
+  /** Freeze rule 1, read from Track A's projection rather than recomputed. */
+  function historyFor(decision: Decision | undefined): LadderHistory | undefined {
+    if (decision === undefined) return undefined;
+    const history = ladders.get(decision.id);
+    if (history === undefined) return undefined;
+    return { ...history, current: state.rungs.get(decision.id)?.index ?? decision.currentRung ?? 0 };
   }
 
   /**
@@ -147,7 +197,8 @@ export async function startMirror(options: StartMirrorOptions): Promise<MirrorHa
         (candidate) => candidate.claimId === claim.id,
       );
 
-      const body = renderClaimComment(claim, decision);
+      const ladder = historyFor(decision);
+      const body = renderClaimComment(claim, decision, ladder);
       if (rendered.get(claim.id) === body) continue;
       rendered.set(claim.id, body);
       queue.enqueue({
@@ -155,6 +206,7 @@ export async function startMirror(options: StartMirrorOptions): Promise<MirrorHa
         claim,
         pullNumber: pull,
         ...(decision === undefined ? {} : { decision }),
+        ...(ladder === undefined ? {} : { ladder }),
       });
     }
 

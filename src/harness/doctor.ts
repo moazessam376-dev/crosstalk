@@ -4,6 +4,7 @@ import { access, readFile } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import {
+  HUMAN_ID,
   PARTICIPANT_ID_PATTERN,
   TERMINAL_RUNGS,
   type CrosstalkConfig,
@@ -330,6 +331,17 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
   }
 
   for (const participant of config.participants) {
+    // `@human` is exempt: the pattern exists because a participant id becomes a
+    // worktree directory name, and the human never gets a worktree. The *id* is
+    // exempt, not the role — a second participant claiming `human` under a
+    // worktree-unsafe id is still rejected.
+    //
+    // Without this, `crosstalk init` wrote a config that `crosstalk doctor`
+    // rejected on the very next command: the product's first two steps
+    // disagreeing about a file one of them had just generated. Raised by Track G
+    // from the real run. No test covered the id `init` actually writes.
+    if (participant.id === HUMAN_ID) continue;
+
     if (!PARTICIPANT_ID_PATTERN.test(participant.id)) {
       findings.push(finding(
         'reject',

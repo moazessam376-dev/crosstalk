@@ -147,22 +147,25 @@ describe('nextRung', () => {
 
   it('advances to the next attemptable rung', () => {
     const { config, state } = fixture(['codex', 'cursor', 'gemini'], undefined, {});
-    expect(nextRung(decision(), config, state)).toEqual({ rung: 'third_agent', index: 1 });
+    expect(nextRung(decision(), state)).toEqual({ rung: 'third_agent', index: 1 });
   });
 
-  it('steps over a rung with no uninvolved peer', () => {
-    const { config, state } = fixture(['codex', 'cursor'], undefined, {});
-    expect(nextRung(decision(), config, state)).toEqual({ rung: 'leader', index: 2 });
+  it('returns a rung with no uninvolved peer rather than skipping it', () => {
+    // The daemon enters it and fails it with `no_uninvolved_peer`, so the log
+    // shows the rung was tried. Skipping here would make an unavailable
+    // third_agent look like a ladder that never had one.
+    const { state } = fixture(['codex', 'cursor'], undefined, {});
+    expect(nextRung(decision(), state)).toEqual({ rung: 'third_agent', index: 1 });
   });
 
   it('is undefined at the last rung, which is terminal', () => {
     const { config, state } = fixture(['codex', 'cursor', 'gemini'], undefined, {});
-    expect(nextRung(decision({ currentRung: 2 }), config, state)).toBeUndefined();
+    expect(nextRung(decision({ currentRung: 2 }), state)).toBeUndefined();
   });
 
   it('advances from the live rung, not the open-time snapshot', () => {
     const { config, state } = fixture(['codex', 'cursor', 'gemini'], undefined, {});
     state.rungs.set('D-1', { rung: 'third_agent', index: 1, adjudicator: 'gemini' });
-    expect(nextRung(decision(), config, state)).toEqual({ rung: 'leader', index: 2 });
+    expect(nextRung(decision(), state)).toEqual({ rung: 'leader', index: 2 });
   });
 });

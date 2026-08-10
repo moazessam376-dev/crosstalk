@@ -85,17 +85,27 @@ export async function enterRung(
       ? adjudicatorFor(decision.claimId, ctx.config, ctx.state)
       : undefined;
 
-  return [
+  const room = decision.claimId === undefined ? FLOOR : `dispute:${decision.claimId}`;
+  const events: CrosstalkEvent[] = [
     await ctx.append({
       kind: 'rung_entered',
       from: ctx.who,
-      room: decision.claimId === undefined ? '#floor' : `dispute:${decision.claimId}`,
+      room,
       decisionId: decision.id,
       rung,
       index,
       ...(adjudicator === undefined ? {} : { adjudicator }),
     }),
   ];
+
+  // A rung nobody can answer is entered and then failed, never skipped in
+  // silence: the log has to show it was tried. `planLadder` already removed
+  // the rungs this project can never run; this is the one that could, today,
+  // if a peer were free.
+  if (rung === 'third_agent' && adjudicator === undefined) {
+    events.push(...(await expireRung(ctx, decision.id, 'no_uninvolved_peer')));
+  }
+  return events;
 }
 
 function hasUnresolvedLadder(claimId: string, state: HubState): boolean {
@@ -186,7 +196,7 @@ export async function expireRung(
     }),
   ];
 
-  const next = nextRung(decision, ctx.config, ctx.state);
+  const next = nextRung(decision, ctx.state);
   if (next !== undefined) events.push(...(await enterRung(ctx, decision, next.index)));
   return events;
 }

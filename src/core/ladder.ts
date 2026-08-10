@@ -75,35 +75,25 @@ export function adjudicatorFor(
 }
 
 /**
- * The next rung that can actually be attempted, from the *live* rung.
+ * The rung after the live one.
+ *
+ * Deliberately does *not* filter on whether a peer is available: a rung that
+ * cannot run is entered and then failed with a reason, so the ladder shows it
+ * was tried. Skipping it here would make an unavailable `third_agent`
+ * indistinguishable from a ladder that never had one — the silence audit F-07
+ * exists to prevent.
  *
  * `undefined` means the ladder is at its last rung, which is terminal by
  * validation — falling off the end is a bug, not a state.
  */
 export function nextRung(
   decision: Decision,
-  config: CrosstalkConfig,
   state: HubState,
 ): { rung: LadderRung; index: number } | undefined {
   const ladder = decision.ladder;
   if (ladder === undefined) return undefined;
 
-  const current = currentRungOf(decision, state);
-  for (let index = (current?.index ?? -1) + 1; index < ladder.length; index += 1) {
-    const rung = ladder[index]!;
-    if (attemptable(rung, decision, config, state)) return { rung, index };
-  }
-  return undefined;
-}
-
-function attemptable(
-  rung: LadderRung,
-  decision: Decision,
-  config: CrosstalkConfig,
-  state: HubState,
-): boolean {
-  if (rung !== 'third_agent') return true;
-  return (
-    decision.claimId !== undefined && adjudicatorFor(decision.claimId, config, state) !== undefined
-  );
+  const index = (currentRungOf(decision, state)?.index ?? -1) + 1;
+  const rung = ladder[index];
+  return rung === undefined ? undefined : { rung, index };
 }

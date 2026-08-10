@@ -300,3 +300,44 @@ describe('rung timers', () => {
     );
   });
 });
+
+describe('a rung nobody can answer', () => {
+  it('enters third_agent, fails it by name, and climbs to the leader', { timeout: 20000 }, async () => {
+    // codex vs cursor with only those two workers configured: the rung is
+    // planned (two workers exist) but has nobody uninvolved to call. It must
+    // be entered and failed, not skipped — skipping makes an unavailable rung
+    // indistinguishable from a ladder that never had one.
+    await withDaemon(
+      async (daemon) => {
+        await post(daemon, '/claims', { ...CLAIM, against: 'cursor' }, 'codex');
+        for (let k = 1; k <= 4; k += 1) {
+          const responderTurn = k % 2 === 1;
+          const body = responderTurn
+            ? {
+                verdict: 'contest',
+                rationale: 'built this way because replay determinism needs a single pass',
+                falsifier: 'the focused ledger check would print two rows rather than one',
+                evidence: [ev(`counter-${k}`)],
+              }
+            : { verdict: 'uphold', evidence: [ev(`new-${k}`)] };
+          await post(daemon, '/claims/C-1/response', body, responderTurn ? 'cursor' : 'codex');
+        }
+
+        const log = await waitFor(daemon, (l) =>
+          l.some((e) => e.kind === 'rung_failed' && e.reason === 'no_uninvolved_peer'),
+        );
+
+        const failed = log.filter((e) => e.kind === 'rung_failed');
+        expect(failed.map((e) => (e as { reason: string }).reason)).toEqual([
+          'timeout',
+          'no_uninvolved_peer',
+        ]);
+        // Entered discriminating_test, third_agent, then leader.
+        expect(log.filter((e) => e.kind === 'rung_entered')).toHaveLength(3);
+        const last = log.filter((e) => e.kind === 'rung_entered').at(-1);
+        expect(last).toMatchObject({ rung: 'leader', index: 2 });
+      },
+      configWithTimeouts('[discriminating_test, third_agent, leader]', '      discriminating_test: 1s'),
+    );
+  });
+});

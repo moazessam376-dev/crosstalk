@@ -40,7 +40,17 @@ async function tempRepo(): Promise<string> {
 }
 
 function participant(id: string, role: Participant['role']): Participant {
-  return { id, role, harness: 'codex-app', lifecycle: 'attached', workspace: '.' };
+  // Workers get their own worktree, exactly as `crosstalk init` writes them.
+  // With `workspace: '.'` a worker resolves to the repo root and doctor
+  // rejects it — correctly — which made an earlier version of this file assert
+  // against a config the product never produces.
+  const workspace = role === 'worker' ? `.crosstalk/worktrees/${id.replace(/^@/, '')}` : '.';
+  return { id, role, harness: 'codex-app', lifecycle: 'attached', workspace };
+}
+
+/** Exactly what `crosstalk init` writes for the human. */
+function humanParticipant(): Participant {
+  return { id: HUMAN_ID, role: 'human', harness: 'human', lifecycle: 'attached', workspace: '.' };
 }
 
 function cfg(participants: Participant[]): CrosstalkConfig {
@@ -80,7 +90,7 @@ afterEach(async () => {
 describe('doctor and the reserved human id', () => {
   it('accepts the config `crosstalk init` generates', async () => {
     const findings = await doctor(
-      cfg([participant('leader', 'leader'), participant('codex', 'worker'), participant(HUMAN_ID, 'human')]),
+      cfg([participant('leader', 'leader'), participant('codex', 'worker'), humanParticipant()]),
       repo,
     );
 
@@ -91,7 +101,7 @@ describe('doctor and the reserved human id', () => {
   // and every assertion above would still pass.
   it('still rejects any other id carrying an @', async () => {
     const findings = await doctor(
-      cfg([participant('leader', 'leader'), participant('@codex', 'worker'), participant(HUMAN_ID, 'human')]),
+      cfg([participant('leader', 'leader'), participant('@codex', 'worker'), humanParticipant()]),
       repo,
     );
 
@@ -110,5 +120,32 @@ describe('doctor and the reserved human id', () => {
 
     expect(invalidId(findings)).toHaveLength(1);
     expect(invalidId(findings)[0]?.message).toContain('@operator');
+  }, 60_000);
+
+  // The second REJECT on the same fresh repo. It was missed for an hour
+  // because it sat below a `head -20` in the reviewer's terminal, which is why
+  // this asserts on the whole set of rejects rather than on one code.
+  it('emits no reject at all for the config `crosstalk init` generates', async () => {
+    const findings = await doctor(
+      cfg([participant('leader', 'leader'), participant('codex', 'worker'), humanParticipant()]),
+      repo,
+    );
+
+    expect(findings.filter((f) => f.level === 'reject')).toEqual([]);
+  }, 60_000);
+
+  it('still rejects an unknown harness on a non-human participant', async () => {
+    const findings = await doctor(
+      cfg([
+        participant('leader', 'leader'),
+        { id: 'codex', role: 'worker', harness: 'not-a-harness', lifecycle: 'attached', workspace: '.crosstalk/worktrees/codex' },
+        humanParticipant(),
+      ]),
+      repo,
+    );
+
+    const unknown = findings.filter((f) => f.code === 'UNKNOWN_HARNESS');
+    expect(unknown).toHaveLength(1);
+    expect(unknown[0]?.message).toContain('codex');
   }, 60_000);
 });

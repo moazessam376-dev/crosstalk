@@ -37,13 +37,54 @@ export async function postHumanAction(
   room: RoomId,
   fetchImpl: typeof fetch = fetch,
 ): Promise<PostResult> {
+  return postMessage(BODIES[action.type], room, fetchImpl);
+}
+
+/**
+ * Posts what the human actually typed.
+ *
+ * `kind: "message"` is not a simplification: `POST /events` accepts
+ * `DIRECTLY_APPENDABLE` and refuses everything else, so a browser cannot
+ * hand-build a protocol event whoever is clicking. A human pressing a button is
+ * not entitled to forge one any more than an agent is.
+ */
+export async function postMessage(
+  body: string,
+  room: RoomId,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PostResult> {
+  return post('/events', { kind: 'message', room, body }, fetchImpl);
+}
+
+/**
+ * Casts the human's vote on an open decision.
+ *
+ * §10.3 makes the human the terminal authority and A3 makes `human` a reachable
+ * ladder rung, so without this a dispute that escalated all the way to them
+ * could not be answered from the hub at all — the ladder would sit on its last
+ * rung, whose timer never fires, indefinitely.
+ *
+ * The rationale is collected by the control rather than discovered here: the
+ * daemon refuses an empty one with `VOTE_WITHOUT_RATIONALE`, and learning that
+ * through a round-trip is worse than a field that says so.
+ */
+export async function postVote(
+  decisionId: string,
+  option: string,
+  rationale: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PostResult> {
+  return post(`/decisions/${encodeURIComponent(decisionId)}/vote`, { option, rationale }, fetchImpl);
+}
+
+async function post(path: string, payload: unknown, fetchImpl: typeof fetch): Promise<PostResult> {
   let response: Response;
   try {
-    response = await fetchImpl('/events', {
+    response = await fetchImpl(path, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ kind: 'message', room, body: BODIES[action.type] }),
+      body: JSON.stringify(payload),
     });
   } catch (error) {
     return { ok: false, reason: `Could not reach the daemon: ${(error as Error).message}` };
@@ -53,7 +94,10 @@ export async function postHumanAction(
     return { ok: false, reason: 'The daemon refused this browser. Reopen the hub from the link `crosstalk up` printed.' };
   }
   if (!response.ok) {
-    return { ok: false, reason: `The daemon answered ${response.status}.` };
+    // The daemon's own message names the protocol error, which is more use than
+    // a status code on its own.
+    const detail = await response.text().catch(() => '');
+    return { ok: false, reason: detail.trim().length > 0 ? detail.trim() : `The daemon answered ${response.status}.` };
   }
   return { ok: true };
 }

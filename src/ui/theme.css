@@ -358,3 +358,253 @@ button:focus-visible {
 .empty-fact {
   color: var(--text-tertiary);
 }
+/* ---------------------------------------------------------------------------
+   Ladder rung states.
+
+   Three states that must not be confusable: a rung the ladder is on, a rung it
+   never attempted, and a rung it tried and lost. Rendering skipped and failed
+   alike is how a degraded ladder passes for a short one and an escalated
+   dispute passes for a stalled one. Colour here is status, never decoration
+   (spec §10.4).
+--------------------------------------------------------------------------- */
+
+.ladder-rung[data-state='failed'] {
+  border-color: var(--status-blocker);
+  color: var(--status-blocker);
+}
+
+.ladder-rung[data-state='skipped'] {
+  /* Dashed, not absent. The rung is still on the rail because the ladder was
+     configured with it — it just will not be attempted, and hovering says why. */
+  border-top-style: dashed;
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  opacity: 0.65;
+}
+
+.ladder-adjudicator {
+  margin: 0 12px 8px;
+  color: var(--status-open);
+}
+
+/* ---------------------------------------------------------------------------
+   Discriminating test proposals.
+--------------------------------------------------------------------------- */
+
+.test-proposals {
+  margin: 0 12px 12px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-panel);
+}
+
+.test-proposals h3 {
+  margin: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-hairline);
+  color: var(--text-tertiary);
+  font-size: var(--size-mono);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.test-proposal {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.test-proposal:last-child {
+  border-bottom: 0;
+}
+
+.proposal-by {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--size-mono);
+}
+
+.proposal-command,
+.proposal-sha {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.proposal-sha {
+  justify-self: start;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  padding: 1px 5px;
+  color: var(--text-secondary);
+}
+
+.proposal-predicts p {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+}
+
+/* Two runs at two commits differ because of the diff between them, not because
+   of who is right. Saying so on screen is the whole point of the sha. */
+.proposal-divergence {
+  margin: 2px 0 0;
+  color: var(--status-stale);
+  font-family: var(--font-mono);
+  font-size: var(--size-mono);
+}
+
+/* ---------------------------------------------------------------------------
+   The human's controls: a composer on every room, and a vote on any open
+   decision they are named in (spec §10.3).
+--------------------------------------------------------------------------- */
+
+.vote-control {
+  margin: 0 12px 12px;
+  border: 1px solid var(--status-open);
+  border-radius: var(--radius);
+  background: var(--surface-panel);
+}
+
+.vote-control h3 {
+  margin: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-hairline);
+  color: var(--status-open);
+  font-size: var(--size-mono);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vote-rationale,
+.composer-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  background: transparent;
+  padding: 9px 10px;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--size-ui);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.vote-rationale:focus-visible,
+.composer-input:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.vote-rationale::placeholder,
+.composer-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.vote-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.vote-option {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  padding: 4px 9px;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--size-mono);
+  cursor: pointer;
+}
+
+.vote-option:hover:not(:disabled) {
+  border-color: var(--status-open);
+}
+
+.vote-option:disabled,
+.composer-send:disabled {
+  /* Disabled because the rationale is empty. The daemon would refuse it with
+     VOTE_WITHOUT_RATIONALE, and a round-trip to learn that is worse than a
+     control that will not fire. */
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.vote-error,
+.composer-error {
+  margin: 0;
+  padding: 0 10px 10px;
+  color: var(--status-blocker);
+}
+
+.composer {
+  margin: 0 12px 12px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-panel);
+}
+
+.composer-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-hairline);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--size-mono);
+}
+
+.composer-identity {
+  border-radius: 4px;
+  background: var(--surface-raised);
+  padding: 1px 5px;
+  color: var(--status-open);
+}
+
+.composer-room {
+  color: var(--text-secondary);
+}
+
+/* Not a warning, a fact. It is easy to forget this is not a private note. */
+.composer-scope {
+  margin-left: auto;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.composer-route {
+  color: var(--text-tertiary);
+}
+
+.composer-send {
+  margin-left: auto;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent);
+  padding: 4px 12px;
+  color: var(--surface-base);
+  font: inherit;
+  font-size: var(--size-mono);
+  cursor: pointer;
+}
+
+.composer-send:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-send:hover:not(:disabled) {
+    filter: none;
+  }
+}

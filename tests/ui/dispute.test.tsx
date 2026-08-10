@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { createElement } from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CrosstalkEvent } from '../../src/contracts/events.js';
 import type { Claim, Evidence } from '../../src/contracts/claim.js';
@@ -479,5 +479,130 @@ describe('C1 discriminating test proposals', () => {
     render(createElement(DisputeView, { roomId: 'dispute:C-200', events: [...base, answeredHere] }));
 
     expect(screen.queryByTestId('test-proposal-3-divergence')).not.toBeInTheDocument();
+  });
+});
+/**
+ * C3. A3 makes `human` a reachable ladder rung and A2 resolves that rung on
+ * `@human`'s vote. With no way to vote from the hub, a dispute that escalated
+ * all the way to the person holding terminal authority could not be answered by
+ * them — the ladder would sit on its last rung, whose timer never fires, for
+ * ever. Same defect as a decision that reaches nobody, one layer up.
+ */
+describe('C3 the human can vote', () => {
+  const ladderToHuman: CrosstalkEvent[] = [
+    {
+      seq: 1,
+      ts: '2026-08-09T00:00:01Z',
+      kind: 'claim_raised',
+      from: 'leader',
+      room: 'dispute:C-300',
+      claim: { ...claim, id: 'C-300' },
+    },
+    {
+      seq: 2,
+      ts: '2026-08-09T00:00:02Z',
+      kind: 'decision_opened',
+      from: 'leader',
+      room: 'dispute:C-300',
+      decision: {
+        id: 'D-30',
+        question: 'Does the staffing coefficient apply twice?',
+        options: ['twice', 'once'],
+        voters: ['leader', 'codex', '@human'],
+        method: 'ladder',
+        ladder: ['discriminating_test', 'human'],
+        currentRung: 1,
+        rationale: [],
+        claimId: 'C-300',
+        votes: {},
+      },
+    },
+  ];
+
+  it('offers a vote to a participant the decision names', async () => {
+    const cast: unknown[] = [];
+    render(
+      createElement(DisputeView, {
+        roomId: 'dispute:C-300',
+        events: ladderToHuman,
+        self: '@human',
+        onVote: async (decisionId: string, option: string, rationale: string) => {
+          cast.push({ decisionId, option, rationale });
+          return { ok: true as const };
+        },
+      }),
+    );
+
+    fireEvent.change(screen.getByTestId('vote-rationale'), {
+      target: { value: 'The replay run settles it: one application.' },
+    });
+    fireEvent.click(screen.getByTestId('vote-option-once'));
+
+    await waitFor(() => expect(cast).toHaveLength(1));
+    expect(cast[0]).toEqual({
+      decisionId: 'D-30',
+      option: 'once',
+      rationale: 'The replay run settles it: one application.',
+    });
+  });
+
+  it('will not send a vote without a rationale', async () => {
+    // The daemon refuses this with VOTE_WITHOUT_RATIONALE. Discovering that
+    // through a round-trip is a worse experience than a required field.
+    const cast: unknown[] = [];
+    render(
+      createElement(DisputeView, {
+        roomId: 'dispute:C-300',
+        events: ladderToHuman,
+        self: '@human',
+        onVote: async (decisionId: string, option: string, rationale: string) => {
+          cast.push({ decisionId, option, rationale });
+          return { ok: true as const };
+        },
+      }),
+    );
+
+    fireEvent.click(screen.getByTestId('vote-option-once'));
+
+    expect(cast).toEqual([]);
+    expect(screen.getByTestId('vote-option-once')).toBeDisabled();
+  });
+
+  it('offers nothing to a participant the decision does not name', () => {
+    // The neighbouring case that must not render. `voters` is the eligibility
+    // list and the daemon refuses anyone else with NOT_ELIGIBLE_VOTER.
+    render(
+      createElement(DisputeView, {
+        roomId: 'dispute:C-300',
+        events: ladderToHuman,
+        self: 'cursor',
+        onVote: async () => ({ ok: true as const }),
+      }),
+    );
+
+    expect(screen.queryByTestId('vote-rationale')).not.toBeInTheDocument();
+  });
+
+  it('offers nothing once the decision has resolved', () => {
+    const resolved: CrosstalkEvent = {
+      seq: 3,
+      ts: '2026-08-09T00:00:03Z',
+      kind: 'decision_resolved',
+      from: 'leader',
+      room: 'dispute:C-300',
+      decisionId: 'D-30',
+      outcome: 'once',
+    };
+
+    render(
+      createElement(DisputeView, {
+        roomId: 'dispute:C-300',
+        events: [...ladderToHuman, resolved],
+        self: '@human',
+        onVote: async () => ({ ok: true as const }),
+      }),
+    );
+
+    expect(screen.queryByTestId('vote-rationale')).not.toBeInTheDocument();
   });
 });

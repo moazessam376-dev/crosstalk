@@ -8,6 +8,7 @@ import { Rail } from './Rail.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Stream } from './Stream.js';
 import type { HubState } from '../state/derive.js';
+import type { PostResult } from '../state/humanAction.js';
 
 type HumanAction = { type: 'propose_test' | 'intervene_human' };
 
@@ -16,13 +17,19 @@ export interface LayoutProps {
   activeRoom?: string;
   /** `policy.dispute.maxRounds`, passed through to the dispute header. */
   maxRounds?: number;
+  /** Who the daemon attributes this browser's posts to. */
+  self?: string;
+  /** Absent when no daemon is attached — the composer is hidden rather than inert. */
+  onSend?: (body: string) => Promise<PostResult>;
+  /** Absent when no daemon is attached. */
+  onVote?: (decisionId: string, option: string, rationale: string) => Promise<PostResult>;
   onSelectRoom?: (roomId: string) => void;
   onHumanAction?: (action: HumanAction) => void;
 }
 
 const GRID_TEMPLATE = 'minmax(180px, 220px) minmax(220px, 280px) minmax(0, 1fr) minmax(240px, 320px)';
 
-export function Layout({ state, activeRoom, maxRounds, onSelectRoom, onHumanAction }: LayoutProps) {
+export function Layout({ state, activeRoom, maxRounds, self, onSend, onVote, onSelectRoom, onHumanAction }: LayoutProps) {
   return createElement(
     'div',
     {
@@ -42,7 +49,7 @@ export function Layout({ state, activeRoom, maxRounds, onSelectRoom, onHumanActi
     },
     createElement(Rail, { participants: state.participants }),
     createElement(ChannelList, { rooms: state.rooms, activeRoom, onSelectRoom }),
-    createElement(Stream, { events: state.events, activeRoom, maxRounds, onHumanAction }),
+    createElement(Stream, { events: state.events, activeRoom, maxRounds, self, onSend, onVote, onHumanAction }),
     createElement(Inspector, { activeRoom, rooms: state.rooms }),
   );
 }

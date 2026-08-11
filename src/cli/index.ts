@@ -9,7 +9,7 @@ import type { CrosstalkEvent } from '../contracts/events.js';
 import { doctor, type Finding } from '../harness/doctor.js';
 import { runningCliPath } from '../harness/install.js';
 import { loadConfig } from '../daemon/config.js';
-import { startDaemon, tokenFilename } from '../daemon/server.js';
+import { exposureWarning, startDaemon, tokenFilename } from '../daemon/server.js';
 import { resolveHubDist } from '../daemon/hub.js';
 import { HUMAN_ID } from '../contracts/room.js';
 import { dmId } from '../core/rooms.js';
@@ -22,7 +22,7 @@ import { bold, dim, emit, eventLine, failureText, table } from './output.js';
 const USAGE = `crosstalk — multi-agent development where a finding is a claim, not a command
 
   crosstalk init [--participant id:role:harness[:model]]... [--force]
-  crosstalk up   [--port N] [--no-open] [--force]
+  crosstalk up   [--port N] [--host ADDR] [--no-open] [--force]
   crosstalk down [--as <id>] [--purge]
   crosstalk doctor
 
@@ -161,10 +161,12 @@ async function cmdInit(argv: string[]): Promise<number> {
 async function cmdUp(argv: string[]): Promise<number> {
   const { flags } = read(argv, {
     port: { type: 'string' },
+    host: { type: 'string' },
     'no-open': { type: 'boolean', default: false },
     force: { type: 'boolean', default: false },
   });
   const repo = resolve(str(flags, 'repo') ?? '.');
+  const host = str(flags, 'host');
   const portRaw = str(flags, 'port');
   const port = portRaw === undefined ? undefined : Number(portRaw);
   if (port !== undefined && !Number.isInteger(port)) {
@@ -178,7 +180,16 @@ async function cmdUp(argv: string[]): Promise<number> {
   const findings = await preflight(repo, flags['force'] === true);
   if (findings.length > 0) process.stdout.write(`${formatFindings(findings)}\n\n`);
 
-  const daemon = await startDaemon({ repo, ...(port === undefined ? {} : { port }) });
+  const daemon = await startDaemon({
+    repo,
+    ...(port === undefined ? {} : { port }),
+    ...(host === undefined ? {} : { host }),
+  });
+
+  // Above the banner, not below it: the one line saying the hub is now on the
+  // network should not arrive after four lines of paths.
+  const exposure = exposureWarning(daemon.host);
+  if (exposure !== undefined) process.stdout.write(`${bold('Exposed:')} ${exposure}\n\n`);
 
   const humanToken = daemon.tokens.get(HUMAN_ID);
   const hubUrl = humanToken === undefined ? undefined : `${daemon.url}/?t=${humanToken}`;

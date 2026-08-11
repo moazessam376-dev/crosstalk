@@ -154,16 +154,25 @@ verbatim. On Windows it looks like `node D:/src/crosstalk/dist/cli/index.js`;
 forward slashes work in PowerShell and Git Bash alike. Every command also takes
 `--repo <path>`, so you can run them from anywhere.
 
-`npm link` inside the clone gives you `crosstalk` and `ct` on your PATH. It is
-worth knowing that with more than one checkout, `ct` resolves to whichever you
-linked last — which may not be the one you built — and nothing warns you.
+`npm link` inside the clone gives you `crosstalk` and `ct` on your PATH. With
+more than one checkout, `ct` resolves to whichever you linked last — which may
+not be the one you built. `doctor` warns `CLI_INSTALL_SKEW` when it notices, and
+`up` prints the absolute path of the build it is actually running, because every
+symptom of that skew looks like a protocol bug until you know the two are not the
+same code.
 
 `init` writes a bearer token per participant under `.crosstalk/tokens/`,
 gitignores it, and references it from the MCP config by path rather than
 embedding it. It prints one line per agent to paste into it; those lines are the
 whole onboarding. `up` holds the terminal and prints a tokenised hub URL — open
-that one, not the bare address. `down --purge` removes the worktrees and tokens
-it created and keeps the event log.
+that one, not the bare address, and note that `doctor` reprints it while a daemon
+is running, so losing the scrollback is not losing the hub. `down --purge`
+removes the worktrees, base branches and tokens it created, and keeps the event
+log.
+
+The hub is loopback-only unless you say otherwise. `up --host 0.0.0.0` binds
+every interface — useful for reading the hub from a phone — and says out loud
+that the token in the URL is then the only thing guarding it.
 
 **[docs/RUNNING.md](docs/RUNNING.md) is the full walkthrough** — what each
 command does, where to start each agent and why it matters, how to tell a

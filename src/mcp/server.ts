@@ -37,7 +37,8 @@ export async function callTool(
   }
 
   try {
-    return { content: [{ type: 'text', text: JSON.stringify(await tool.invoke(client, args), null, 2) }] };
+    const result = await tool.invoke(client, args);
+    return { content: [{ type: 'text', text: JSON.stringify(withIdentity(result, client), null, 2) }] };
   } catch (error) {
     if (error instanceof DaemonRequestError) {
       // The daemon's own message names the route or the rule that was broken —
@@ -49,6 +50,32 @@ export async function callTool(
     }
     return fail(error instanceof Error ? error.message : String(error));
   }
+}
+
+/**
+ * Stamp every tool result with the identity the daemon resolved.
+ *
+ * Done here rather than in each tool so a tool added later cannot forget. An
+ * agent whose harness discovered the wrong `.mcp.json` authenticates as someone
+ * else and has, until now, no way to notice: two sessions ran as `leader` for
+ * two full rounds while their message bodies claimed to be `metrics` and
+ * `skeleton`, and the only detector was a human reading the log.
+ *
+ * `you` is written last so the envelope's answer wins over anything a handler
+ * put in the body. It is the daemon's, and the daemon is the only party that
+ * knows.
+ */
+function withIdentity(result: unknown, client: DaemonClient): unknown {
+  if (client.you === undefined) return result;
+
+  const stamp = {
+    you: client.you,
+    // Only when there is something to say. An always-present empty array is
+    // noise an agent learns to skip, and this is the line that has to be read.
+    ...(client.warnings.length > 0 ? { warnings: client.warnings } : {}),
+  };
+  const isPlainObject = typeof result === 'object' && result !== null && !Array.isArray(result);
+  return isPlainObject ? { ...(result as Record<string, unknown>), ...stamp } : { result, ...stamp };
 }
 
 function fail(text: string): ToolResult {

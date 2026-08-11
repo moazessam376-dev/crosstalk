@@ -295,7 +295,7 @@ describe('mcp tools against a real daemon', () => {
       const result = await callTool(f.as('codex'), 'await_turn', { timeout_s: 1 });
 
       expect(result.isError).toBeUndefined();
-      expect(payload(result)).toEqual({ idle: true });
+      expect(payload(result)).toEqual({ idle: true, you: 'codex' });
     });
   });
 
@@ -315,7 +315,7 @@ describe('mcp tools against a real daemon', () => {
       expect(first.events.length).toBeGreaterThan(0);
 
       // The delivered mark has advanced, so the default path now has nothing.
-      expect(payload(await callTool(codex, 'await_turn', { timeout_s: 1 }))).toEqual({ idle: true });
+      expect(payload(await callTool(codex, 'await_turn', { timeout_s: 1 }))).toEqual({ idle: true, you: 'codex' });
 
       // ...but an explicit `since` must override that mark. Without it being
       // forwarded, this is idle too and the test cannot tell the difference.

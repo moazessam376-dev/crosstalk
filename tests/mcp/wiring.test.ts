@@ -115,3 +115,28 @@ describe('what an agent actually receives over MCP', () => {
     });
   });
 });
+
+describe('CT-8 every tool result names the caller', () => {
+  it('attaches `you` to a tool that is not roster', async () => {
+    // Asserted on `say` rather than `roster` on purpose: if only the roster
+    // handler answered, an agent that started with any other call would still
+    // have no way to discover which identity its token resolved to. The echo
+    // belongs to the envelope, not to one tool.
+    await withMcpClient(async (client) => {
+      const result = await client.callTool({
+        name: 'say',
+        arguments: { room: '#floor', body: 'joining' },
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect((JSON.parse(firstText(result)) as { you?: string }).you).toBe('leader');
+    });
+  });
+
+  it('attaches `you` to roster as well, where the kickoff line sends agents', async () => {
+    await withMcpClient(async (client) => {
+      const result = await client.callTool({ name: 'roster', arguments: {} });
+      expect((JSON.parse(firstText(result)) as { you?: string }).you).toBe('leader');
+    });
+  });
+});

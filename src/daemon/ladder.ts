@@ -16,6 +16,12 @@ export interface LadderContext {
   who: ParticipantId;
   config: CrosstalkConfig;
   state: HubState;
+  /**
+   * When each participant was last heard from. The `third_agent` rung ranks by
+   * this rather than by "has ever presented a token", so a peer probed once
+   * from a human shell cannot outrank one that has been answering.
+   */
+  seenAt?: ReadonlyMap<ParticipantId, number>;
   append(draft: DraftEvent): Promise<CrosstalkEvent>;
 }
 
@@ -85,7 +91,7 @@ export async function enterRung(
 
   const adjudicator =
     rung === 'third_agent' && decision.claimId !== undefined
-      ? adjudicatorFor(decision.claimId, ctx.config, ctx.state)
+      ? adjudicatorFor(decision.claimId, ctx.config, ctx.state, ctx.seenAt)
       : undefined;
 
   const room = decision.claimId === undefined ? FLOOR : `dispute:${decision.claimId}`;

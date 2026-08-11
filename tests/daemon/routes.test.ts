@@ -947,3 +947,27 @@ describe('CT-9 a participant running outside its declared workspace is told', ()
     });
   });
 });
+
+describe('CT-7 a probe does not make an agent look live', () => {
+  interface Roster {
+    participants: { id: string; status: string }[];
+  }
+  const statusOf = (r: Roster, id: string): string =>
+    r.participants.find((p) => p.id === id)!.status;
+
+  it('reports a participant that has never spoken as offline', async () => {
+    await withDaemon(async (daemon) => {
+      const r = await readJson<Roster>(await get(daemon, '/roster', 'leader'));
+      expect(statusOf(r, 'cursor')).toBe('offline');
+    });
+  });
+
+  it('reports it active right after it speaks', async () => {
+    // The neighbouring case: expiry must not mean "always offline".
+    await withDaemon(async (daemon) => {
+      await get(daemon, '/board', 'cursor');
+      const r = await readJson<Roster>(await get(daemon, '/roster', 'leader'));
+      expect(statusOf(r, 'cursor')).toBe('active');
+    });
+  });
+});

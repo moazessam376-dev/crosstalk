@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs, type ParseArgsConfig } from 'node:util';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import type { CrosstalkEvent } from '../contracts/events.js';
 import { doctor, type Finding } from '../harness/doctor.js';
 import { runningCliPath } from '../harness/install.js';
 import { loadConfig } from '../daemon/config.js';
-import { startDaemon } from '../daemon/server.js';
+import { startDaemon, tokenFilename } from '../daemon/server.js';
 import { resolveHubDist } from '../daemon/hub.js';
 import { HUMAN_ID } from '../contracts/room.js';
 
@@ -174,30 +174,34 @@ async function cmdUp(argv: string[]): Promise<number> {
   const daemon = await startDaemon({ repo, ...(port === undefined ? {} : { port }) });
 
   const humanToken = daemon.tokens.get(HUMAN_ID);
-  const hubUrl = humanToken === undefined ? daemon.url : `${daemon.url}/?t=${humanToken}`;
+  const hubUrl = humanToken === undefined ? undefined : `${daemon.url}/?t=${humanToken}`;
+
+  // A terminal is what makes opening a browser meaningful. `rundll32` exits zero
+  // on a headless launch having opened nothing, so attempting it there reports a
+  // success that did not happen.
+  const browser =
+    flags['no-open'] === true || hubUrl === undefined
+      ? 'disabled'
+      : process.stdout.isTTY === true
+        ? 'opening'
+        : 'no-tty';
 
   process.stdout.write(
-    [
-      `${bold('Crosstalk is up')}  ${daemon.url}`,
-      // CT-1: which build this actually is. `ct` on PATH can be a different
-      // checkout, and every symptom of that skew looks like a protocol bug
-      // until you know the two are not the same code.
-      dim(`  cli      ${runningCliPath()}`),
-      dim(`  hub      ${resolveHubDist(import.meta.url)}`),
-      dim(`  log      ${join(stateDir(repo), 'events.jsonl')}`),
-      dim(`  agents   ${config.participants.map((p) => p.id).join(', ')}`),
-      '',
-      dim('  Ctrl-C to stop, or `crosstalk down` from another shell.'),
-      '',
-    ].join('\n'),
+    `${upBanner({
+      url: daemon.url,
+      hubUrl,
+      cli: runningCliPath(),
+      hub: resolveHubDist(import.meta.url),
+      log: join(stateDir(repo), 'events.jsonl'),
+      agents: config.participants.map((participant) => participant.id),
+      browser,
+    }).join('\n')}\n`,
   );
 
-  if (flags['no-open'] !== true && humanToken !== undefined) {
-    // Never fatal: the daemon is serving whether or not a browser appeared.
-    const opened = await openBrowser(hubUrl);
-    if (!opened) process.stdout.write(dim(`  Open this yourself: ${hubUrl}\n`));
-  } else if (humanToken !== undefined) {
-    process.stdout.write(dim(`  Hub: ${hubUrl}\n`));
+  if (browser === 'opening') {
+    // Never fatal: the daemon is serving whether or not a browser appeared, and
+    // the url is already on screen either way.
+    await openBrowser(hubUrl!);
   }
 
   // Hold the process open; the listening socket does the rest.
@@ -209,6 +213,50 @@ async function cmdUp(argv: string[]): Promise<number> {
     process.once('SIGTERM', stop);
   });
   return EXIT.ok;
+}
+
+/**
+ * The `up` banner, as data.
+ *
+ * CT-11: the tokenised hub URL is the only way in — the daemon refuses a
+ * browser without it, and a refused hub renders as a quiet one (CT-10) — and it
+ * was printed on exactly one branch, the `--no-open` one. On the default path
+ * the line never appeared, so an operator who lost the scrollback had no way
+ * back to their own hub, and the origin a browser autocompletes is the
+ * untokenised one that gets refused.
+ *
+ * Returned rather than written so a test can assert the line is present on
+ * every branch. That is the whole invariant, and it is not one an eyeball on a
+ * banner reliably checks.
+ */
+export function upBanner(parts: {
+  url: string;
+  /** Absent only when there is no `@human` token to embed. */
+  hubUrl?: string;
+  cli: string;
+  hub: string;
+  log: string;
+  agents: readonly string[];
+  browser: 'opening' | 'no-tty' | 'disabled';
+}): string[] {
+  return [
+    `${bold('Crosstalk is up')}  ${parts.url}`,
+    // CT-1: which build this actually is. `ct` on PATH can be a different
+    // checkout, and every symptom of that skew looks like a protocol bug until
+    // you know the two are not the same code.
+    dim(`  cli      ${parts.cli}`),
+    dim(`  hub      ${parts.hub}`),
+    dim(`  log      ${parts.log}`),
+    dim(`  agents   ${parts.agents.join(', ')}`),
+    '',
+    ...(parts.hubUrl === undefined ? [] : [`  ${bold('Hub:')} ${parts.hubUrl}`]),
+    ...(parts.browser === 'no-tty'
+      ? [dim('  No terminal here, so no browser was opened. Open the line above.')]
+      : []),
+    '',
+    dim('  Ctrl-C to stop, or `crosstalk down` from another shell.'),
+    '',
+  ];
 }
 
 async function cmdDown(argv: string[]): Promise<number> {
@@ -254,12 +302,40 @@ async function cmdDoctor(argv: string[]): Promise<number> {
   const repo = resolve(str(flags, 'repo') ?? '.');
   const findings = await doctor(await loadConfig(repo), repo);
 
+  // CT-11's other half: the tokenised hub URL is recoverable without scrollback.
+  // `up` prints it once; if that window is gone, this is the only other place it
+  // exists, and the untokenised origin a browser autocompletes gets refused.
+  const hubUrl = await runningHubUrl(repo);
+
   emit(findings, flags['json'] === true, () =>
-    findings.length === 0 ? 'No findings. Everything doctor checks is in order.' : formatFindings(findings),
+    [
+      findings.length === 0 ? 'No findings. Everything doctor checks is in order.' : formatFindings(findings),
+      ...(hubUrl === undefined ? [] : ['', `${bold('Hub:')} ${hubUrl}`]),
+    ].join('\n'),
   );
 
   // Warnings never block: each one names a capability lost, not a fault.
   return findings.some((finding) => finding.level === 'reject') ? EXIT.protocol : EXIT.ok;
+}
+
+/**
+ * The tokenised hub url for a daemon that is currently running, or `undefined`.
+ *
+ * Two files, because they hold different halves and always have: `daemon.json`
+ * is `{version, url, pid, startedAt}` and has never carried a token, and the
+ * token lives at `.crosstalk/tokens/human` — `tokenFilename` strips the `@`.
+ * Silent when either is missing: no daemon, or no human token, is an ordinary
+ * state and not something `doctor` should report as a fault.
+ */
+async function runningHubUrl(repo: string): Promise<string | undefined> {
+  try {
+    const descriptor = JSON.parse(await readFile(join(stateDir(repo), 'daemon.json'), 'utf8')) as { url?: string };
+    if (typeof descriptor.url !== 'string') return undefined;
+    const token = (await readFile(join(stateDir(repo), 'tokens', tokenFilename(HUMAN_ID)), 'utf8')).trim();
+    return token === '' ? undefined : `${descriptor.url}/?t=${token}`;
+  } catch {
+    return undefined;
+  }
 }
 
 /** One rendering, so `up`'s preflight and `doctor` cannot drift apart. */

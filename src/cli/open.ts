@@ -26,7 +26,10 @@ export function browserCommand(url: string): { file: string; args: string[] } {
 export async function openBrowser(url: string): Promise<boolean> {
   const { file, args } = browserCommand(url);
   return new Promise((done) => {
-    const child = execFile(file, args, (error) => done(error === null));
+    // `windowsHide`, like every other execFile in this tree: a console window
+    // flashing up is a poor look in the one path whose whole symptom is a
+    // headless launch behaving oddly.
+    const child = execFile(file, args, { windowsHide: true }, (error) => done(error === null));
     child.on('error', () => done(false));
   });
 }

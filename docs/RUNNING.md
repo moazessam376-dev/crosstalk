@@ -333,6 +333,7 @@ by a prompt rule.
 
 ```
 say      --as <id> --room '#floor' --body '...' [--to <id>]
+dm       --as <id> --with <id> --body '...'
 claim    --as <id> --against <id> --target <file:line> --assertion '...' --falsifier '...'
          [--severity blocker|defect|risk|nit] [--evidence-cmd '...'] [--evidence-sha <sha>]
 respond  <claim-id> --as <id> --verdict accept|contest|uphold|concede|amend|clarify
@@ -340,25 +341,24 @@ respond  <claim-id> --as <id> --verdict accept|contest|uphold|concede|amend|clar
 events   [--as <id>] [--since N]
 await    [--as <id>] [--timeout 50]
 roster | board | mine   [--as <id>]
+
+task create --as <leader> --id T-01 --title '...' --brief '...'
+            --assignee <id> --branch <branch>
+            [--spec-ref R]... [--dep T-00]... [--acceptance '...']...
+task state  <id> --as <id> --state <state> [--reason '...']
 ```
 
-### The brief names entry points that do not exist — on both transports
+`task create` and `task state` are the leader's way to assign work without an
+MCP connection — which is the normal state right after `init`, because Claude
+Code binds `.mcp.json` at session start.
 
-As of `88abd4d` (11 August 2026), the brief `init` writes tells agents to use
-four things per transport, and on **both** transports two of the four are wrong.
-This affects every agent, not just CLI ones — MCP is the default tier for
-`claude-code-app`, which is what most people are running.
+`dm` opens a **side room** with one participant. It is not private: `@human` is
+in every room by design, so the operator can audit everything. That is why they
+are called side rooms rather than DMs.
 
-**If your agent has MCP**, the brief tells it to call:
+### The brief names only entry points that exist
 
-| Brief says | Reality |
-|---|---|
-| `acknowledge(task_id, restatement, ambiguities[])` | does not exist — the tool is **`ack_task`** |
-| `submit(task_id, critique_record, evidence[])` | does not exist — the tool is **`submit_task`** |
-| `raise_claim({...})` | correct |
-| `respond_to_claim(claim_id, verdict, ...)` | correct |
-
-The registered tools, in full:
+The registered MCP tools, in full:
 
 ```
 ack_task        add_evidence    await_turn      board
@@ -367,17 +367,25 @@ read_events     respond_to_claim  roster        say
 set_task_state  submit_task     vote
 ```
 
-**If your agent uses the CLI**, the brief tells it to run
-`crosstalk acknowledge`, `crosstalk submit`, `crosstalk claim raise` and
-`crosstalk claim respond`. The first two do not exist (`Unknown command`); the
-other two are `claim` and `respond` with different argument shapes. Use the list
-above, which is `--help`.
+**This used to be a warning, and it is worth keeping the history.** Up to
+`88abd4d` the brief told every agent to call `acknowledge()` and `submit()` on
+MCP, and `crosstalk acknowledge` and `crosstalk submit` on the shell — four
+names, of which two per transport had never existed. The two wrong ones were the
+same two both times: the gate before code starts and the gate before work is
+submitted. An agent following its brief literally failed at exactly the two
+points the protocol will not let it skip, and it survived a full protocol repair
+because nothing compared the brief to the code.
 
-In both cases the two that are wrong are the same two: the **gate** before code
-starts and the **gate** before work is submitted. An agent that follows its
-brief literally fails at exactly the two points the protocol will not let it
-skip. If an agent reports that a tool or command does not exist, this is why —
-it is not confused, its brief is wrong.
+It cannot recur silently now. `tests/harness/brief-vocabulary.test.ts` extracts
+every `` `crosstalk <name>` `` and every `` `tool_name(` `` from the rendered
+brief and checks each against the real command table and the real tool list, and
+it guards against a vacuous pass by requiring the brief to name something. If a
+brief ever names a command that does not exist, that test is red before the brief
+reaches an agent.
+
+If an agent still reports that a tool or command does not exist, check
+`CLI_INSTALL_SKEW` in `doctor` first: the likeliest cause is now that `ct` on
+PATH is a different, older checkout than the one that wrote the project.
 
 ---
 

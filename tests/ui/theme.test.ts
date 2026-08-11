@@ -58,6 +58,31 @@ describe('theme tokens', () => {
     expect(block('.composer')).toMatch(/flex:\s*none/);
   });
 
+  /**
+   * CT-15, the half the tests above could not see.
+   *
+   * Every assertion in the test above passed while the bug was live, because
+   * they check the rules *inside* the stream and the defect was one level up:
+   * `.hub-root` had `min-height: 100vh` and no height. A flex column with no
+   * definite height grows to its content, so `.hub-stream`'s `overflow: hidden`
+   * had nothing to clip, `.stream-scroll` never became a scroll container, and
+   * the document scrolled instead. Measured on the live hub at 78 events:
+   * `.hub-root` computed to 3868px against an 800px viewport, `scrollers: []`,
+   * composer at y=3727.
+   *
+   * The reason it was reported fixed and was not: it was measured on a hub with
+   * three messages, where the content fits the viewport and `min-height: 100vh`
+   * and `height: 100vh` are indistinguishable. A layout assertion needs a
+   * populated fixture or it asserts nothing.
+   */
+  it('gives the hub a definite height, so something inside it has to scroll', async () => {
+    const css = await readFile('src/ui/theme.css', 'utf8');
+    const root = css.slice(css.indexOf('.hub-root {'), css.indexOf('}', css.indexOf('.hub-root {')));
+
+    // `min-height` alone is what the bug was. The clamp has to be a height.
+    expect(root).toMatch(/(?<!min-)height:\s*100dvh/);
+  });
+
   it('declares .hub-stream exactly once, so no rule can win by source order', () => {
     // There were two contradictory `.hub-stream` blocks — one `overflow: auto`,
     // one `overflow: hidden` — and the pin survived only because the second came

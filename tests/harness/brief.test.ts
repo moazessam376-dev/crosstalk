@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PolicyConfig, Participant } from '../../src/contracts/index.js';
 import type { HarnessDescriptor } from '../../src/harness/registry.js';
-import { briefVersion, renderBrief, writeBrief } from '../../src/harness/brief.js';
+import { briefVersion, localBriefFile, renderBrief, writeBrief } from '../../src/harness/brief.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -71,7 +71,10 @@ describe('brief generation', () => {
   it('tells a shell-tier participant to use the CLI, not MCP tools', () => {
     const content = renderBrief(worker(), descriptor(), policy(), 'shell');
 
-    expect(content).toContain('crosstalk claim raise');
+    // `crosstalk claim raise` was the assertion here, and it pinned a command
+    // that has never existed — the test agreed with the brief and both were
+    // wrong. `claim` and `respond` are the real top-level commands.
+    expect(content).toContain('crosstalk claim --as');
     expect(content).not.toContain('raise_claim(');
   });
 
@@ -100,8 +103,22 @@ describe('brief generation', () => {
     await writeBrief(participant, descriptor(), policy(), 'shell', directory);
     await writeBrief(participant, descriptor(), policy(), 'mcp', directory);
 
-    const content = await readFile(join(directory, 'agents', 'codex', 'AGENTS.md'), 'utf8');
+    // CT-4: the local path, never `AGENTS.md`. That one is tracked in most
+    // repositories, so writing the brief there left every worker's worktree
+    // dirty and a `git add -A` committed a worker brief over the project's.
+    const content = await readFile(join(directory, 'agents', 'codex', 'AGENTS.local.md'), 'utf8');
     expect(content).toContain('# Crosstalk worker brief');
     expect(content).toContain('raise_claim(');
+
+    // The neighbouring case: the tracked file must not have been created at all.
+    await expect(readFile(join(directory, 'agents', 'codex', 'AGENTS.md'), 'utf8')).rejects.toThrow();
+  });
+
+  it('derives the local brief name for every shape the registry uses', () => {
+    expect(localBriefFile('CLAUDE.md')).toBe('CLAUDE.local.md');
+    expect(localBriefFile('AGENTS.md')).toBe('AGENTS.local.md');
+    expect(localBriefFile('.cursor/rules/crosstalk.mdc')).toBe('.cursor/rules/crosstalk.local.mdc');
+    // No extension: still has to land somewhere git is not watching.
+    expect(localBriefFile('BRIEF')).toBe('BRIEF.local');
   });
 });

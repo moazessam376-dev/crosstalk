@@ -83,15 +83,21 @@ export function ProtocolCard({ event, testId = defaultTestId(event) }: ProtocolC
       );
   }
 
+  // design:176-181 — a protocol event is one grey line with a coloured dot, not
+  // a boxed card. The unsupported branch above keeps its card on purpose: an
+  // event this build cannot read must look wrong rather than blend into the
+  // stream.
   return createElement(
-    'article',
+    'div',
     {
-      className: 'protocol-card',
+      className: 'protocol-row',
       'data-card-kind': event.kind,
       'data-event-kind': event.kind,
       'data-testid': testId,
     },
-    createElement('header', { className: 'protocol-card-header' }, createElement('strong', null, event.from), createElement('span', { className: 'fact' }, `#${event.seq}`)),
-    content,
+    createElement('span', { className: 'protocol-rail', 'data-kind': event.kind, 'aria-hidden': 'true' }),
+    createElement('span', { className: 'protocol-kind' }, event.kind.replaceAll('_', ' ')),
+    createElement('span', { className: 'protocol-body' }, content),
+    createElement('span', { className: 'protocol-seq' }, `#${event.seq}`),
   );
 }

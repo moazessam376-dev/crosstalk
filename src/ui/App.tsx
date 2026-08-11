@@ -1,5 +1,7 @@
 import { createElement, useEffect, useState } from 'react';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
+import { Disconnected } from './layout/Disconnected.js';
+// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Layout } from './layout/Layout.js';
 import { deriveState } from './state/derive.js';
 import { useLog, type LogSource } from './state/useLog.js';
@@ -8,8 +10,7 @@ import { postHumanAction, postMessage, postVote, type HumanAction } from './stat
 
 /**
  * Used when no daemon answers `/config.json` — `vite dev`, or a static build
- * someone opened directly. Keeping it means every existing UI test still
- * drives the component the same way.
+ * someone opened directly. It is never shown unasked: see `Disconnected`.
  */
 const FIXTURE_SOURCE: LogSource = { kind: 'fixture', path: '/session-dispute.jsonl' };
 
@@ -24,9 +25,22 @@ function sourceFor(connection: HubConnection): LogSource {
     : FIXTURE_SOURCE;
 }
 
+/**
+ * Where the browser is pointed, for the recovery screen to quote back.
+ *
+ * Read off `globalThis` because the repo's tsconfig omits the `dom` lib on
+ * purpose, so `window` is not a name here.
+ */
+function currentOrigin(): string {
+  const location = (globalThis as { location?: { origin?: string; pathname?: string } }).location;
+  if (location === undefined) return '';
+  return `${location.origin ?? ''}${location.pathname ?? ''}`;
+}
+
 export default function App({ connection: injected }: AppProps = {}) {
   const [connection, setConnection] = useState<HubConnection>(injected ?? { kind: 'loading' });
   const [notice, setNotice] = useState<string | undefined>();
+  const [sampleOpened, setSampleOpened] = useState(false);
 
   useEffect(() => {
     if (injected !== undefined) return;
@@ -41,9 +55,6 @@ export default function App({ connection: injected }: AppProps = {}) {
 
   const { events, connected } = useLog(sourceFor(connection));
   const [selectedRoom, setSelectedRoom] = useState<string | undefined>();
-  // Undefined in fixture mode, and deliberately not defaulted. `deriveState`
-  // feeds the channel rows and the prop feeds the dispute header; both read
-  // this one value so the two can no longer disagree.
   const maxRounds = connection.kind === 'live' ? connection.config.maxRounds : undefined;
   const state = deriveState(events, maxRounds);
   const defaultRoom = connection.kind === 'live'
@@ -51,17 +62,41 @@ export default function App({ connection: injected }: AppProps = {}) {
     : state.rooms.find((room) => room.kind === 'dispute')?.id ?? state.rooms[0]?.id;
   const activeRoom = selectedRoom ?? defaultRoom;
 
-  // Four states, not two. `connected` alone cannot distinguish a live stream
-  // that has sent nothing yet from a hub reading a fixture — and "connected"
-  // over an empty screen is this project's signature failure, shipped once
-  // already with 28 green tests behind it.
+  // The pill shows a short label; this is the long one. Four states, not two:
+  // `connected` alone cannot tell a live stream that has sent nothing from a
+  // hub reading a fixture, and "connected" over an empty screen is this
+  // project's signature failure, shipped once already behind 28 green tests.
+  // The design has no room for the long form, so it stays as the live region —
+  // a screen reader still gets the distinction the pill compresses.
   const status = connection.kind === 'loading'
     ? 'connecting'
     : connection.kind === 'fixture'
-      ? 'offline — showing a sample conversation'
+      ? 'not connected'
       : connected
         ? (events.length === 0 ? 'live — waiting for the first event' : 'live')
         : 'reconnecting';
+  const statusLabel = status.startsWith('live') ? 'live' : status;
+
+  /**
+   * CT-10. A refused browser used to get the entire working hub — channel
+   * list, composer, live Send button — over zero events and an empty
+   * participants panel, under the words "showing a sample conversation" when no
+   * sample had loaded. A live session with sixteen events and two open claims
+   * was read as dead.
+   *
+   * With no daemon there is nothing to show and nothing that can be posted, so
+   * the hub is not drawn at all. The sample is offered only once it has
+   * actually loaded, and only on request — a hub that announces a sample it
+   * does not have is the whole defect.
+   */
+  if (connection.kind === 'fixture' && !sampleOpened) {
+    return createElement(Disconnected, {
+      reason: connection.reason,
+      origin: currentOrigin(),
+      sampleCount: events.length,
+      onViewSample: () => setSampleOpened(true),
+    });
+  }
 
   const onHumanAction = (action: HumanAction): void => {
     if (connection.kind !== 'live') {
@@ -80,37 +115,30 @@ export default function App({ connection: injected }: AppProps = {}) {
       'data-connected': connected ? 'true' : 'false',
       'data-source': connection.kind,
       'data-status': status,
+      className: 'hub-root',
     },
-    createElement('p', { className: 'app-status', 'aria-live': 'polite' }, status),
+    // The sample is a sample and says so for as long as it is on screen. It is
+    // read-only: there is no daemon behind it to post to.
     connection.kind === 'fixture'
-      ? createElement('p', { className: 'app-reason', 'data-testid': 'fixture-reason' }, connection.reason)
+      ? createElement(
+          'p',
+          { className: 'sample-banner', role: 'status', 'data-testid': 'sample-banner' },
+          `Sample conversation — not your session. ${connection.reason}`,
+        )
       : null,
     notice !== undefined
       ? createElement('p', { className: 'app-notice', role: 'alert', 'data-testid': 'human-action-notice' }, notice)
       : null,
-    // An empty live log is a first run, not a fault. Saying nothing here is how
-    // a blank screen gets shipped and called "connected".
-    connection.kind === 'live' && events.length === 0
-      ? createElement(
-          'p',
-          { className: 'app-empty', 'data-testid': 'empty-log' },
-          `Connected as ${connection.config.self}. Nothing has been said yet — start an agent, or post to ${connection.config.room}.`,
-        )
-      : null,
+    createElement('p', { className: 'app-status sr-only', 'aria-live': 'polite' }, status),
     createElement(Layout, {
       state,
       activeRoom,
       maxRounds,
+      status: statusLabel,
       self: connection.kind === 'live' ? connection.config.self : undefined,
-      // Shown without a daemon too, and it says why it cannot post. The two
-      // canned buttons already answer this question that way, and a composer
-      // that vanishes instead would also hide it from `vite dev` and from
-      // every static build — which is where the design gets looked at.
-      onSend: activeRoom === undefined
-        ? undefined
-        : connection.kind === 'live'
-          ? (body: string) => postMessage(body, activeRoom)
-          : async () => ({ ok: false as const, reason: 'This hub is not connected to a daemon, so there is nobody to tell.' }),
+      onSend: connection.kind === 'live' && activeRoom !== undefined
+        ? (body: string) => postMessage(body, activeRoom)
+        : undefined,
       onVote: connection.kind === 'live'
         ? (decisionId: string, option: string, rationale: string) => postVote(decisionId, option, rationale)
         : undefined,

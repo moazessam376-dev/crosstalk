@@ -53,8 +53,28 @@ import { acquireLock, recordLockUrl, releaseLock } from './lock.js';
 import { isBlockedPort, NoUsablePortError, pickUsablePort } from './ports.js';
 import { DaemonError } from './errors.js';
 
-/** Loopback only. Never `localhost`: it resolves to ::1 first on Windows, which strands IPv4 clients on a server that started fine. */
+/**
+ * The default interface. Never `localhost`: it resolves to `::1` first on
+ * Windows, which strands IPv4 clients on a server that started fine.
+ *
+ * That is an argument about the *name*, and it survives `--host` (CT-14a):
+ * the interface became settable, the spelling did not.
+ */
 const HOST = '127.0.0.1';
+
+/**
+ * Why binding this interface is worth saying out loud, or `undefined` for one
+ * that needs no warning.
+ *
+ * The whole 127/8 block is loopback, not just `127.0.0.1` — `127.0.0.53` is
+ * where systemd-resolved lives and it never leaves the machine either.
+ */
+export function exposureWarning(host: string): string | undefined {
+  const loopback = host === '::1' || host === 'localhost' || /^127\./.test(host);
+  if (loopback) return undefined;
+
+  return `Serving on ${host}, which is not loopback: anyone who can reach this machine can reach the hub. The token in the URL is the only thing guarding it, so treat that URL as the credential it is.`;
+}
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_LIMIT = 1000;
 /** Spec §6.2: return by ~50s regardless of the requested timeout, to stay inside harness tool timeouts. */
@@ -64,6 +84,8 @@ const HEARTBEAT_MS = 15_000;
 
 export interface DaemonHandle {
   url: string;
+  /** The interface actually bound, which `url` does not always reveal. */
+  host: string;
   /** One per participant — spec §6.1. A single shared token makes `from` self-asserted. */
   tokens: ReadonlyMap<ParticipantId, string>;
   close(): Promise<void>;
@@ -72,12 +94,21 @@ export interface DaemonHandle {
 export interface StartDaemonOptions {
   repo: string;
   port?: number;
+  /**
+   * The interface to bind. Defaults to loopback and should stay there: the hub
+   * carries the whole conversation and a bearer token is all that guards it.
+   * CT-14a — the operator wanted to check the hub from a phone and there was no
+   * supported way, so every workaround was a proxy in front of a server that
+   * could have bound the interface itself.
+   */
+  host?: string;
   /** Overrides where the built hub is read from. Defaults beside the package's own code. */
   hubDist?: string;
 }
 
 export async function startDaemon(opts: StartDaemonOptions): Promise<DaemonHandle> {
   const repo = resolve(opts.repo);
+  const host = opts.host ?? HOST;
   const config = await loadConfig(repo);
 
   const stateDir = join(repo, '.crosstalk');
@@ -104,7 +135,7 @@ export async function startDaemon(opts: StartDaemonOptions): Promise<DaemonHandl
     server = createServer((request, response) => {
       void daemon.handle(request, response);
     });
-    const url = await listen(server, opts.port);
+    const url = await listen(server, host, opts.port);
 
     await writeFile(
       daemonJsonPath,
@@ -113,7 +144,7 @@ export async function startDaemon(opts: StartDaemonOptions): Promise<DaemonHandl
     );
     await recordLockUrl(lockPath, url);
 
-    return buildHandle({ url, tokens, server, daemon, lockPath, daemonJsonPath });
+    return buildHandle({ url, host, tokens, server, daemon, lockPath, daemonJsonPath });
   } catch (error) {
     // Never leave a lock behind for a daemon that failed to start.
     server?.close();
@@ -125,13 +156,14 @@ export async function startDaemon(opts: StartDaemonOptions): Promise<DaemonHandl
 
 function buildHandle(parts: {
   url: string;
+  host: string;
   tokens: Map<ParticipantId, string>;
   server: Server;
   daemon: Daemon;
   lockPath: string;
   daemonJsonPath: string;
 }): DaemonHandle {
-  const { url, tokens, server, daemon, lockPath, daemonJsonPath } = parts;
+  const { url, host, tokens, server, daemon, lockPath, daemonJsonPath } = parts;
 
   let closed: Promise<void> | undefined;
   const close = (): Promise<void> => {
@@ -157,10 +189,10 @@ function buildHandle(parts: {
   process.on('SIGTERM', onSignal);
   daemon.onShutdownRequest = close;
 
-  return { url, tokens, close };
+  return { url, host, tokens, close };
 }
 
-function bindOnce(server: Server, port: number): Promise<number> {
+function bindOnce(server: Server, host: string, port: number): Promise<number> {
   return new Promise((done, fail) => {
     const onError = (error: NodeJS.ErrnoException): void => {
       server.off('listening', onListening);
@@ -180,7 +212,7 @@ function bindOnce(server: Server, port: number): Promise<number> {
     // attempt would settle the wrong promise.
     server.once('error', onError);
     server.once('listening', onListening);
-    server.listen(port, HOST);
+    server.listen(port, host);
   });
 }
 
@@ -191,7 +223,14 @@ function bindOnce(server: Server, port: number): Promise<number> {
  * who asked for a specific port and got a different one has a worse problem
  * than an error message. Only an ephemeral bind retries. See `ports.ts`.
  */
-async function listen(server: Server, port?: number): Promise<string> {
+async function listen(server: Server, host: string, port?: number): Promise<string> {
+  // The url is what a person clicks, so it names an address a browser can
+  // actually reach. A wildcard bind is not one: `http://0.0.0.0:7411` is a
+  // valid thing to listen on and a poor thing to hand someone, and loopback is
+  // included in every wildcard bind anyway.
+  const reachable = host === '0.0.0.0' || host === '::' ? HOST : host;
+  const shown = reachable.includes(':') ? `[${reachable}]` : reachable;
+
   if (port !== undefined) {
     if (isBlockedPort(port)) {
       throw new DaemonError(
@@ -199,15 +238,15 @@ async function listen(server: Server, port?: number): Promise<string> {
         `Port ${port} is on the WHATWG blocked-port list, so browsers and fetch refuse it even though a server can bind it. Choose another port.`,
       );
     }
-    return `http://${HOST}:${await bindOnce(server, port)}`;
+    return `http://${shown}:${await bindOnce(server, host, port)}`;
   }
 
   try {
     const assigned = await pickUsablePort(
-      () => bindOnce(server, 0),
+      () => bindOnce(server, host, 0),
       () => new Promise<void>((closed) => server.close(() => closed())),
     );
-    return `http://${HOST}:${assigned}`;
+    return `http://${shown}:${assigned}`;
   } catch (error) {
     if (error instanceof NoUsablePortError) {
       throw new DaemonError('PORT_BLOCKED', error.message);

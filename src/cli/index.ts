@@ -34,6 +34,11 @@ const USAGE = `crosstalk — multi-agent development where a finding is a claim,
   ct await    [--as <id>] [--timeout 50]
   ct roster | ct board | ct mine   [--as <id>]
 
+  ct task create --as <leader> --id T-01 --title '...' --brief '...'
+                 --assignee <id> --branch <branch>
+                 [--spec-ref R]... [--dep T-00]... [--acceptance '...']...
+  ct task state <id> --as <id> --state <state> [--reason '...']
+
 Global: --repo <path> (default .), --json, --help
 Token:  CROSSTALK_TOKEN, else .crosstalk/tokens/<id> via --as. URL: CROSSTALK_URL, else .crosstalk/daemon.json`;
 
@@ -479,6 +484,89 @@ async function cmdBoard(argv: string[]): Promise<number> {
   });
 }
 
+/**
+ * `ct task create` and `ct task state`. CT-14b.
+ *
+ * One `HANDLERS` key with a sub-dispatch, not two. `main` looks up `argv[0]`
+ * alone, so a key of `'task create'` is unreachable — and
+ * `tests/harness/brief-vocabulary.test.ts` extracts only the first word after
+ * `` `crosstalk ``, so two keys would make the command table and the brief
+ * disagree about a command that does exist.
+ *
+ * The daemon owns every rule here: who may create a task (`requireRole`), which
+ * transitions are legal (`validateTransition`), whether the gates have been
+ * passed. Duplicating any of that in the CLI would give an agent two different
+ * answers to the same question, and the daemon's refusals are the ones agents
+ * have to learn to read.
+ */
+async function cmdTask(argv: string[]): Promise<number> {
+  const subcommand = argv[0];
+  if (subcommand === 'create') return cmdTaskCreate(argv.slice(1));
+  if (subcommand === 'state') return cmdTaskState(argv.slice(1));
+
+  throw new CliError(
+    subcommand === undefined ? 'ct task needs a subcommand' : `Unknown task subcommand "${subcommand}"`,
+    EXIT.usage,
+    "Use `ct task create` to assign work, or `ct task state <id> --state <state>` to move it. Run `crosstalk --help` for the arguments.",
+  );
+}
+
+async function cmdTaskCreate(argv: string[]): Promise<number> {
+  return withClient(
+    argv,
+    {
+      id: { type: 'string' },
+      title: { type: 'string' },
+      brief: { type: 'string' },
+      assignee: { type: 'string' },
+      branch: { type: 'string' },
+      'spec-ref': { type: 'string', multiple: true },
+      dep: { type: 'string', multiple: true },
+      acceptance: { type: 'string', multiple: true },
+    },
+    async (client, flags) => {
+      const result = await client.post<WriteResult>('/tasks', {
+        id: require_(flags, 'id'),
+        title: require_(flags, 'title'),
+        brief: require_(flags, 'brief'),
+        assignee: require_(flags, 'assignee'),
+        branch: require_(flags, 'branch'),
+        specRefs: (flags['spec-ref'] as string[] | undefined) ?? [],
+        deps: (flags['dep'] as string[] | undefined) ?? [],
+        acceptance: (flags['acceptance'] as string[] | undefined) ?? [],
+      });
+      const created = result.events.find((event) => event.kind === 'task_created');
+      emit(result, flags['json'] === true, () =>
+        created?.kind === 'task_created'
+          ? `created ${bold(created.task.id)} for ${created.task.assignee} on ${created.task.branch}`
+          : 'created',
+      );
+      return EXIT.ok;
+    },
+  );
+}
+
+async function cmdTaskState(argv: string[]): Promise<number> {
+  return withClient(
+    argv,
+    { state: { type: 'string' }, reason: { type: 'string' } },
+    async (client, flags, rest) => {
+      const taskId = rest[0];
+      if (taskId === undefined) {
+        throw new CliError('a task id is required', EXIT.usage, 'For example: ct task state T-01 --state in_progress');
+      }
+      const reason = str(flags, 'reason');
+      const state = require_(flags, 'state');
+      const result = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/state`, {
+        state,
+        ...(reason === undefined ? {} : { reason }),
+      });
+      emit(result, flags['json'] === true, () => `${taskId} -> ${state}`);
+      return EXIT.ok;
+    },
+  );
+}
+
 async function cmdMine(argv: string[]): Promise<number> {
   return withClient(argv, {}, async (client, flags) => {
     const result = await client.get<{ tasks: Record<string, string>[] }>('/tasks/mine');
@@ -511,6 +599,7 @@ const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   roster: cmdRoster,
   board: cmdBoard,
   mine: cmdMine,
+  task: cmdTask,
 };
 
 export const CLI_COMMANDS: readonly string[] = Object.keys(HANDLERS);

@@ -196,11 +196,21 @@ function bindOnce(server: Server, host: string, port: number): Promise<number> {
   return new Promise((done, fail) => {
     const onError = (error: NodeJS.ErrnoException): void => {
       server.off('listening', onListening);
-      fail(
-        error.code === 'EADDRINUSE'
-          ? new DaemonError('PORT_IN_USE', `Port ${port} is already bound`)
-          : error,
-      );
+      if (error.code === 'EADDRINUSE') {
+        fail(new DaemonError('PORT_IN_USE', `Port ${port} is already bound`));
+        return;
+      }
+      // A `--host` this machine has no interface for. Left raw, it exits with a
+      // stack trace naming EADDRNOTAVAIL, which says nothing about the flag the
+      // operator just typed.
+      if (error.code === 'EADDRNOTAVAIL' || error.code === 'ENOTFOUND' || error.code === 'EINVAL') {
+        fail(new DaemonError(
+          'HOST_UNAVAILABLE',
+          `No interface on this machine has the address ${host}. Use 127.0.0.1 for loopback, 0.0.0.0 for every interface, or one of this machine's own addresses.`,
+        ));
+        return;
+      }
+      fail(error);
     };
     const onListening = (): void => {
       server.off('error', onError);

@@ -2,9 +2,12 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import type { CrosstalkEvent } from '../contracts/events.js';
 import { doctor, type Finding } from '../harness/doctor.js';
+import { runningCliPath } from '../harness/install.js';
 import { loadConfig } from '../daemon/config.js';
 import { startDaemon } from '../daemon/server.js';
 import { resolveHubDist } from '../daemon/hub.js';
@@ -13,7 +16,7 @@ import { HUMAN_ID } from '../contracts/room.js';
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
 import { preflight, purgeWorkspaces, runInit } from './init.js';
 import { openBrowser } from './open.js';
-import { bold, dim, emit, eventLine, table } from './output.js';
+import { bold, dim, emit, eventLine, failureText, table } from './output.js';
 
 const USAGE = `crosstalk — multi-agent development where a finding is a claim, not a command
 
@@ -94,34 +97,11 @@ async function main(argv: string[]): Promise<number> {
     return EXIT.ok;
   }
 
-  switch (command) {
-    case 'init':
-      return await cmdInit(rest);
-    case 'up':
-      return await cmdUp(rest);
-    case 'down':
-      return await cmdDown(rest);
-    case 'doctor':
-      return await cmdDoctor(rest);
-    case 'say':
-      return await cmdSay(rest);
-    case 'claim':
-      return await cmdClaim(rest);
-    case 'respond':
-      return await cmdRespond(rest);
-    case 'events':
-      return await cmdEvents(rest);
-    case 'await':
-      return await cmdAwait(rest);
-    case 'roster':
-      return await cmdRoster(rest);
-    case 'board':
-      return await cmdBoard(rest);
-    case 'mine':
-      return await cmdMine(rest);
-    default:
-      throw new CliError(`Unknown command "${command}"`, EXIT.usage, 'Run `crosstalk --help` for the full surface.');
+  const handler = HANDLERS[command];
+  if (handler === undefined) {
+    throw new CliError(`Unknown command "${command}"`, EXIT.usage, 'Run `crosstalk --help` for the full surface.');
   }
+  return await handler(rest);
 }
 
 async function cmdInit(argv: string[]): Promise<number> {
@@ -199,6 +179,10 @@ async function cmdUp(argv: string[]): Promise<number> {
   process.stdout.write(
     [
       `${bold('Crosstalk is up')}  ${daemon.url}`,
+      // CT-1: which build this actually is. `ct` on PATH can be a different
+      // checkout, and every symptom of that skew looks like a protocol bug
+      // until you know the two are not the same code.
+      dim(`  cli      ${runningCliPath()}`),
       dim(`  hub      ${resolveHubDist(import.meta.url)}`),
       dim(`  log      ${join(stateDir(repo), 'events.jsonl')}`),
       dim(`  agents   ${config.participants.map((p) => p.id).join(', ')}`),
@@ -429,18 +413,82 @@ async function cmdMine(argv: string[]): Promise<number> {
   });
 }
 
-main(process.argv.slice(2))
+/**
+ * The command surface, as data.
+ *
+ * A `switch` listed these names in one place and the briefs listed them in
+ * another, and the two disagreed for the entire life of the project: the worker
+ * brief told agents to run `crosstalk acknowledge` and `crosstalk submit`,
+ * neither of which has ever existed. Exported so a test can compare the brief
+ * against the real table instead of a second hand-written copy.
+ */
+const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
+  init: cmdInit,
+  up: cmdUp,
+  down: cmdDown,
+  doctor: cmdDoctor,
+  say: cmdSay,
+  claim: cmdClaim,
+  respond: cmdRespond,
+  events: cmdEvents,
+  await: cmdAwait,
+  roster: cmdRoster,
+  board: cmdBoard,
+  mine: cmdMine,
+};
+
+export const CLI_COMMANDS: readonly string[] = Object.keys(HANDLERS);
+
+/**
+ * Is this module the program being run, rather than something imported?
+ *
+ * Both sides go through `realpath` first, and that is the whole point.
+ * `import.meta.url` is already canonical; `process.argv[1]` is whatever path
+ * the user typed. `npm link` — which is how the README tells people to get
+ * `crosstalk` and `ct` on PATH — puts a link on PATH, so the two spellings
+ * differ, a lexical comparison returns false, and the CLI exits 0 having done
+ * nothing at all.
+ *
+ * Silently disabling the PATH binary would be bad anywhere. Inside the change
+ * that fixes `ct` on PATH resolving to the wrong build (CT-1) it would be
+ * indistinguishable from the bug being fixed.
+ *
+ * No test can catch it: every test here invokes `node dist/cli/index.js` by its
+ * real path, which is the branch that passes either way. Verified by hand
+ * through a junction instead.
+ */
+function invokedDirectly(): boolean {
+  const invoked = process.argv[1];
+  if (invoked === undefined) return false;
+
+  const self = fileURLToPath(import.meta.url);
+  const canonical = (path: string): string => {
+    try {
+      return realpathSync.native(path);
+    } catch {
+      // Not on disk under that spelling; the lexical form is all there is.
+      return resolve(path);
+    }
+  };
+
+  const [a, b] = [canonical(invoked), canonical(self)];
+  return process.platform === 'win32' || process.platform === 'darwin'
+    ? a.toLowerCase() === b.toLowerCase()
+    : a === b;
+}
+
+if (invokedDirectly()) {
+  main(process.argv.slice(2))
   .then((code) => {
     process.exitCode = code;
   })
   .catch((error: unknown) => {
     if (error instanceof CliError) {
-      process.stderr.write(`${error.message}\n`);
-      // Every failure message names the remedy, not just the condition.
-      if (error.remedy !== undefined) process.stderr.write(`${error.remedy}\n`);
+      process.stderr.write(failureText(error));
       process.exitCode = error.exitCode;
       return;
     }
     process.stderr.write(`${(error as Error).stack ?? String(error)}\n`);
     process.exitCode = EXIT.daemon;
   });
+}

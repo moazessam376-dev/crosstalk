@@ -1,8 +1,7 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { realpath } from 'node:fs';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
 
@@ -12,10 +11,10 @@ import { HUMAN_ID } from '../contracts/room.js';
 import { loadConfig } from '../daemon/config.js';
 import { distPath } from '../daemon/paths.js';
 import { tokenFilename } from '../daemon/server.js';
-import { writeBrief } from '../harness/brief.js';
-import { doctor, type Finding } from '../harness/doctor.js';
+import { localBriefFile, writeBrief } from '../harness/brief.js';
+import { checkPrerequisites, doctor, type Finding } from '../harness/doctor.js';
 import { loadRegistry, probeTier, resolveConfigPath, type HarnessDescriptor } from '../harness/registry.js';
-import { createWorktree, isRepo, listWorktrees, removeWorktree } from '../workspace/git.js';
+import { createWorktree, isRepo, listWorktrees, removeWorktree, samePath } from '../workspace/git.js';
 import { CliError, EXIT, stateDir } from './client.js';
 
 const execFile = promisify(execFileCallback);
@@ -83,6 +82,21 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     policy: DEFAULT_POLICY,
   };
 
+  // Issue #23. `init` was the only command that could leave a repository in a
+  // state the other two refuse: on a repo with no commit it exited 0 and left
+  // two worktrees on an unborn branch, four tokens and a config, and `doctor`
+  // then rejected REPOSITORY_NO_COMMIT on the very next command. An empty
+  // repository is the normal state for someone starting a project, which is
+  // exactly how it was found.
+  //
+  // The same function `doctor` runs, not a second copy of the rule — the two
+  // drifting apart is the defect, and this file has now fixed that shape three
+  // times.
+  const blocker = await checkPrerequisites(config, repo, repo);
+  if (blocker !== undefined) {
+    throw new CliError(`${blocker.code}: ${blocker.message}`, EXIT.protocol, blocker.remedy);
+  }
+
   await writeFile(configPath, stringify(config), 'utf8');
   await mkdir(join(stateDir(repo), 'tokens'), { recursive: true });
 
@@ -102,7 +116,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   await ensureGitignored(repo);
   await writeBriefs(repo, participants, config.policy);
 
-  return { configPath, mcp, tokens, config, kickoff: kickoffLines(repo, participants) };
+  return { configPath, mcp, tokens, config, kickoff: await kickoffLines(repo, participants) };
 }
 
 /**
@@ -121,7 +135,7 @@ async function ensureWorkspaces(repo: string, participants: Participant[]): Prom
   // to crash on. B2 makes `up` refuse to start on it.
   if (!(await isRepo(root))) return;
 
-  await excludeTokensFromEveryWorktree(root);
+  await excludeFromEveryWorktree(root, await untrackedArtifacts());
 
   for (const participant of participants) {
     if (participant.role !== 'worker') continue;
@@ -197,51 +211,6 @@ export async function purgeWorkspaces(repo: string): Promise<void> {
   await execFile('git', ['worktree', 'prune'], { cwd: root, windowsHide: true }).catch(() => undefined);
 }
 
-/** Resolves a path to its canonical on-disk spelling. Injectable for tests. */
-export type PathResolver = (path: string) => Promise<string>;
-
-const nativeRealpath: PathResolver = promisify(realpath.native);
-
-/**
- * Two spellings of one path must compare equal.
- *
- * Windows still generates 8.3 short names, and `os.tmpdir()` returns one on any
- * box where the containing directory has them — every GitHub Actions runner,
- * where `C:\Users\runneradmin` is handed out as `C:\Users\RUNNER~1`. `git
- * worktree list` reports the long form regardless. Lowercasing does not close
- * that gap, so `isRegistered` said "no" about a worktree that plainly existed,
- * `ensureWorkspaces` called `addWorktree` again, and git refused with
- * "already exists".
- *
- * That is a product defect, not a test artifact: `crosstalk init --force`
- * crashed outright on any Windows machine with 8.3 generation enabled.
- *
- * `realpath.native` is the only thing that expands 8.3 — `path.resolve` does
- * not. It throws for a path that does not exist yet, which is the ordinary case
- * the first time a worktree is created, so a failure falls back to the
- * lexical comparison rather than becoming an error.
- */
-export async function samePath(
-  left: string,
-  right: string,
-  realpathOf: PathResolver = nativeRealpath,
-): Promise<boolean> {
-  const [a, b] = await Promise.all([canonical(left, realpathOf), canonical(right, realpathOf)]);
-  return process.platform === 'win32' || process.platform === 'darwin'
-    ? a.toLowerCase() === b.toLowerCase()
-    : a === b;
-}
-
-async function canonical(path: string, realpathOf: PathResolver): Promise<string> {
-  const absolute = resolve(path);
-  try {
-    return await realpathOf(absolute);
-  } catch {
-    // Not on disk yet. Nothing to expand, and nothing to fail over.
-    return absolute;
-  }
-}
-
 async function isRegistered(root: string, worktree: string): Promise<boolean> {
   try {
     for (const entry of await listWorktrees(root)) {
@@ -281,7 +250,7 @@ async function addWorktree(root: string, id: string, branch: string, worktree: s
  * per-worktree copy is silently ignored — which is convenient: one write
  * covers the primary checkout and every linked worktree at once.
  */
-async function excludeTokensFromEveryWorktree(root: string): Promise<void> {
+async function excludeFromEveryWorktree(root: string, patterns: string[]): Promise<void> {
   let gitDir: string;
   try {
     const { stdout } = await execFile('git', ['rev-parse', '--git-common-dir'], { cwd: root, windowsHide: true });
@@ -292,15 +261,50 @@ async function excludeTokensFromEveryWorktree(root: string): Promise<void> {
 
   const path = join(gitDir, 'info', 'exclude');
   const current = await readFile(path, 'utf8').catch(() => '');
-  if (/^\.mcp\.json$/m.test(current)) return;
+
+  const missing = patterns.filter((pattern) => {
+    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return !new RegExp(`^${escaped}$`, 'm').test(current);
+  });
+  if (missing.length === 0) return;
 
   const prefix = current === '' || current.endsWith('\n') ? '' : '\n';
   await mkdir(dirname(path), { recursive: true });
   await writeFile(
     path,
-    `${current}${prefix}\n# Crosstalk writes this participant's bearer token here.\n.mcp.json\n`,
+    `${current}${prefix}\n# Crosstalk writes per-participant files here: bearer tokens and role briefs.\n${missing.join('\n')}\n`,
     'utf8',
   );
+}
+
+/**
+ * Everything `init` writes into a worktree that git must not follow.
+ *
+ * The briefs are the CT-4 half: `CLAUDE.local.md` rather than the tracked
+ * `CLAUDE.md`. A bare filename in `info/exclude` matches at any depth, so one
+ * entry covers the primary checkout and every worker worktree.
+ */
+async function untrackedArtifacts(): Promise<string[]> {
+  const registry = await loadRegistry().catch(() => undefined);
+  if (registry === undefined) return ['.mcp.json'];
+
+  const patterns = new Set<string>(['.mcp.json']);
+  for (const descriptor of registry.values()) {
+    patterns.add(basename(localBriefFile(descriptor.briefFile)));
+
+    // Every registration B3 writes carries a participant's bearer token, and
+    // `.mcp.json` is only the one at the root: `cursor-*` registers at
+    // `.cursor/mcp.json`, which nothing excluded. Found by running `init` and
+    // checking each written path rather than the one I remembered.
+    //
+    // Skipped for `~/...` and absolute paths — B3 never writes those, and an
+    // exclude entry for a file outside the repository would be noise.
+    const configPath = descriptor.mcpConfigPath;
+    if (configPath !== undefined && !configPath.startsWith('~') && !isAbsolute(configPath)) {
+      patterns.add(configPath.replace(/\\/g, '/'));
+    }
+  }
+  return [...patterns];
 }
 
 /**
@@ -388,12 +392,18 @@ async function writeMcpConfigs(
       registrations.push({ participantId: participant.id, path, written, entry, ...(reason === undefined ? {} : { reason }) });
     };
 
-    if (descriptor.mcpConfigPath === undefined) {
-      add('', false, `harness ${descriptor.key} declares no mcpConfigPath`);
+    // Transport first, path second. The other order made `mcp` a dead field:
+    // `codex-app` declares `mcp: unverified` *and* no `mcpConfigPath`, so the
+    // path guard always fired first and the reported reason was "no
+    // mcpConfigPath" — the declared transport could never be the answer, for
+    // any harness. Naming the wrong reason is worse than naming none, because
+    // the remedy that follows from it is the one you cannot act on.
+    if (descriptor.mcp !== 'stdio') {
+      add('', false, `harness ${descriptor.key} declares mcp: ${descriptor.mcp}, not stdio — Crosstalk has no verified way to drive it over MCP`);
       continue;
     }
-    if (descriptor.mcp !== 'stdio') {
-      add('', false, `harness ${descriptor.key} declares mcp: ${descriptor.mcp}, not stdio`);
+    if (descriptor.mcpConfigPath === undefined) {
+      add('', false, `harness ${descriptor.key} names no mcpConfigPath, so there is nowhere to register`);
       continue;
     }
 
@@ -497,16 +507,55 @@ async function ensureGitignored(repo: string): Promise<void> {
   await writeFile(path, `${current}${prefix}\n${additions.join('\n')}\n`, 'utf8');
 }
 
-function kickoffLines(repo: string, participants: Participant[]): { id: string; line: string }[] {
-  return participants
-    .filter((participant) => participant.role !== 'human')
-    .map((participant) => ({
+/**
+ * The line a human pastes into each agent.
+ *
+ * CT-2: branched on `participant.harness.startsWith('claude-code')`, so in one
+ * `init` run Crosstalk wrote `cursor-app` an MCP registration, reported no
+ * `MCP_PROBE_FALLBACK` — asserting the mcp tier was healthy — and then told the
+ * agent to use the shell tier anyway. `probeTier` already computed the right
+ * answer; the generator simply never asked it.
+ *
+ * CT-3: the shell line emitted a bare `ct`, which is only correct if Crosstalk
+ * is globally installed *and* that global install is this build. On the machine
+ * where this was found both halves were false (CT-1), so the line Crosstalk
+ * printed ran a different checkout against the project it had just written.
+ * The invocation is resolved to this package's own CLI instead.
+ */
+async function kickoffLines(
+  repo: string,
+  participants: Participant[],
+): Promise<{ id: string; line: string }[]> {
+  const registry = await loadRegistry().catch(() => undefined);
+  const cli = `node ${distPath(import.meta.url, 'cli', 'index.js')}`;
+  const root = resolve(repo);
+  const lines: { id: string; line: string }[] = [];
+
+  for (const participant of participants) {
+    if (participant.role === 'human') continue;
+
+    const descriptor = registry?.get(participant.harness);
+    const workspace = resolve(root, participant.workspace);
+    const tier = descriptor === undefined
+      ? 'shell'
+      : participant.transport ?? (await probeTier(descriptor, workspace));
+
+    lines.push({
       id: participant.id,
-      line:
-        participant.harness.startsWith('claude-code')
-          ? `You are "${participant.id}" on Crosstalk. Your MCP server is configured in .mcp.json — call roster() to see who else is here, then await_turn().`
-          : `You are "${participant.id}" on Crosstalk in ${resolve(repo)}. Use the CLI: \`ct await --as ${participant.id} --timeout 50\` to receive work, \`ct say --as ${participant.id} --room '#floor' --body '...'\` to speak.`,
-    }));
+      // `workspace`, never `root`. The shell branch used to name the repository
+      // root for every participant, so each shell-tier worker was told to work
+      // in the leader's checkout — two agents in one working tree, which is the
+      // failure design §7 exists to prevent, arriving by a second route.
+      //
+      // `--repo` still points at the root: that is where tokens and the daemon
+      // descriptor live, and passing it explicitly makes identity immune to
+      // whatever the harness does with its working directory.
+      line: tier === 'mcp'
+        ? `You are "${participant.id}" on Crosstalk. Open this agent in ${workspace} — your MCP server is registered at ${resolveConfigPath(descriptor!.mcpConfigPath!, workspace)} and its token is yours alone. Call roster() to see who else is here, then await_turn().`
+        : `You are "${participant.id}" on Crosstalk. Work in ${workspace} — that is your checkout, not the leader's. Use the CLI: \`${cli} await --repo ${root} --as ${participant.id} --timeout 50\` to receive work, \`${cli} say --repo ${root} --as ${participant.id} --room '#floor' --body '...'\` to speak.`,
+    });
+  }
+  return lines;
 }
 
 function parseParticipants(specs: string[]): Participant[] {

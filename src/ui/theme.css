@@ -678,10 +678,19 @@ button:focus-visible {
    never a shadow.
    =========================================================================== */
 
+/* CT-15. A *definite* height, not a minimum. With `min-height` the column grows
+   to its content, `.hub-stream`'s `overflow: hidden` has nothing to clip, and
+   the log's `overflow-y: auto` never becomes a scroll container — so the whole
+   document scrolls and the composer rides away below the fold, which is the
+   friction the redesign was supposed to have removed. `100vh` first for
+   browsers without `dvh`: the mobile-toolbar behaviour is wrong there but the
+   height is still definite, which is the half that matters. */
 .hub-root {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
   background: var(--surface-base);
   color: var(--text-primary);
   font-family: var(--font-ui);
@@ -695,8 +704,14 @@ button:focus-visible {
   background: var(--surface-base);
 }
 
+/* `min-height: 0` is redundant beside `overflow: hidden` — either one zeroes a
+   grid item's automatic minimum size — but the height clamp above only reaches
+   the log if every box between them refuses to be sized by its content, and
+   that chain should not depend on the reader knowing which of the two rules is
+   doing it. */
 .hub-region {
   min-width: 0;
+  min-height: 0;
   background: var(--surface-base);
   overflow: hidden;
 }

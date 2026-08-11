@@ -10,11 +10,15 @@ import {
   type CrosstalkConfig,
   type Participant,
 } from '../contracts/index.js';
-import { headSha, gitVersion, isRepo } from '../workspace/git.js';
-import { briefVersion, renderBrief } from './brief.js';
+import { headSha, gitVersion, isRepo, samePath } from '../workspace/git.js';
+import { briefVersion, localBriefFile, renderBrief } from './brief.js';
+import { linkedInstallRoot, packageRootFromModule } from './install.js';
 import { loadRegistry, probeTier, type HarnessDescriptor } from './registry.js';
 
 const execFile = promisify(execFileCallback);
+
+/** Reserved like `@human`: it already names the MCP server entry and the tool. */
+const RESERVED_PARTICIPANT_ID = 'crosstalk';
 
 export interface Finding {
   level: 'reject' | 'warn';
@@ -191,7 +195,46 @@ async function githubCredentialStatus(cwd: string): Promise<GithubCredentialStat
   }
 }
 
-async function checkPrerequisites(
+/**
+ * Why a harness is not on the mcp tier — the declared transport first.
+ *
+ * `mcp: 'unverified'` was a dead field: the path guard always fired ahead of
+ * it, so the declared value could never be the reported reason for any harness.
+ */
+function mcpUnavailableBecause(descriptor: HarnessDescriptor): string {
+  if (descriptor.mcp !== 'stdio') return `${descriptor.key} declares mcp: ${descriptor.mcp}, which Crosstalk cannot drive`;
+  if (descriptor.mcpConfigPath === undefined) return `${descriptor.key} names no MCP configuration path`;
+  return `${descriptor.mcpConfigPath} is outside the workspace, so Crosstalk does not write it`;
+}
+
+/**
+ * CT-1. Exported so the rule can be exercised with both roots supplied, rather
+ * than only on a machine that happens to have a divergent global install.
+ */
+export async function installSkewFinding(
+  running: string,
+  linked: string | undefined,
+): Promise<Finding | undefined> {
+  if (linked === undefined) return undefined;
+  if (await samePath(running, linked)) return undefined;
+
+  return finding(
+    'warn',
+    'CLI_INSTALL_SKEW',
+    `\`crosstalk\` on PATH resolves to ${linked}, but this command is running from ${running}. Agents that follow a kickoff line would run a different build than the one that wrote this project.`,
+    `Run the CLI from one install — \`npm link\` in ${running}, or invoke it by absolute path — so every participant speaks the same build.`,
+  );
+}
+
+async function checkInstallSkew(): Promise<Finding[]> {
+  const skew = await installSkewFinding(
+    packageRootFromModule(import.meta.url),
+    await linkedInstallRoot().catch(() => undefined),
+  );
+  return skew === undefined ? [] : [skew];
+}
+
+export async function checkPrerequisites(
   config: CrosstalkConfig,
   cwd: string,
   repoRoot: string,
@@ -246,7 +289,9 @@ async function checkParticipant(
     return findings;
   }
 
-  const briefPath = resolve(workspace, descriptor.briefFile);
+  // CT-4: the brief lives at the untracked local path, never the tracked one.
+  const briefFile = localBriefFile(descriptor.briefFile);
+  const briefPath = resolve(workspace, briefFile);
   if (!isWithin(workspace, briefPath)) {
     findings.push(finding(
       'reject',
@@ -278,14 +323,14 @@ async function checkParticipant(
       'warn',
       'BRIEF_STALE',
       `The brief for participant ${participant.id} is missing, stale, or hand-edited.`,
-      `Regenerate ${descriptor.briefFile} with crosstalk init or writeBrief using the active policy and ${tier} tier.`,
+      `Regenerate ${briefFile} with crosstalk init or writeBrief using the active policy and ${tier} tier.`,
     ));
   } else if (briefVersion(actual) !== briefVersion(expected)) {
     findings.push(finding(
       'warn',
       'BRIEF_STALE',
       `The version hash in the brief for participant ${participant.id} is stale.`,
-      `Regenerate ${descriptor.briefFile} with crosstalk init or writeBrief using the active policy and ${tier} tier.`,
+      `Regenerate ${briefFile} with crosstalk init or writeBrief using the active policy and ${tier} tier.`,
     ));
   }
 
@@ -350,7 +395,40 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
         'Use 1-24 lowercase letters, digits, or hyphens, starting with a letter or digit.',
       ));
     }
+
+    // `crosstalk` is reserved for the same reason `human` is: it already names
+    // something. It is the key every MCP registration is written under
+    // (`mcpServers.crosstalk`) and the name of the tool itself, so a
+    // participant called `crosstalk` produces a worktree, a token file and a
+    // server entry that read as the product rather than as an agent.
+    if (participant.id.toLowerCase() === RESERVED_PARTICIPANT_ID) {
+      findings.push(finding(
+        'reject',
+        'RESERVED_PARTICIPANT_ID',
+        `Participant id "${participant.id}" is reserved by Crosstalk itself.`,
+        'Rename that participant. `crosstalk` names the MCP server entry and the tool; an agent cannot also hold it.',
+      ));
+    }
   }
+
+  // C-15. `policy.taskAcceptance.method` is read when a task reaches
+  // `accepted`, and only `leader` and `human` resolve to an authority. A
+  // `majority` or `unanimous` setting parses, validates, and then refuses every
+  // acceptance with NOT_TASK_AUTHORITY naming a decision route that nothing
+  // opens — so the task sits in `submitted` forever and the log says only that
+  // somebody was not authorised. Stranding a task silently is worse than
+  // refusing the config that would strand it.
+  const acceptance = config.policy.taskAcceptance.method;
+  if (acceptance === 'majority' || acceptance === 'unanimous') {
+    findings.push(finding(
+      'reject',
+      'TASK_ACCEPTANCE_UNIMPLEMENTED',
+      `policy.taskAcceptance.method is "${acceptance}", which is not implemented; no task could ever be accepted.`,
+      'Use leader or human. A vote-based acceptance needs a decision route that does not exist yet.',
+    ));
+  }
+
+  findings.push(...await checkInstallSkew());
 
   const workers = config.participants.filter((participant) => participant.role === 'worker');
   if (workers.length < 2) {
@@ -424,8 +502,14 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
         findings.push(finding(
           'warn',
           'MCP_PROBE_FALLBACK',
-          `MCP probe failed for ${participant.id}; falling back to ${tier} tier.`,
-          `Register an accepted MCP configuration for ${descriptor.key}, or keep the ${tier} tier and use its transport instructions.`,
+          `${participant.id} runs at the ${tier} tier: ${mcpUnavailableBecause(descriptor)}.`,
+          // The old remedy said "register an accepted MCP configuration",
+          // which cannot be followed when the harness names no path to
+          // register into and nothing would read one. A remedy you cannot act
+          // on reads as a fault you caused.
+          descriptor.mcpConfigPath === undefined
+            ? `Nothing to do — ${descriptor.key} has no MCP configuration path. The ${tier} tier is how it participates.`
+            : `Expected — ${descriptor.mcpConfigPath} is outside this repository, so Crosstalk prints the registration instead of writing it. Add it by hand to use MCP.`,
         ));
       }
     }

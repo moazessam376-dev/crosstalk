@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { access, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
 import type { Tier } from '../contracts/index.js';
 
@@ -94,14 +94,58 @@ export function resolveConfigPath(configPath: string, cwd: string): string {
   return isAbsolute(configPath) ? configPath : resolve(cwd, configPath);
 }
 
+/**
+ * Which transport this harness can actually be driven over.
+ *
+ * CT-2. The previous probe asked whether the file at `mcpConfigPath` existed
+ * and was writable — but `init` is what creates that file. So it measured
+ * whether Crosstalk had written a config, not whether the harness reads one,
+ * and the answer flipped depending on when you asked: `shell` before `init`,
+ * `mcp` after, for a harness whose capabilities had not changed. `doctor` then
+ * reported no `MCP_PROBE_FALLBACK`, asserting the mcp tier was healthy, on the
+ * strength of a file Crosstalk had just written to itself.
+ *
+ * Capability is a property of the harness. Three conditions, all about the
+ * harness rather than about our own output:
+ *
+ * - `mcp: 'stdio'` — a transport we have actually verified. `'unverified'` is
+ *   a claim nobody has checked and `'http'` is not wired, so neither earns the
+ *   mcp tier; `'none'` never did.
+ * - it names an `mcpConfigPath` at all, or there is nowhere to register.
+ * - that path is inside the workspace. B3 refuses to write outside the
+ *   repository it was pointed at and prints instructions instead, so a harness
+ *   configured at `~/.codex/config.toml` has no registration it can read.
+ *
+ * Deliberately not a filesystem existence check: the tier must be the same
+ * before and after `init` runs, or it is describing us and not the harness.
+ */
 export async function probeTier(descriptor: HarnessDescriptor, cwd: string): Promise<Tier> {
-  if (descriptor.mcp !== 'none' && descriptor.mcpConfigPath !== undefined) {
+  if (descriptor.mcp !== 'stdio' || descriptor.mcpConfigPath === undefined) return 'shell';
+
+  const configPath = resolveConfigPath(descriptor.mcpConfigPath, cwd);
+  if (!isWithin(cwd, configPath)) return 'shell';
+
+  // The containing directory has to be creatable for a registration to exist.
+  // The *file* need not: `init` has not necessarily run yet, and requiring it
+  // is exactly the circularity above.
+  return (await writableAncestor(configPath)) ? 'mcp' : 'shell';
+}
+
+function isWithin(parent: string, target: string): boolean {
+  const child = relative(resolve(parent), resolve(target));
+  return child !== '' && !child.startsWith('..') && !isAbsolute(child);
+}
+
+async function writableAncestor(path: string): Promise<boolean> {
+  let current = dirname(resolve(path));
+  for (;;) {
     try {
-      await access(resolveConfigPath(descriptor.mcpConfigPath, cwd), constants.F_OK | constants.W_OK);
-      return 'mcp';
+      await access(current, constants.W_OK);
+      return true;
     } catch {
-      // A missing or unwritable registration file loses MCP capability only.
+      const parent = dirname(current);
+      if (parent === current) return false;
+      current = parent;
     }
   }
-  return 'shell';
 }

@@ -45,7 +45,10 @@ function participant(id: string, role: Participant['role']): Participant {
   // rejects it — correctly — which made an earlier version of this file assert
   // against a config the product never produces.
   const workspace = role === 'worker' ? `.crosstalk/worktrees/${id.replace(/^@/, '')}` : '.';
-  return { id, role, harness: 'codex-app', lifecycle: 'attached', workspace };
+  // The harnesses DEFAULT_ROSTER actually names, so this file keeps asserting
+  // against the roster the product really writes.
+  const harness = role === 'worker' ? 'codex-app' : 'claude-code-app';
+  return { id, role, harness, lifecycle: 'attached', workspace };
 }
 
 /** Exactly what `crosstalk init` writes for the human. */

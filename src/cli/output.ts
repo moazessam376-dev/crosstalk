@@ -11,6 +11,22 @@ export function dim(text: string): string {
   return useColour ? `[2m${text}[0m` : text;
 }
 
+/**
+ * CT-5. One write, remedy first.
+ *
+ * Two writes put the remedy underneath the failure, and PowerShell wraps native
+ * stderr in a `NativeCommandError` block that reads like a stack trace — so the
+ * one line saying what to do lands below the noise and gets skipped. This repo
+ * has already lost a `doctor` finding the same way, below a `head -20`. Every
+ * failure names its remedy, which is worth nothing if the remedy is the part
+ * nobody reads.
+ */
+export function failureText(error: { message: string; remedy?: string }): string {
+  return error.remedy === undefined
+    ? `${error.message}\n`
+    : `${bold('Fix:')} ${error.remedy}\n${error.message}\n`;
+}
+
 export function bold(text: string): string {
   return useColour ? `[1m${text}[0m` : text;
 }

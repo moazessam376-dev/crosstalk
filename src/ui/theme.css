@@ -989,6 +989,38 @@ button:focus-visible {
   min-width: 0;
 }
 
+/* CT-16. A claim carrying evidence tables is correct as an artefact and
+   unreadable as a chat line. Clamped rather than truncated: every word stays in
+   the DOM, so selection, the browser's own find, and screen readers all still
+   reach it. */
+.message-body.is-clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* The fold is visible rather than implied by a hard cut mid-word. */
+  mask-image: linear-gradient(to bottom, #000 62%, rgba(0, 0, 0, 0.25) 100%);
+}
+
+.message-expand {
+  margin: 4px 12px 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  padding: 2px 6px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--size-mono);
+  cursor: pointer;
+}
+
+.message-expand:hover,
+.message-expand:focus-visible {
+  background: rgba(157, 167, 179, 0.12);
+  color: var(--text-primary);
+}
+
 .message-row .message-card-header {
   padding: 0;
   border: 0;

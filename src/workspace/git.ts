@@ -80,6 +80,39 @@ export async function commitExists(sha: string, cwd: string): Promise<boolean> {
   }
 }
 
+/** The head of a branch, or `undefined` when this clone does not have it. */
+export async function branchShaIfExists(cwd: string, branch: string): Promise<string | undefined> {
+  try {
+    return await runGit(cwd, ['rev-parse', '--verify', `refs/heads/${branch}`]);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Move a branch forward to a commit that already contains it.
+ *
+ * `-f` and not `merge --ff-only`, because the branch being moved is by
+ * definition not checked out anywhere: git refuses to force a branch that a
+ * worktree holds, and CT-12's whole shape is a branch whose worktree is gone.
+ * The caller checks ancestry first — this function must never be asked to move
+ * a branch sideways.
+ */
+export async function fastForwardBranch(cwd: string, branch: string, to: string): Promise<void> {
+  await runGit(cwd, ['branch', '-f', branch, to]);
+}
+
+/**
+ * Delete a branch, tolerating one that is already gone.
+ *
+ * `-D`, not `-d`: `down --purge` promises to remove what Crosstalk created, and
+ * a `ct/<id>-base` holding commits that were never merged is exactly the case
+ * `-d` refuses. Leaving it is what CT-12 is.
+ */
+export async function deleteBranch(cwd: string, branch: string): Promise<void> {
+  await runGit(cwd, ['branch', '-D', branch]).catch(() => undefined);
+}
+
 export async function isAncestor(sha: string, of: string, cwd: string): Promise<boolean> {
   try {
     await runGit(cwd, ['merge-base', '--is-ancestor', sha, of]);

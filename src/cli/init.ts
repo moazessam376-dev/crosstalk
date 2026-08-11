@@ -14,7 +14,18 @@ import { tokenFilename } from '../daemon/server.js';
 import { localBriefFile, writeBrief } from '../harness/brief.js';
 import { checkPrerequisites, doctor, type Finding } from '../harness/doctor.js';
 import { loadRegistry, probeTier, resolveConfigPath, type HarnessDescriptor } from '../harness/registry.js';
-import { createWorktree, isRepo, listWorktrees, removeWorktree, samePath } from '../workspace/git.js';
+import {
+  branchSha,
+  branchShaIfExists,
+  createWorktree,
+  deleteBranch,
+  fastForwardBranch,
+  isAncestor,
+  isRepo,
+  listWorktrees,
+  removeWorktree,
+  samePath,
+} from '../workspace/git.js';
 import { CliError, EXIT, stateDir } from './client.js';
 
 const execFile = promisify(execFileCallback);
@@ -77,7 +88,12 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   }
   const config: CrosstalkConfig = {
     version: 1,
-    project: { repo: '.', mainBranch: 'main' },
+    // Detected, not assumed. `mainBranch` was hard-coded to `main`, so on a
+    // clone whose trunk is `master` the config `init` wrote named a branch that
+    // does not exist — and staleness is measured against it (`staleness.ts:55`
+    // calls `branchSha`), so the poller that expires evidence threw on its first
+    // tick and every worker's base-branch check had nothing to compare against.
+    project: { repo: '.', mainBranch: await currentBranch(repo) },
     participants,
     policy: DEFAULT_POLICY,
   };
@@ -96,6 +112,14 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   if (blocker !== undefined) {
     throw new CliError(`${blocker.code}: ${blocker.message}`, EXIT.protocol, blocker.remedy);
   }
+
+  // CT-12, and in the same pre-write pass as the check above for the same
+  // reason: a refusal must leave nothing behind. `init` writes the config and
+  // mints tokens immediately below, so a throw from `ensureWorkspaces` would
+  // strand a half-initialised repository that `init` itself then refuses to
+  // re-enter ("crosstalk.yaml already exists") unless the operator knows to
+  // reach for --force.
+  await ensureBaseBranches(repo, participants, config.project.mainBranch);
 
   await writeFile(configPath, stringify(config), 'utf8');
   await mkdir(join(stateDir(repo), 'tokens'), { recursive: true });
@@ -147,6 +171,94 @@ async function ensureWorkspaces(repo: string, participants: Participant[]): Prom
 }
 
 /**
+ * The branch this checkout is actually on, or `main` when there is nothing to
+ * ask — not a repository, or a repository with no commit yet, where `init`
+ * refuses anyway via `checkPrerequisites`.
+ *
+ * `--show-current` prints an empty string on a detached HEAD, which is a state
+ * `mainBranch` cannot be read from; `main` is the honest default there and the
+ * operator can edit one line of `crosstalk.yaml`.
+ */
+async function currentBranch(repo: string): Promise<string> {
+  try {
+    const { stdout } = await execFile('git', ['branch', '--show-current'], {
+      cwd: resolve(repo),
+      windowsHide: true,
+    });
+    return stdout.trim() === '' ? 'main' : stdout.trim();
+  } catch {
+    return 'main';
+  }
+}
+
+/**
+ * No worker is ever handed a checkout older than the main branch. CT-12.
+ *
+ * `purgeWorkspaces` removed a worker's worktree and pruned its administrative
+ * entry but left `ct/<id>-base` pointing at whatever commit it last held. A
+ * later `init` found the branch alive, and `addWorktree`'s fallback checked a
+ * worktree out onto it — at the old commit, silently. `doctor` reported nothing,
+ * because the configuration it validates was perfectly correct. On the machine
+ * where this was found, the stale commit still carried the *old* tracked brief,
+ * so every worker worktree held two briefs disagreeing about who the agent was
+ * and one of them said it was the leader.
+ *
+ * Ancestor gets fast-forwarded; diverged is refused. Refusing is right: a
+ * diverged base holds commits nobody asked to discard, and silently checking
+ * them out is the bug. Only branches whose worktree is *not* registered are
+ * touched — a live worktree's branch is not `init`'s to move, and a registered
+ * worktree that has fallen behind is `doctor`'s WORKTREE_BEHIND_MAIN.
+ */
+async function ensureBaseBranches(
+  repo: string,
+  participants: Participant[],
+  mainBranch: string,
+): Promise<void> {
+  const root = resolve(repo);
+  if (!(await isRepo(root))) return;
+
+  const workers = participants.filter((participant) => participant.role === 'worker');
+  if (workers.length === 0) return;
+
+  // Through `branchSha`, whose message already names the remedy. Reaching for
+  // `isAncestor` directly would be worse than wrong: git exits 128 for an
+  // unknown revision and `isAncestor` rethrows anything that is not exit 1, so
+  // a clone whose default branch is `master` would get a raw stack trace.
+  let mainSha: string;
+  try {
+    mainSha = await branchSha(root, mainBranch);
+  } catch (error) {
+    throw new CliError(
+      `Cannot resolve the main branch "${mainBranch}"`,
+      EXIT.protocol,
+      (error as Error).message,
+    );
+  }
+
+  for (const participant of workers) {
+    const worktree = join(root, '.crosstalk', 'worktrees', participant.id);
+    if (await isRegistered(root, worktree)) continue;
+
+    const branch = `ct/${participant.id}-base`;
+    const sha = await branchShaIfExists(root, branch);
+    if (sha === undefined || sha === mainSha) continue;
+
+    if (await isAncestor(sha, mainSha, root)) {
+      await fastForwardBranch(root, branch, mainSha);
+      continue;
+    }
+
+    throw new CliError(
+      `${branch} has diverged from ${mainBranch}, so ${participant.id} would be given an out-of-date checkout.\n` +
+        `  ${branch} is at ${sha.slice(0, 7)}\n` +
+        `  ${mainBranch} is at ${mainSha.slice(0, 7)}`,
+      EXIT.protocol,
+      `That branch holds commits ${mainBranch} does not. Merge or rebase it, or delete it with \`git branch -D ${branch}\` if the work is finished with, then run \`crosstalk init\` again.`,
+    );
+  }
+}
+
+/**
  * Design §11: the config is "validated at startup by `crosstalk doctor`". It
  * was not — `up` called `startDaemon` directly, so a configuration `doctor`
  * rejected with exit 1 started anyway and bound a port.
@@ -192,7 +304,13 @@ export async function purgeWorkspaces(repo: string): Promise<void> {
   for (const participant of config.participants) {
     if (participant.role !== 'worker') continue;
     const worktree = join(root, '.crosstalk', 'worktrees', participant.id);
-    if (!(await isRegistered(root, worktree))) continue;
+    // The branch is deleted whether or not the worktree is still registered:
+    // half a purge leaves exactly the CT-12 state this is here to prevent.
+    const branch = `ct/${participant.id}-base`;
+    if (!(await isRegistered(root, worktree))) {
+      await deleteBranch(root, branch);
+      continue;
+    }
 
     try {
       await removeWorktree(root, participant.id);
@@ -204,6 +322,9 @@ export async function purgeWorkspaces(repo: string): Promise<void> {
       // option, `--purge` does here what the flag already promises.
       await execFile('git', ['worktree', 'remove', '--force', worktree], { cwd: root, windowsHide: true });
     }
+    // After the worktree, never before: git refuses to delete a branch a
+    // worktree still holds.
+    await deleteBranch(root, branch);
   }
 
   // Drops any administrative entry whose directory is already gone, so a later

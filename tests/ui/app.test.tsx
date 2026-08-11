@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createElement } from 'react';
@@ -24,6 +24,10 @@ describe('rendered hub wiring', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(fixture, { status: 200 }))));
 
     render(createElement(App));
+
+    // CT-10: with no daemon the hub is not drawn at all — the sample is opened
+    // on request, so that "0 events" can only ever mean live-and-quiet.
+    fireEvent.click(await screen.findByTestId('view-sample'));
 
     const claimCard = await screen.findByTestId('dispute-claim-C-118');
     expect(claimCard).toHaveAttribute('data-claim-state', 'contested');

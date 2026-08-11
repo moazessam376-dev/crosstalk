@@ -115,31 +115,83 @@ describe('App against a live daemon', () => {
 
     // Empty and live is a first run, and must be said out loud. "connected"
     // over a blank screen is exactly the failure this project shipped once.
-    await waitFor(() => expect(screen.getByTestId('empty-log')).toBeInTheDocument());
-    expect(screen.getByTestId('empty-log')).toHaveTextContent('@human');
+    // The design says it in the stream itself rather than in a strip above the
+    // layout, so the panel is the assertion now — but the four-state string is
+    // still there for a screen reader, because compressing it into the pill
+    // would lose the distinction that paragraph was added to make.
+    await waitFor(() => expect(screen.getByTestId('first-run')).toBeInTheDocument());
+    expect(screen.getByTestId('first-run')).toHaveTextContent('@human');
     expect(screen.getByText('live — waiting for the first event')).toBeInTheDocument();
     expect(screen.getByRole('main')).toHaveAttribute('data-source', 'live');
   });
 
-  it('tells the human why a button did nothing when there is no daemon', async () => {
-    // The buttons live in DisputeView, which only exists once a dispute room
-    // does — so the fixture has to actually load for this to test anything.
+  it('names the reason it is not connected', () => {
+    render(createElement(Hub, { connection: { kind: 'fixture', reason: 'daemon said 404' } as HubConnection }));
+
+    expect(screen.getByTestId('disconnected-reason')).toHaveTextContent('daemon said 404');
+  });
+});
+
+/**
+ * CT-10, verified and high. A refused browser was given the entire working hub
+ * — channel list, composer, `POST /events`, a live Send button — over `0 events`
+ * and an empty participants panel, beneath the words "showing a sample
+ * conversation" when no sample had loaded. An operator read a live session
+ * holding sixteen events and two open claims, one a blocker, as dead.
+ *
+ * The falsifier the issue names: a refused hub that renders no composer and no
+ * channel list, or a fixture mode that actually renders the sample it claims.
+ */
+describe('CT-10 a hub with no daemon is not a working hub', () => {
+  const refused: HubConnection = {
+    kind: 'fixture',
+    reason: 'The daemon refused this browser. Reopen the hub from the link `crosstalk up` printed.',
+  };
+
+  it('renders no composer, no channel list and no participants panel', async () => {
+    // The sample is fetched but irrelevant: none of this chrome may appear
+    // whether or not it loads.
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('', { status: 401 }))));
+
+    render(createElement(Hub, { connection: refused }));
+
+    expect(await screen.findByTestId('disconnected')).toBeInTheDocument();
+    expect(screen.queryByTestId('composer-input')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('composer-send')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('hub-layout')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('hub-region')).not.toBeInTheDocument();
+  });
+
+  it('quotes the URL that was opened, since the missing token is the fault', () => {
+    render(createElement(Hub, { connection: refused }));
+
+    expect(screen.getByTestId('disconnected-origin')).toBeInTheDocument();
+    expect(screen.getByTestId('disconnected-reason')).toHaveTextContent(/refused this browser/i);
+  });
+
+  it('does not offer a sample when no sample loaded', async () => {
+    // The exact incident: the words promised a conversation that was not there.
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('', { status: 401 }))));
+
+    render(createElement(Hub, { connection: refused }));
+
+    await screen.findByTestId('disconnected');
+    expect(screen.queryByTestId('view-sample')).not.toBeInTheDocument();
+  });
+
+  it('offers the sample only once it has loaded, and says it is a sample', async () => {
     const fixture = await readFile(resolve(process.cwd(), 'tests', 'fixtures', 'session-dispute.jsonl'), 'utf8');
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(fixture, { status: 200 }))));
 
-    render(createElement(Hub, { connection: { kind: 'fixture', reason: 'no daemon' } as HubConnection }));
+    render(createElement(Hub, { connection: refused }));
 
-    const button = await screen.findByTestId('human-action-intervene');
-    fireEvent.click(button);
+    const open = await screen.findByTestId('view-sample');
+    fireEvent.click(open);
 
-    expect(await screen.findByTestId('human-action-notice')).toHaveTextContent(/nobody to tell/i);
-  });
-
-  it('names the reason it is showing a fixture', () => {
-    render(createElement(Hub, { connection: { kind: 'fixture', reason: 'daemon said 404' } as HubConnection }));
-
-    expect(screen.getByTestId('fixture-reason')).toHaveTextContent('daemon said 404');
-    expect(screen.getByText(/offline — showing a sample conversation/)).toBeInTheDocument();
+    // Opened deliberately, and it never stops saying whose session it is not.
+    expect(await screen.findByTestId('sample-banner')).toHaveTextContent(/not your session/i);
+    // Still no keyboard: there is no daemon to post to.
+    expect(screen.queryByTestId('composer-input')).not.toBeInTheDocument();
   });
 });
 
@@ -188,6 +240,9 @@ describe('C2 maxRounds reaches the screen from the daemon config', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(fixture, { status: 200 }))));
 
     render(createElement(Hub, { connection: { kind: 'fixture', reason: 'no daemon' } as HubConnection }));
+
+    // CT-10: the sample is behind a deliberate click now, never shown unasked.
+    fireEvent.click(await screen.findByTestId('view-sample'));
 
     await waitFor(() => expect(screen.getByTestId('dispute-view')).toBeInTheDocument());
     expect(screen.getByTestId('dispute-view')).not.toHaveTextContent(/round \d+ \/ 3/);
@@ -370,22 +425,3 @@ describe('C1 the dispute screen against a real ladder log', () => {
   });
 });
 
-describe('C3 the composer without a daemon', () => {
-  it('is still there, and says why it cannot post', async () => {
-    // The two canned buttons already behave this way: shown, and they explain
-    // themselves on click. A composer that vanishes instead is a different
-    // answer to the same question, and it also means `vite dev` and a static
-    // build show no composer at all.
-    const fixture = await readFile(resolve(process.cwd(), 'tests', 'fixtures', 'session-dispute.jsonl'), 'utf8');
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(fixture, { status: 200 }))));
-
-    render(createElement(Hub, { connection: { kind: 'fixture', reason: 'no daemon' } as HubConnection }));
-
-    const field = await screen.findByTestId('composer-input');
-    fireEvent.change(field, { target: { value: 'is anyone there' } });
-    fireEvent.keyDown(field, { key: 'Enter' });
-
-    expect(await screen.findByTestId('composer-error')).toHaveTextContent(/nobody to tell/i);
-    expect(valueOf(field)).toBe('is anyone there');
-  });
-});

@@ -5,10 +5,12 @@ import { FLOOR } from '../../contracts/room.js';
 export type ParticipantStatus = 'awaiting_turn' | 'working' | 'offline';
 export type ChannelKind = 'floor' | 'task' | 'dispute' | 'direct';
 
-export interface ParticipantView extends Pick<Participant, 'id' | 'role'> {
+export interface ParticipantView extends Pick<Participant, 'id' | 'role' | 'harness' | 'workspace'> {
   status: ParticipantStatus;
   /** Absent when the participant's transport has not been probed. */
   tier?: Tier;
+  /** A harness does not identify a model, and the dock shows both. */
+  model?: string;
 }
 
 export interface ChannelRoom {
@@ -66,6 +68,9 @@ function projectParticipants(events: readonly CrosstalkEvent[]): ParticipantView
     .map((participant) => ({
       id: participant.id,
       role: participant.role,
+      harness: participant.harness,
+      workspace: participant.workspace,
+      model: participant.model,
       status: latest.has(participant.id) ? statusForEvent(latest.get(participant.id)!) : 'awaiting_turn',
       // Undefined means "not probed" and must stay undefined — `Tier` has no
       // unknown member, so a defaulted `file` is indistinguishable from a

@@ -2,6 +2,7 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import type { CrosstalkEvent } from '../contracts/events.js';
@@ -438,10 +439,45 @@ const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
 
 export const CLI_COMMANDS: readonly string[] = Object.keys(HANDLERS);
 
-const invokedDirectly =
-  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+/**
+ * Is this module the program being run, rather than something imported?
+ *
+ * Both sides go through `realpath` first, and that is the whole point.
+ * `import.meta.url` is already canonical; `process.argv[1]` is whatever path
+ * the user typed. `npm link` — which is how the README tells people to get
+ * `crosstalk` and `ct` on PATH — puts a link on PATH, so the two spellings
+ * differ, a lexical comparison returns false, and the CLI exits 0 having done
+ * nothing at all.
+ *
+ * Silently disabling the PATH binary would be bad anywhere. Inside the change
+ * that fixes `ct` on PATH resolving to the wrong build (CT-1) it would be
+ * indistinguishable from the bug being fixed.
+ *
+ * No test can catch it: every test here invokes `node dist/cli/index.js` by its
+ * real path, which is the branch that passes either way. Verified by hand
+ * through a junction instead.
+ */
+function invokedDirectly(): boolean {
+  const invoked = process.argv[1];
+  if (invoked === undefined) return false;
 
-if (invokedDirectly) {
+  const self = fileURLToPath(import.meta.url);
+  const canonical = (path: string): string => {
+    try {
+      return realpathSync.native(path);
+    } catch {
+      // Not on disk under that spelling; the lexical form is all there is.
+      return resolve(path);
+    }
+  };
+
+  const [a, b] = [canonical(invoked), canonical(self)];
+  return process.platform === 'win32' || process.platform === 'darwin'
+    ? a.toLowerCase() === b.toLowerCase()
+    : a === b;
+}
+
+if (invokedDirectly()) {
   main(process.argv.slice(2))
   .then((code) => {
     process.exitCode = code;

@@ -80,6 +80,8 @@ function transportInstructions(tier: Tier): string {
       '- `crosstalk respond CLAIM_ID --as ID --verdict contest --rationale "..." --falsifier "..."`',
       '- `crosstalk await --as ID --timeout 50` blocks until there is a turn for you.',
       '- `crosstalk mine --as ID` lists the tasks you hold; `crosstalk board` shows all of them.',
+      '- `crosstalk task state ID --as ID --state in_progress` moves a task you hold.',
+      '- Leaders only: `crosstalk task create --as ID --id T-01 --title "..." --brief "..." --assignee ID --branch B`.',
       'The task gates — acknowledging a brief and submitting a self-critique — are MCP tools only.',
       'There is no CLI command for them yet; say so in `#floor` rather than inventing one.',
     ].join('\n');

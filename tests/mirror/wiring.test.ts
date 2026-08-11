@@ -31,6 +31,14 @@ const ENABLED: MirrorConfig = {
   github: { enabled: true, mode: 'two-way-human', pollSeconds: 1 },
 };
 
+/**
+ * These build a real repository and run `init`, which spawns git several times
+ * — `init` refuses anything else since issue #23. Vitest's 5s default no longer
+ * fits, and on a Windows runner it fails intermittently rather than outright.
+ * Raised by Track B in the commit that made `init` require a repository.
+ */
+const GIT_TEST_TIMEOUT = 30_000;
+
 async function initialised(): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), 'ct-wiring-'));
   // A real repository with a commit: `init` now runs the same prerequisite
@@ -106,7 +114,7 @@ describe('the mirror against a live daemon', () => {
       expect(mirror.state.tasks.get('T-01')?.state).toBe('draft');
       expect(github.pulls).toHaveLength(0);
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('opens a draft pull request once the task is assigned, and marks it ready on submit', async () => {
     const repo = await initialised();
@@ -158,7 +166,7 @@ describe('the mirror against a live daemon', () => {
       expect(github.pulls).toHaveLength(1);
       expect(github.pulls[0]?.isDraft).toBe(false);
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('does not touch GitHub at all when the mirror is disabled', async () => {
     const repo = await initialised();
@@ -185,7 +193,7 @@ describe('the mirror against a live daemon', () => {
       expect(mirror.enabled).toBe(false);
       expect(github.calls).toHaveLength(0);
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 
   /**
    * The protocol must be unharmed by a mirror that cannot reach GitHub — not
@@ -234,7 +242,7 @@ describe('the mirror against a live daemon', () => {
     }
 
     expect(logs[0]).toBe(logs[1]);
-  });
+  }, GIT_TEST_TIMEOUT);
 });
 
 /** Lets the SSE frames arrive, then reconciles without waiting for the timer. */
@@ -357,7 +365,7 @@ describe('an escalated dispute in the published record', () => {
       expect(rung).toBeDefined();
       expect(comment?.body).toContain(rung!.rung);
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 
   /**
    * The neighbouring case, on the same path: a claim settled without escalating
@@ -401,5 +409,5 @@ describe('an escalated dispute in the published record', () => {
       expect(comment).toBeDefined();
       expect(comment?.body).not.toContain('**Ladder**');
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 });

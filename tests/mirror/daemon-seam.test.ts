@@ -23,6 +23,14 @@ const execFile = promisify(execFileCallback);
  * impersonate any participant.
  */
 
+/**
+ * These build a real repository and run `init`, which spawns git several times
+ * — `init` refuses anything else since issue #23. Vitest's 5s default no longer
+ * fits, and on a Windows runner it fails intermittently rather than outright.
+ * Raised by Track B in the commit that made `init` require a repository.
+ */
+const GIT_TEST_TIMEOUT = 30_000;
+
 async function initialised(): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), 'ct-mirror-'));
   // A real repository with a commit: `init` now runs the same prerequisite
@@ -78,7 +86,7 @@ describe('the seam the inbound mirror posts through', () => {
         body: 'ship it from the train',
       });
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 
   /**
    * The other side of the discrimination. Without this, a `postAsParticipant`
@@ -96,7 +104,7 @@ describe('the seam the inbound mirror posts through', () => {
       expect(messages).toHaveLength(1);
       expect(messages[0]).toMatchObject({ from: 'leader', body: 'not the human' });
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('refuses an unknown token rather than appending an unattributed message', async () => {
     const repo = await initialised();
@@ -107,5 +115,5 @@ describe('the seam the inbound mirror posts through', () => {
 
       expect(await messagesIn(repo)).toHaveLength(0);
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 });

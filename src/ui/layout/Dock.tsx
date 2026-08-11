@@ -4,12 +4,17 @@ import type { Task } from '../../contracts/task.js';
 import { project } from '../../core/projection.js';
 import type { ChannelRoom, ParticipantStatus, ParticipantView } from '../state/derive.js';
 import { assignColours, identityFor } from '../state/identity.js';
+import { HUMAN_ID } from '../../contracts/room.js';
 
 export interface DockProps {
   events: CrosstalkEvent[];
   participants: ParticipantView[];
   rooms: ChannelRoom[];
   activeRoom?: string;
+  /** Who this browser posts as. Without it there is no id to build a room from. */
+  self?: string;
+  /** Absent without a daemon, which is when no control should render at all. */
+  onOpenSideRoom?: (participantId: string) => void;
 }
 
 const STATUS_GROUPS: readonly { key: ParticipantStatus; label: string }[] = [
@@ -70,7 +75,7 @@ function rows(pairs: [string, string][]) {
  * invented. What a task genuinely carries is its branch, its PR number and its
  * assignee's workspace, and that is what shows.
  */
-export function Dock({ events, participants, rooms, activeRoom }: DockProps) {
+export function Dock({ events, participants, rooms, activeRoom, self, onOpenSideRoom }: DockProps) {
   const room = rooms.find((candidate) => candidate.id === activeRoom);
   const scoped = activeRoom === undefined ? [] : events.filter((event) => event.room === activeRoom);
   const lastSeq = scoped.at(-1)?.seq;
@@ -172,6 +177,31 @@ export function Dock({ events, participants, rooms, activeRoom }: DockProps) {
                   // field carries one, so there is nothing to read.
                   createElement('span', { className: 'member-meta fact' }, identity.meta || '—'),
                 ),
+                // CT-18. Side rooms have been a first-class room kind all
+                // along and the sidebar already renders a DIRECT group for
+                // them; nothing anywhere opened one, so the group was always
+                // empty and the feature invisible. This is the surface that
+                // creates one.
+                //
+                // Not offered against yourself, and not for `@human`, who is in
+                // every room already.
+                onOpenSideRoom === undefined || self === undefined || member.id === self || member.id === HUMAN_ID
+                  ? null
+                  : createElement(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'member-side-room',
+                        'data-testid': `side-room-${member.id}`,
+                        // Said plainly, because `withHuman()` puts @human in
+                        // every room and calling these DMs would imply privacy
+                        // the tool deliberately does not offer.
+                        title: `Open a side room with ${member.id} (@human is in it too)`,
+                        'aria-label': `Open a side room with ${member.id}`,
+                        onClick: () => onOpenSideRoom(member.id),
+                      },
+                      '@',
+                    ),
               );
             }),
           ),

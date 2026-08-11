@@ -7,6 +7,7 @@ import { deriveState } from './state/derive.js';
 import { useLog, type LogSource } from './state/useLog.js';
 import { loadHubConfig, type HubConnection } from './state/hubConfig.js';
 import { postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
+import { dmId } from '../core/rooms.js';
 
 /**
  * Used when no daemon answers `/config.json` — `vite dev`, or a static build
@@ -144,6 +145,13 @@ export default function App({ connection: injected }: AppProps = {}) {
         : undefined,
       onSelectRoom: (roomId: string) => setSelectedRoom(roomId),
       onHumanAction,
+      // Selecting the room is the whole action: the room becomes real when
+      // something is said in it, and the composer is already there. Posting an
+      // empty "opened a room" message would put a card in everyone's stream
+      // saying nothing.
+      onOpenSideRoom: connection.kind === 'live'
+        ? (participantId: string) => setSelectedRoom(dmId(connection.config.self, participantId))
+        : undefined,
     }),
   );
 }

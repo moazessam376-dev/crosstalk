@@ -24,6 +24,8 @@ export interface LayoutProps {
   onVote?: (decisionId: string, option: string, rationale: string) => Promise<PostResult>;
   onSelectRoom?: (roomId: string) => void;
   onHumanAction?: (action: HumanAction) => void;
+  /** Opens a side room with a participant and selects it. CT-18. */
+  onOpenSideRoom?: (participantId: string) => void;
 }
 
 /** Sidebar · stream · dock, at the design's widths. */
@@ -39,6 +41,7 @@ export function Layout({
   onVote,
   onSelectRoom,
   onHumanAction,
+  onOpenSideRoom,
 }: LayoutProps) {
   return createElement(
     'div',
@@ -66,6 +69,8 @@ export function Layout({
       participants: state.participants,
       rooms: state.rooms,
       activeRoom,
+      self,
+      onOpenSideRoom,
     }),
   );
 }

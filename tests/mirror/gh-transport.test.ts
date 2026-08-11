@@ -93,15 +93,38 @@ describe('the gh subcommands exist in the installed gh', () => {
     ghArgs.listComments(1).slice(0, 1),
   ];
 
+  /**
+   * Runs `gh <args> --help` and returns the line under its USAGE heading.
+   *
+   * The timeout is deliberately generous. `gh` answers in a couple of seconds
+   * normally, but process start on a contended Windows CI runner was measured
+   * at 31s against a 30s limit, which failed an unrelated documentation pull
+   * request with a red tick that had nothing to do with it. A timeout here is
+   * not evidence about the subcommand in either direction, so it should not be
+   * able to decide the run.
+   *
+   * A failure still throws rather than returning `''`. Returning empty on error
+   * would let the control below — which asserts a string is *absent* — pass for
+   * the wrong reason, and a control that cannot fail takes every assertion
+   * depending on it down with it.
+   */
   async function usageLine(args: string[]): Promise<string> {
     const gh = await findGh();
     if (gh === undefined) return '';
 
-    const { stdout } = await run(gh, [...args, '--help'], {
-      shell: isWindowsShim(gh),
-      timeout: 30_000,
-      env: { ...process.env, GH_NO_UPDATE_NOTIFIER: '1' },
-    });
+    let stdout: string;
+    try {
+      ({ stdout } = await run(gh, [...args, '--help'], {
+        shell: isWindowsShim(gh),
+        timeout: 120_000,
+        env: { ...process.env, GH_NO_UPDATE_NOTIFIER: '1' },
+      }));
+    } catch (error) {
+      const failure = error as { stderr?: string; message?: string };
+      throw new Error(
+        `could not run gh ${args.join(' ')} --help: ${failure.stderr || failure.message}`,
+      );
+    }
 
     const lines = stdout.split('\n');
     const heading = lines.findIndex((line) => line.trim().toUpperCase().startsWith('USAGE'));
@@ -114,11 +137,11 @@ describe('the gh subcommands exist in the installed gh', () => {
     // The control. If this ever starts reporting `gh pr raedy`, the check below
     // has stopped discriminating and every subcommand assertion is vacuous.
     expect(await usageLine(['pr', 'raedy'])).not.toContain('raedy');
-  }, 40_000);
+  }, 150_000);
 
   it.each(subcommands)('gh %s %s resolves to itself', async (...args: string[]) => {
     if ((await findGh()) === undefined) return;
 
     expect(await usageLine(args)).toContain(`gh ${args.join(' ')}`);
-  }, 40_000);
+  }, 150_000);
 });

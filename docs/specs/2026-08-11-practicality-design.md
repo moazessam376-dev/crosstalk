@@ -118,8 +118,14 @@ From inside the workspace the path does not resolve, and the only directory wher
 it does is the repo root: the leader's workspace, and the collision CT-8/CT-9 are
 about.
 
-The templates take the absolute path of the directory the brief is written into,
-and say the agent is already there:
+The templates take the absolute path of the **workspace root** —
+`resolve(repo, participant.workspace)` — and say the agent is already there.
+
+Not the directory the brief file lands in, which is a different thing for some
+harnesses: `localBriefFile` rewrites only the basename, but `cursor-*` declares a
+`briefFile` of `.cursor/rules/crosstalk.mdc`, so the containing directory is two
+levels below the workspace. Naming that would reproduce CT-13 for `binding`, the
+one harness that actually wandered.
 
 ```
 You are already in your workspace: D:\...\.crosstalk\worktrees\codex

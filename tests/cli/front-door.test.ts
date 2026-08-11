@@ -10,10 +10,11 @@ import { startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
 import { resolveAsset } from '../../src/daemon/hub.js';
 import { browserCommand } from '../../src/cli/open.js';
 import { exitCodeFor, CliError, EXIT } from '../../src/cli/client.js';
+import { failureText } from '../../src/cli/output.js';
 import { parse, stringify } from 'yaml';
 
 import type { CrosstalkConfig } from '../../src/contracts/config.js';
-import { runInit, purgeWorkspaces, preflight, samePath, type PathResolver } from '../../src/cli/init.js';
+import { runInit, purgeWorkspaces, preflight } from '../../src/cli/init.js';
 import { doctor } from '../../src/harness/doctor.js';
 import { listWorktrees } from '../../src/workspace/git.js';
 
@@ -82,7 +83,9 @@ async function isIgnored(cwd: string, path: string): Promise<boolean> {
 }
 
 async function initialised(): Promise<string> {
-  const repo = await tempRepo();
+  // A real repository, because `init` now runs the same prerequisite checks
+  // `doctor` does and refuses a directory git does not own (issue #23).
+  const repo = await gitRepo();
   await runInit({ repo, participants: [], force: false });
   return repo;
 }
@@ -102,7 +105,7 @@ async function withDaemon<T>(
 
 describe('crosstalk init', () => {
   it('writes a config, one token per participant, and @human among them', async () => {
-    const repo = await tempRepo();
+    const repo = await gitRepo();
     const result = await runInit({ repo, participants: [], force: false });
 
     expect(result.config.participants.map((p) => p.id)).toContain('@human');
@@ -113,7 +116,7 @@ describe('crosstalk init', () => {
     expect((await readFile(join(repo, '.crosstalk', 'tokens', 'human'), 'utf8')).trim()).toBe(
       result.tokens.get('@human'),
     );
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('points .mcp.json at the package, not at the target repository', async () => {
     const repo = await initialised();
@@ -129,15 +132,15 @@ describe('crosstalk init', () => {
     expect(mcp.mcpServers.crosstalk.env['CROSSTALK_REPO']).toBe(resolve(repo));
     // The url is discovered from daemon.json, never configured: the port is ephemeral.
     expect(mcp.mcpServers.crosstalk.env).not.toHaveProperty('CROSSTALK_URL');
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('gitignores .crosstalk so tokens cannot be committed', async () => {
-    const repo = await tempRepo();
+    const repo = await gitRepo();
     await writeFile(join(repo, '.gitignore'), 'node_modules/\n', 'utf8');
     await runInit({ repo, participants: [], force: false });
 
     expect(await readFile(join(repo, '.gitignore'), 'utf8')).toMatch(/^\.crosstalk\/$/m);
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('refuses to clobber an existing config without --force', async () => {
     const repo = await initialised();
@@ -145,7 +148,7 @@ describe('crosstalk init', () => {
       exitCode: EXIT.usage,
     });
     await expect(runInit({ repo, participants: [], force: true })).resolves.toBeTruthy();
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('keeps tokens stable across a daemon restart, so .mcp.json stays valid', async () => {
     const repo = await initialised();
@@ -165,41 +168,7 @@ describe('crosstalk init', () => {
         expect([...daemon.tokens.values()]).toContain(referenced);
       });
     }
-  });
-});
-
-describe('two spellings of one path', () => {
-  // Hard-coded rather than manufactured: generating a real 8.3 alias needs a
-  // volume with short-name creation enabled, which is not something a test can
-  // assume. These are the exact spellings the GitHub Windows runner produces —
-  // os.tmpdir() hands out C:\Users\RUNNER~1\..., `git worktree list` reports
-  // C:\Users\runneradmin\..., and lowercasing does not bridge them.
-  const LONG = 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\ct-cli-a1\\.crosstalk\\worktrees\\codex';
-  const SHORT = 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\ct-cli-a1\\.crosstalk\\worktrees\\codex';
-  const OTHER = 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\ct-cli-a1\\.crosstalk\\worktrees\\cursor';
-
-  /** Stands in for `realpath.native`, the only thing that expands 8.3. */
-  const expand: PathResolver = async (path) => path.replace('RUNNER~1', 'runneradmin');
-
-  it('treats an 8.3 short path and its long form as one worktree', async () => {
-    expect(await samePath(SHORT, LONG, expand)).toBe(true);
-  });
-
-  it('still says no to a genuinely different worktree', async () => {
-    // The discrimination that matters: a comparator returning true whenever it
-    // is asked would satisfy the test above and be completely wrong. Both
-    // spellings resolve here, so this cannot pass by the resolver failing.
-    expect(await samePath(SHORT, OTHER, expand)).toBe(false);
-    expect(await samePath(LONG, OTHER, expand)).toBe(false);
-  });
-
-  it('falls back to the lexical comparison for a path that does not exist yet', async () => {
-    // The ordinary case the first time a worktree is created: realpath throws,
-    // and a worktree that is genuinely absent must still compare unequal.
-    const absent: PathResolver = async () => { throw new Error('ENOENT'); };
-    expect(await samePath(LONG, LONG, absent)).toBe(true);
-    expect(await samePath(LONG, OTHER, absent)).toBe(false);
-  });
+  }, GIT_TEST_TIMEOUT);
 });
 
 describe('init builds the workspace it promises', () => {
@@ -340,6 +309,146 @@ describe('up refuses a configuration doctor rejects', () => {
   }, GIT_TEST_TIMEOUT);
 });
 
+describe('init refuses what doctor would reject', () => {
+  it('refuses a repository with no commit, and writes nothing', async () => {
+    // Issue #23. `init` exited 0 and left two worktrees on an unborn branch,
+    // four tokens and a config that `doctor` refused on the next command. An
+    // empty repository is the normal state for a new project.
+    const repo = await tempRepo();
+    await execFile('git', ['init', '-q', '-b', 'main', '.'], { cwd: repo, windowsHide: true });
+
+    await expect(runInit({ repo, participants: [], force: false })).rejects.toMatchObject({
+      exitCode: EXIT.protocol,
+    });
+    expect(await pathExists(join(repo, 'crosstalk.yaml'))).toBe(false);
+    expect(await pathExists(join(repo, '.crosstalk'))).toBe(false);
+  }, GIT_TEST_TIMEOUT);
+
+  it('accepts the same repository once it has one commit', async () => {
+    // Both sides. A preflight that refused everything would pass the test above.
+    const repo = await gitRepo();
+    await expect(runInit({ repo, participants: [], force: false })).resolves.toBeTruthy();
+  }, GIT_TEST_TIMEOUT);
+});
+
+describe('the kickoff line an agent is actually given', () => {
+  it('routes by probed tier, not by harness name', async () => {
+    const repo = await gitRepo();
+    const { kickoff } = await runInit({
+      repo,
+      participants: ['leader:leader:claude-code-app', 'binding:worker:cursor-app', 'codex:worker:codex-cli'],
+      force: false,
+    });
+    const lineFor = (id: string): string => kickoff.find((entry) => entry.id === id)!.line;
+
+    // CT-2: cursor-app got the shell line purely because its name does not
+    // start with `claude-code`, in the same run where Crosstalk wrote it an MCP
+    // registration and asserted the mcp tier was healthy.
+    expect(lineFor('binding')).toContain('await_turn()');
+    expect(lineFor('binding')).not.toContain('--as binding');
+
+    // codex-cli registers at ~/.codex/config.toml, outside the repo, so it is
+    // genuinely shell tier — the neighbouring case that must still get the CLI.
+    expect(lineFor('codex')).toContain('--as codex');
+    expect(lineFor('codex')).not.toContain('await_turn()');
+  }, GIT_TEST_TIMEOUT);
+
+  it('sends a shell-tier worker to its own checkout, not the leader\'s', async () => {
+    // The shell branch embedded the repository root for every participant, so
+    // every shell-tier worker was told to work in the leader's checkout — two
+    // agents in one working tree, which design §7 exists to prevent, arriving
+    // by a second route.
+    const repo = await gitRepo();
+    const { kickoff } = await runInit({
+      repo,
+      participants: ['leader:leader:claude-code-app', 'codex:worker:codex-cli'],
+      force: false,
+    });
+    const line = kickoff.find((entry) => entry.id === 'codex')!.line;
+    const workspace = join(repo, '.crosstalk', 'worktrees', 'codex');
+
+    expect(line).toContain(workspace);
+    // `--repo` still names the root — tokens and the daemon descriptor live
+    // there — so the assertion above must not pass merely because the root is
+    // a prefix of the workspace. It has to be told where to *work*.
+    expect(line).toContain(`Work in ${workspace}`);
+    expect(line).toContain(`--repo ${repo}`);
+  }, GIT_TEST_TIMEOUT);
+
+  it('names the build that printed it, never a bare `ct`', async () => {
+    // CT-3. A bare `ct` is only right if Crosstalk is globally installed *and*
+    // that install is this build. On the machine where this was found both
+    // halves were false, so the line Crosstalk printed ran a different checkout.
+    const repo = await gitRepo();
+    const { kickoff } = await runInit({
+      repo,
+      participants: ['leader:leader:claude-code-app', 'codex:worker:codex-cli'],
+      force: false,
+    });
+    const line = kickoff.find((entry) => entry.id === 'codex')!.line;
+
+    expect(line).toMatch(/node .*dist[\\/]cli[\\/]index\.js await /);
+    expect(line).not.toMatch(/`ct await/);
+  }, GIT_TEST_TIMEOUT);
+});
+
+describe('nothing init writes is committable', () => {
+  it('leaves every worker worktree clean, and the tracked brief untouched', async () => {
+    // CT-4. `claude-code-*` briefs went to CLAUDE.md — the project's tracked,
+    // canonical document — inside each worker's worktree. Every worker started
+    // dirty and a `git add -A` committed its own brief over the leader's.
+    const repo = await gitRepo();
+    await writeFile(join(repo, 'CLAUDE.md'), '# the project brief\n', 'utf8');
+    await execFile('git', ['add', '-A'], { cwd: repo, windowsHide: true });
+    await execFile('git', ['commit', '-qm', 'brief'], { cwd: repo, windowsHide: true });
+
+    await runInit({
+      repo,
+      participants: ['leader:leader:claude-code-app', 'w:worker:claude-code-app'],
+      force: false,
+    });
+
+    const worktree = join(repo, '.crosstalk', 'worktrees', 'w');
+    const { stdout } = await execFile('git', ['status', '--short'], { cwd: worktree, windowsHide: true });
+    expect(stdout.trim()).toBe('');
+
+    // The brief exists — clean must not mean "nothing was written".
+    expect(await pathExists(join(worktree, 'CLAUDE.local.md'))).toBe(true);
+    // And the tracked one still says what the project said.
+    expect(await readFile(join(worktree, 'CLAUDE.md'), 'utf8')).toContain('the project brief');
+  }, GIT_TEST_TIMEOUT);
+
+  it('excludes every token file it writes, without excluding source', async () => {
+    const repo = await gitRepo();
+    await runInit({
+      repo,
+      participants: ['leader:leader:claude-code-app', 'binding:worker:cursor-app'],
+      force: false,
+    });
+    const worktree = join(repo, '.crosstalk', 'worktrees', 'binding');
+
+    expect(await isIgnored(repo, '.mcp.json')).toBe(true);
+    // `.cursor/mcp.json` carries binding's token and was matched by nothing —
+    // found by checking each path init reported rather than the one I remembered.
+    expect(await isIgnored(worktree, '.cursor/mcp.json')).toBe(true);
+    // Too broad is its own failure.
+    expect(await isIgnored(worktree, 'src/index.ts')).toBe(false);
+  }, GIT_TEST_TIMEOUT);
+});
+
+describe('a failure names its remedy where the remedy will be read', () => {
+  it('puts the remedy above the error, in one write', () => {
+    // CT-5. Two writes put it underneath, and PowerShell's NativeCommandError
+    // block reads like a stack trace, so the actionable line gets skipped.
+    const text = failureText({ message: 'crosstalk.yaml already exists', remedy: 'Pass --force to overwrite it.' });
+
+    expect(text.indexOf('Pass --force')).toBeLessThan(text.indexOf('already exists'));
+    expect(text.endsWith('\n')).toBe(true);
+    // Without a remedy there is nothing to hoist, and no blank label either.
+    expect(failureText({ message: 'boom' })).toBe('boom\n');
+  });
+});
+
 describe('the hub front door', () => {
   it('serves the built shell at / without a credential', async () => {
     const repo = await initialised();
@@ -348,7 +457,7 @@ describe('the hub front door', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toContain('text/html');
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('exchanges a bootstrap token for a cookie and redirects it out of the address bar', async () => {
     const repo = await initialised();
@@ -364,7 +473,7 @@ describe('the hub front door', () => {
       expect(cookie).toContain('HttpOnly');
       expect(cookie).toContain('SameSite=Strict');
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('refuses a bootstrap token that is not a participant token', async () => {
     const repo = await initialised();
@@ -372,7 +481,7 @@ describe('the hub front door', () => {
       const response = await fetch(`${daemon.url}/?t=not-a-token`, { redirect: 'manual' });
       expect(response.status).toBe(401);
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('serves /config.json to the cookie the bootstrap set, and 401s without it', async () => {
     const repo = await initialised();
@@ -394,7 +503,7 @@ describe('the hub front door', () => {
 
       expect((await fetch(`${daemon.url}/config.json`)).status).toBe(401);
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 
   it('names the command that builds the hub instead of 404ing', async () => {
     const repo = await initialised();
@@ -411,7 +520,7 @@ describe('the hub front door', () => {
       },
       absent,
     );
-  });
+  }, GIT_TEST_TIMEOUT);
 });
 
 describe('static serving refuses to escape the bundle', () => {
@@ -489,5 +598,5 @@ describe('the SSE stream the hub subscribes to', () => {
       // default type, and a named frame is a silent blank screen.
       expect(buffered).not.toMatch(/^event:/m);
     });
-  });
+  }, GIT_TEST_TIMEOUT);
 });

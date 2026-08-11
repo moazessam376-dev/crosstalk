@@ -1,11 +1,11 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CrosstalkConfig, LadderRung, Participant } from '../../src/contracts/index.js';
-import { doctor, type Finding } from '../../src/harness/doctor.js';
+import { doctor, installSkewFinding, type Finding } from '../../src/harness/doctor.js';
 
 const execFile = promisify(execFileCallback);
 const temporaryDirectories: string[] = [];
@@ -45,6 +45,7 @@ function cfg(options: {
   workers?: number;
   participants?: Participant[];
   rungTimeouts?: CrosstalkConfig['policy']['dispute']['rungTimeouts'];
+  taskAcceptance?: CrosstalkConfig['policy']['taskAcceptance']['method'];
 } = {}): CrosstalkConfig {
   const participants = options.participants ?? [
     ...Array.from({ length: options.leaders ?? 1 }, (_, index) => participant(index === 0 ? 'leader' : `leader-${index}`, 'leader')),
@@ -63,7 +64,7 @@ function cfg(options: {
         ladder: options.ladder ?? ['discriminating_test', 'third_agent', 'leader'],
         rungTimeouts: options.rungTimeouts ?? { discriminating_test: '30m', third_agent: '30m', human: '4h' },
       },
-      taskAcceptance: { method: 'leader' },
+      taskAcceptance: { method: options.taskAcceptance ?? 'leader' },
     },
   };
 }
@@ -80,6 +81,54 @@ afterEach(async () => {
     }
   }
 }, 60_000);
+
+describe('rules that keep a config from stranding work', () => {
+  it('rejects a vote-based taskAcceptance, and accepts the two that resolve', async () => {
+    // C-15. `majority`/`unanimous` parse and validate, then refuse every
+    // acceptance with NOT_TASK_AUTHORITY naming a decision route nothing opens
+    // — the task sits in `submitted` forever and the log says only that
+    // somebody was not authorised.
+    for (const method of ['majority', 'unanimous'] as const) {
+      expect(await doctor(cfg({ taskAcceptance: method }), repo)).toContainEqual(
+        expect.objectContaining({ level: 'reject', code: 'TASK_ACCEPTANCE_UNIMPLEMENTED' }),
+      );
+    }
+    // Both sides: the implemented methods must stay accepted, or the check is
+    // just refusing everything.
+    for (const method of ['leader', 'human'] as const) {
+      expect(await doctor(cfg({ taskAcceptance: method }), repo)).not.toContainEqual(
+        expect.objectContaining({ code: 'TASK_ACCEPTANCE_UNIMPLEMENTED' }),
+      );
+    }
+  }, 60_000);
+
+  it('reserves the id `crosstalk`, as it reserves `human`', async () => {
+    const reserved = cfg({ participants: [participant('crosstalk', 'leader'), participant('w', 'worker')] });
+    expect(await doctor(reserved, repo)).toContainEqual(
+      expect.objectContaining({ level: 'reject', code: 'RESERVED_PARTICIPANT_ID' }),
+    );
+
+    // `crosstalk` names the MCP server entry and the tool; an ordinary id does not.
+    const fine = cfg({ participants: [participant('lead', 'leader'), participant('w', 'worker')] });
+    expect(await doctor(fine, repo)).not.toContainEqual(
+      expect.objectContaining({ code: 'RESERVED_PARTICIPANT_ID' }),
+    );
+  }, 60_000);
+
+  it('warns when the CLI on PATH is a different install, and stays quiet otherwise', async () => {
+    // CT-1. Both roots supplied, so the rule is exercised without depending on
+    // the machine happening to have a divergent global install.
+    const here = resolve('/opt/crosstalk');
+    expect(await installSkewFinding(here, resolve('/opt/crosstalk-leader'))).toMatchObject({
+      level: 'warn',
+      code: 'CLI_INSTALL_SKEW',
+    });
+    // Same install, and no global install at all: both silent. A warning that
+    // fires either way would be noise on every correctly-configured machine.
+    expect(await installSkewFinding(here, here)).toBeUndefined();
+    expect(await installSkewFinding(here, undefined)).toBeUndefined();
+  }, 60_000);
+});
 
 describe('doctor', () => {
   it('rejects a timeout on the last rung, and accepts the same ladder without one', async () => {

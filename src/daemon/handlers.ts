@@ -20,6 +20,8 @@ export interface HandlerContext {
   who: ParticipantId;
   config: CrosstalkConfig;
   state: HubState;
+  /** When each participant was last heard from. See `Presence`. */
+  seenAt?: ReadonlyMap<ParticipantId, number>;
   append(draft: DraftEvent): Promise<CrosstalkEvent>;
 }
 
@@ -476,6 +478,13 @@ export interface RosterEntry {
 export function roster(
   ctx: Pick<HandlerContext, 'config' | 'state' | 'who'>,
   awaiting: ReadonlySet<ParticipantId>,
+  /**
+   * Has this participant been heard from recently? Presence used to mean "a
+   * token was presented at some point", which never expired — one read-only
+   * call from a human shell reported a never-started agent as `active` for the
+   * life of the daemon.
+   */
+  isPresent: (who: ParticipantId) => boolean = (who) => ctx.state.participants.has(who),
 ): { you: ParticipantId; participants: RosterEntry[] } {
   const participants = ctx.config.participants.map((participant) => ({
     id: participant.id,
@@ -487,7 +496,7 @@ export function roster(
     ...(participant.transport === undefined ? {} : { transport: participant.transport }),
     status: awaiting.has(participant.id)
       ? ('awaiting_turn' as const)
-      : ctx.state.participants.has(participant.id)
+      : isPresent(participant.id)
         ? ('active' as const)
         : ('offline' as const),
   }));

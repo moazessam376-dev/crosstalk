@@ -169,3 +169,55 @@ describe('nextRung', () => {
     expect(nextRung(decision(), state)).toEqual({ rung: 'leader', index: 2 });
   });
 });
+
+describe('CT-7 the ladder prefers a peer that is actually there', () => {
+  // `state.participants.has(id)` is "a token was once presented". A single
+  // read-only roster call from a human shell flipped a never-started agent to
+  // active, and that agent then outranked a genuinely-live peer for
+  // third_agent — so the rung was entered, assigned to nobody, and timed out
+  // at 30m instead of going to the peer that could have answered.
+  it('picks the more recently active of two eligible peers', () => {
+    const { config, state } = fixture(['codex', 'cursor', 'stale', 'live'], undefined, {});
+    const seenAt = new Map([
+      ['stale', 1_000],
+      ['live', 9_000],
+    ]);
+
+    expect(adjudicatorFor('C-1', config, state, seenAt)).toBe('live');
+  });
+
+  it('picks the same peer whichever order the config lists them', () => {
+    // The old behaviour was config order filtered by a boolean, so a test that
+    // only ever saw one ordering could not tell the two apart.
+    const { config, state } = fixture(['codex', 'cursor', 'live', 'stale'], undefined, {});
+    const seenAt = new Map([
+      ['stale', 1_000],
+      ['live', 9_000],
+    ]);
+
+    expect(adjudicatorFor('C-1', config, state, seenAt)).toBe('live');
+  });
+
+  it('prefers any seen peer over one never seen at all', () => {
+    const { config, state } = fixture(['codex', 'cursor', 'never', 'seen'], undefined, {});
+    expect(adjudicatorFor('C-1', config, state, new Map([['seen', 5]]))).toBe('seen');
+  });
+
+  it('falls back to configuration order when nobody has been seen', () => {
+    // A fresh daemon has seen no one. It must still name a peer rather than
+    // refuse the rung.
+    const { config, state } = fixture(['codex', 'cursor', 'gemini'], undefined, {});
+    expect(adjudicatorFor('C-1', config, state, new Map())).toBe('gemini');
+  });
+
+  it('still never returns a disputant, however recently it was seen', () => {
+    const { config, state } = fixture(['codex', 'cursor', 'gemini'], undefined, {});
+    const seenAt = new Map([
+      ['codex', 9_999],
+      ['cursor', 9_998],
+      ['gemini', 1],
+    ]);
+
+    expect(adjudicatorFor('C-1', config, state, seenAt)).toBe('gemini');
+  });
+});

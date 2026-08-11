@@ -16,6 +16,7 @@ import { applyEvent, project, type HubState } from '../core/projection.js';
 import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js';
 import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
 import { workspaceWarning } from './workspace.js';
+import { Presence } from './presence.js';
 import { currentRungOf } from '../core/decisions.js';
 
 import {
@@ -294,6 +295,7 @@ class Daemon {
   #sweeping: Promise<void> | undefined;
   /** Keyed by participant and reported cwd. Empty string means "checked, nothing wrong". */
   readonly #workspaceWarnings = new Map<string, string>();
+  readonly #presence = new Presence();
 
   /** Absolute path to the clone. `config.project.repo` is relative to the config file. */
   readonly #repo: string;
@@ -456,6 +458,9 @@ class Daemon {
     // then detect that in its first call rather than after a human notices the
     // message bodies disagree with the `from` field.
     response.setHeader('x-crosstalk-you', who);
+    // Presence is "heard from recently", not "has ever spoken". Stamped on
+    // every authenticated request, including this one.
+    this.#presence.touch(who, Date.now());
     // CT-9. The harness reports where it actually is; the daemon is the only
     // party that knows where the config says it should be.
     const warnings = await this.#processWarnings(who, request);
@@ -500,7 +505,11 @@ class Daemon {
       return;
     }
     if (path === '/roster' && method === 'GET') {
-      send(response, 200, { ...roster(ctx, this.#pendingWaiters()), ...(warnings.length > 0 ? { warnings } : {}) });
+      const present = (id: ParticipantId): boolean => this.#presence.isPresent(id, Date.now());
+      send(response, 200, {
+        ...roster(ctx, this.#pendingWaiters(), present),
+        ...(warnings.length > 0 ? { warnings } : {}),
+      });
       return;
     }
     if (path === '/board' && method === 'GET') {
@@ -579,6 +588,11 @@ class Daemon {
       config: this.#config,
       get state(): HubState {
         return daemon.#state;
+      },
+      // A getter for the same reason as `state`: a rung entered late in a
+      // request must rank on who was live at that moment, not at dispatch.
+      get seenAt(): ReadonlyMap<ParticipantId, number> {
+        return daemon.#presence.seenAt();
       },
       append: (draft: DraftEvent) => this.#append(draft),
     };

@@ -62,6 +62,7 @@ export function adjudicatorFor(
   claimId: string,
   config: CrosstalkConfig,
   state: HubState,
+  seenAt: ReadonlyMap<ParticipantId, number> = new Map(),
 ): ParticipantId | undefined {
   const claim = state.claims.get(claimId);
   if (claim === undefined) return undefined;
@@ -71,7 +72,24 @@ export function adjudicatorFor(
     .filter((p) => p.role === 'worker' && p.id !== claim.raisedBy && p.id !== responder)
     .map((p) => p.id);
 
-  return candidates.find((id) => state.participants.has(id)) ?? candidates[0];
+  // Ranked by *when* a peer was last heard from, not by whether it ever was.
+  //
+  // `state.participants` is projected from `participant_joined`, which the
+  // daemon stamps the first time a token is presented and nothing ever
+  // retracts. So it means "has spoken at least once, ever" — and one read-only
+  // `roster` call from a human shell was enough to make a never-started agent
+  // outrank a peer that had been answering all along. The rung was then
+  // entered, assigned to somebody absent, and timed out instead of going to
+  // the peer that could have ruled.
+  //
+  // Falling back to joined-ness rather than straight to configuration order
+  // keeps the weaker signal where it is the only one available: on a daemon
+  // that has just started, "has connected at all" still beats "is merely
+  // configured". `sort` is stable, so configuration order breaks the tie.
+  const rank = (id: ParticipantId): number =>
+    seenAt.get(id) ?? (state.participants.has(id) ? 0 : -1);
+
+  return [...candidates].sort((a, b) => rank(b) - rank(a))[0];
 }
 
 /**

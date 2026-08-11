@@ -36,6 +36,23 @@ interface WireError {
 }
 
 export class DaemonClient {
+  /**
+   * The identity this client's token resolved to, as the daemon reports it.
+   *
+   * Undefined until the first response, because it is the daemon's answer and
+   * not something the client may assume: which participant a token belongs to
+   * depends on which `.mcp.json` the harness found, and that is precisely the
+   * thing agents have been getting wrong.
+   */
+  you: string | undefined;
+
+  /**
+   * Things the daemon noticed about this process rather than this request —
+   * currently, running outside the workspace the config declares for `you`.
+   * Replaced per response, not accumulated: it is a statement about now.
+   */
+  warnings: string[] = [];
+
   constructor(
     private readonly url: string,
     private readonly token: string,
@@ -55,10 +72,30 @@ export class DaemonClient {
       method,
       headers: {
         authorization: `Bearer ${this.token}`,
+        // CT-9. The daemon knows where the config says this participant should
+        // be; only the process knows where it actually is. Sent on every
+        // request rather than once on connect, because the MCP server is
+        // long-lived and a harness that relocates mid-session is the exact
+        // case that caused this.
+        //
+        // Percent-encoded: header values are Latin-1 and a path is not
+        // guaranteed to be, so an accented directory name would otherwise
+        // throw inside `fetch` and take every tool call with it.
+        'x-crosstalk-cwd': encodeURIComponent(process.cwd()),
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+
+    // Captured before the ok-check: a refusal is exactly when knowing which
+    // identity the token resolved to matters most.
+    const you = response.headers.get('x-crosstalk-you');
+    if (you !== null) this.you = you;
+
+    // Percent-encoded by the daemon, because header values are Latin-1 and
+    // these sentences are not.
+    const warned = response.headers.get('x-crosstalk-warning');
+    this.warnings = warned === null ? [] : warned.split(',').map(decodeURIComponent);
 
     const text = await response.text();
     if (!response.ok) throw toError(response.status, text);

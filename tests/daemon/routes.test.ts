@@ -846,3 +846,156 @@ describe('who may move a task', () => {
     });
   });
 });
+
+describe('CT-8 an agent can find out who its token made it', () => {
+  // Two sessions started in the repo root both authenticated as `leader` and
+  // neither could detect it, because no tool echoed the resolved identity. The
+  // envelope said `leader`; the message bodies said `metrics` and `skeleton`.
+  it('tells the caller which identity its token resolved to', async () => {
+    await withDaemon(async (daemon) => {
+      const asCodex = await readJson<{ you: string }>(await get(daemon, '/roster', 'codex'));
+      expect(asCodex.you).toBe('codex');
+    });
+  });
+
+  it('answers differently for a different token', async () => {
+    // The neighbouring case, and the one that matters: a hard-coded `leader`
+    // would satisfy the test above while reproducing the exact bug.
+    await withDaemon(async (daemon) => {
+      const asLeader = await readJson<{ you: string }>(await get(daemon, '/roster', 'leader'));
+      expect(asLeader.you).toBe('leader');
+    });
+  });
+
+  it('carries the identity on every authenticated response, not just roster', async () => {
+    // `roster` is the kickoff call, but an agent that starts elsewhere needs
+    // the same answer. The header is what lets the MCP layer attach `you` to
+    // every tool without each tool remembering to.
+    await withDaemon(async (daemon) => {
+      const board = await get(daemon, '/board', 'cursor');
+      expect(board.headers.get('x-crosstalk-you')).toBe('cursor');
+    });
+  });
+});
+
+describe('CT-9 a participant running outside its declared workspace is told', () => {
+  // `doctor` validates the config hard and never checks the process. Identity
+  // is resolved by whichever `.mcp.json` the harness found from its working
+  // directory, so a harness that relocates itself — Claude Code creates a
+  // per-session worktree under `.claude/worktrees/<slug>` — silently
+  // re-resolves to a different participant, or to none.
+  // Encoded exactly as `DaemonClient` encodes it. Sending a raw path here
+  // would pass regardless — an ASCII path decodes to itself — and would stop
+  // pinning the contract the moment the client's encoding changed.
+  const cwdHeader = (d: DaemonHandle, id: string, cwd: string): Promise<Response> =>
+    fetch(`${d.url}/roster`, {
+      headers: { ...auth(d, id), 'x-crosstalk-cwd': encodeURIComponent(cwd) },
+    });
+
+  /** Like `withDaemon`, but hands back the repo so a cwd can be built under it. */
+  async function withRepoDaemon<T>(fn: (d: DaemonHandle, repo: string) => Promise<T>): Promise<T> {
+    const repo = await tempRepo();
+    const daemon = await startDaemon({ repo });
+    try {
+      return await fn(daemon, repo);
+    } finally {
+      await daemon.close();
+    }
+  }
+
+  /**
+   * Asserts 200 before reading the body, always.
+   *
+   * Without it these tests pass against a 500: an error body has no `warnings`
+   * either, so every "stays quiet" case was green while the request was
+   * failing outright. That is what hid an `ERR_INVALID_CHAR` from an em-dash in
+   * a header value — three of four tests reported success on a broken route.
+   */
+  async function warningsFrom(response: Response): Promise<string[]> {
+    expect(response.status).toBe(200);
+    return (await readJson<{ warnings?: string[] }>(response)).warnings ?? [];
+  }
+
+  it('warns when the process is outside the declared workspace', async () => {
+    await withRepoDaemon(async (daemon, repo) => {
+      const strayed = join(repo, '.claude', 'worktrees', 'crosstalk-codex-setup-236158');
+      const warnings = await warningsFrom(await cwdHeader(daemon, 'codex', strayed));
+
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('.crosstalk/worktrees/codex');
+      expect(warnings[0]).toContain(strayed);
+    });
+  });
+
+  it('stays quiet when the process is inside it', async () => {
+    // The neighbouring case. A check that warned unconditionally would satisfy
+    // the test above and make the warning worthless.
+    await withRepoDaemon(async (daemon, repo) => {
+      const home = join(repo, '.crosstalk', 'worktrees', 'codex');
+      expect(await warningsFrom(await cwdHeader(daemon, 'codex', home))).toEqual([]);
+    });
+  });
+
+  it('stays quiet for a subdirectory of the workspace', async () => {
+    await withRepoDaemon(async (daemon, repo) => {
+      const nested = join(repo, '.crosstalk', 'worktrees', 'codex', 'src', 'deep');
+      expect(await warningsFrom(await cwdHeader(daemon, 'codex', nested))).toEqual([]);
+    });
+  });
+
+  it('says nothing at all when no cwd was reported', async () => {
+    // The CLI resolves identity from --as against a token file and never from
+    // the working directory, so it has no cwd to report and nothing to warn
+    // about. Absence must not read as a violation.
+    await withDaemon(async (daemon) => {
+      expect(await warningsFrom(await get(daemon, '/roster', 'codex'))).toEqual([]);
+    });
+  });
+});
+
+describe('CT-7 a probe does not make an agent look live', () => {
+  interface Roster {
+    participants: { id: string; status: string }[];
+  }
+  const statusOf = (r: Roster, id: string): string =>
+    r.participants.find((p) => p.id === id)!.status;
+
+  it('reports a participant that has never spoken as offline', async () => {
+    await withDaemon(async (daemon) => {
+      const r = await readJson<Roster>(await get(daemon, '/roster', 'leader'));
+      expect(statusOf(r, 'cursor')).toBe('offline');
+    });
+  });
+
+  it('reports it active right after it speaks', async () => {
+    // The neighbouring case: expiry must not mean "always offline".
+    await withDaemon(async (daemon) => {
+      await get(daemon, '/board', 'cursor');
+      const r = await readJson<Roster>(await get(daemon, '/roster', 'leader'));
+      expect(statusOf(r, 'cursor')).toBe('active');
+    });
+  });
+});
+
+describe('CT-9 the cwd header survives a path that is not Latin-1', () => {
+  it('warns about a directory with an accent in its name', async () => {
+    // Header values are Latin-1. An unencoded path like this throws inside
+    // `fetch` and takes every tool call with it, so the round trip is the
+    // thing under test, not the warning.
+    const repo = await tempRepo();
+    const daemon = await startDaemon({ repo });
+    try {
+      const strayed = join(repo, '.claude', 'wörktrees', 'café');
+      const response = await fetch(`${daemon.url}/roster`, {
+        headers: { ...auth(daemon, 'codex'), 'x-crosstalk-cwd': encodeURIComponent(strayed) },
+      });
+
+      expect(response.status).toBe(200);
+      const warnings = (await readJson<{ warnings?: string[] }>(response)).warnings ?? [];
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain(strayed);
+    } finally {
+      await daemon.close();
+    }
+  });
+});

@@ -94,10 +94,6 @@ button:focus-visible {
   border-bottom: 1px solid var(--border-hairline);
 }
 
-.hub-stream {
-  overflow: auto;
-}
-
 .stream-count,
 .fact,
 .fact-label,
@@ -1401,6 +1397,11 @@ button:focus-visible {
 .composer {
   margin: 0 14px 14px;
   border-radius: 8px;
+  /* CT-15. The composer is a fixed control, not a log entry: it holds its
+     height while the stream scrolls behind it. `.stream-head` and `.needs-you`
+     already say this; without it the composer is the one flex child that can be
+     squeezed under a constrained height. */
+  flex: none;
 }
 
 /* 7.2 — the identity chip is amber-tinted, matching the human's colour. */

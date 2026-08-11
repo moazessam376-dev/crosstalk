@@ -82,6 +82,97 @@ afterEach(async () => {
   }
 }, 60_000);
 
+/**
+ * CT-17 and CT-19. An unbuilt feature and a deliberately disabled one looked
+ * identical, and the uninformative outcome was the default one: `init` never
+ * prompts for a model, so the roster it writes has none and the hub has nothing
+ * to show — while `doctor` said nothing about either.
+ */
+describe('doctor names what is absent, not only what is wrong', () => {
+  function findingsFor(config: CrosstalkConfig): Promise<Finding[]> {
+    return doctor(config, repo);
+  }
+
+  it('warns once for every participant missing a model, not once each', async () => {
+    // A default `init` already emits two warnings and `up` prints them above the
+    // banner. One line per participant would make a correct first run look like
+    // a fault report.
+    const none = await findingsFor(cfg({ workers: 2 }));
+    const model = none.filter((f) => f.code === 'PARTICIPANT_NO_MODEL');
+
+    expect(model).toHaveLength(1);
+    expect(model[0]!.level).toBe('warn');
+    expect(model[0]!.message).toContain('worker-0');
+    expect(model[0]!.message).toContain('worker-1');
+  }, 60_000);
+
+  it('stays quiet when every participant declares a model', async () => {
+    // The neighbouring case, without which the check is just always-on noise.
+    const declared = cfg({
+      participants: [
+        participant('lead', 'leader', { model: 'opus-5' }),
+        participant('w', 'worker', { model: 'gpt-5.5-codex' }),
+      ],
+    });
+
+    expect(await findingsFor(declared)).not.toContainEqual(
+      expect.objectContaining({ code: 'PARTICIPANT_NO_MODEL' }),
+    );
+  }, 60_000);
+
+  it('says mirroring is unbuilt when the key is absent, and not when it is off on purpose', async () => {
+    expect(await findingsFor(cfg())).toContainEqual(
+      expect.objectContaining({ level: 'warn', code: 'MIRROR_UNCONFIGURED' }),
+    );
+
+    // `enabled: false` is a decision, not a gap. Warning about it would train
+    // the operator to ignore the line.
+    const disabled: CrosstalkConfig = { ...cfg(), mirror: { github: { enabled: false, mode: 'two-way-human', pollSeconds: 30 } } };
+    expect(await findingsFor(disabled)).not.toContainEqual(
+      expect.objectContaining({ code: 'MIRROR_UNCONFIGURED' }),
+    );
+  }, 60_000);
+
+  it('neither blocks a start', async () => {
+    const findings = await findingsFor(cfg());
+    for (const code of ['PARTICIPANT_NO_MODEL', 'MIRROR_UNCONFIGURED']) {
+      expect(findings.find((f) => f.code === code)?.level).toBe('warn');
+    }
+  }, 60_000);
+
+  /**
+   * The ordinary daily case `init` cannot see. `init` only inspects a base
+   * branch whose worktree is *gone*; a worktree that exists and is registered
+   * but has fallen behind is never examined, and that is the one the operator
+   * hand-fixed with `git merge --ff-only main` in three worktrees at once.
+   */
+  it('warns when a live worker worktree has fallen behind the main branch', async () => {
+    await git(repo, ['branch', '-M', 'main']);
+    const worktree = join(repo, '.crosstalk', 'worktrees', 'w');
+    await git(repo, ['worktree', 'add', '-q', '-b', 'ct/w-base', worktree]);
+
+    const behind = cfg({
+      participants: [participant('lead', 'leader'), participant('w', 'worker', { workspace: '.crosstalk/worktrees/w' })],
+    });
+
+    // Level: at main, nothing to say.
+    expect(await findingsFor(behind)).not.toContainEqual(
+      expect.objectContaining({ code: 'WORKTREE_BEHIND_MAIN' }),
+    );
+
+    // Main moves on; the worktree does not.
+    await writeFile(join(repo, 'README.md'), 'moved on\n', 'utf8');
+    await git(repo, ['add', 'README.md']);
+    await git(repo, ['commit', '-m', 'second']);
+
+    const findings = await findingsFor(behind);
+    expect(findings).toContainEqual(
+      expect.objectContaining({ level: 'warn', code: 'WORKTREE_BEHIND_MAIN' }),
+    );
+    expect(findings.find((f) => f.code === 'WORKTREE_BEHIND_MAIN')!.message).toContain('w');
+  }, 60_000);
+});
+
 describe('rules that keep a config from stranding work', () => {
   it('rejects a vote-based taskAcceptance, and accepts the two that resolve', async () => {
     // C-15. `majority`/`unanimous` parse and validate, then refuse every

@@ -22,6 +22,16 @@ function valueOf(field: Element): string {
   return (field as unknown as { value: string }).value;
 }
 
+// Same reason: no `dom` lib means no global `document` and no `Node.contains`.
+function byClass(selector: string): Element | null {
+  return (globalThis as unknown as { document: { querySelector(s: string): Element | null } })
+    .document.querySelector(selector);
+}
+
+function contains(parent: Element, child: Element): boolean {
+  return (parent as unknown as { contains(node: Element): boolean }).contains(child);
+}
+
 const state: HubState = {
   participants: [{ id: 'codex', role: 'worker', status: 'awaiting_turn', tier: 'mcp', harness: 'codex-cli', workspace: '.crosstalk/worktrees/codex' }],
   rooms: [{ id: '#floor', kind: 'floor' }],
@@ -127,6 +137,39 @@ describe('C2 channel row denominator', () => {
  * `<input>` or `<textarea>` anywhere in `src/ui/` — only two canned buttons.
  * The human could watch the argument and not join it.
  */
+/**
+ * CT-15. The operator's most-repeated friction of a day's use: to send a message
+ * they had to scroll to the very bottom of `#floor`, and with agents writing
+ * long-form that distance grew with every event.
+ *
+ * Already fixed by the hub redesign and pinned by nothing. This is the DOM half
+ * — the composer is a sibling of the scrolling log, not a child of it. The CSS
+ * half is in `theme.test.ts`, and neither is sufficient alone: the composer can
+ * be outside the scroll container and still scroll away if `.stream-scroll`
+ * loses `flex: 1`.
+ */
+describe('the composer is a control, not the last thing in the log', () => {
+  it('renders outside the scrolling region', () => {
+    render(
+      createElement(Layout, {
+        state: { ...state, rooms: [{ id: '#floor', kind: 'floor' }] },
+        activeRoom: '#floor',
+        self: '@human',
+        onSend: async () => ({ ok: true as const }),
+      }),
+    );
+
+    const composer = screen.getByTestId('composer');
+    const scroll = byClass('.stream-scroll');
+
+    expect(scroll).toBeTruthy();
+    expect(contains(scroll!, composer)).toBe(false);
+    // And still inside the stream region, so it belongs to the room on screen
+    // rather than floating over the whole hub.
+    expect(contains(byClass('.hub-stream')!, composer)).toBe(true);
+  });
+});
+
 describe('C3 composer', () => {
   function renderComposer(send: (body: string) => Promise<{ ok: true } | { ok: false; reason: string }>) {
     render(createElement(Composer, { room: 'dispute:C-118', self: '@human', onSend: send }));

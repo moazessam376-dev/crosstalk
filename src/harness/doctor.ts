@@ -10,7 +10,7 @@ import {
   type CrosstalkConfig,
   type Participant,
 } from '../contracts/index.js';
-import { headSha, gitVersion, isRepo, samePath } from '../workspace/git.js';
+import { branchSha, headSha, gitVersion, isAncestor, isRepo, samePath } from '../workspace/git.js';
 import { briefVersion, localBriefFile, renderBrief } from './brief.js';
 import { linkedInstallRoot, packageRootFromModule } from './install.js';
 import { loadRegistry, probeTier, type HarnessDescriptor } from './registry.js';
@@ -258,6 +258,55 @@ export async function checkPrerequisites(
   }
 
   return undefined;
+}
+
+/**
+ * Worker worktrees that exist but sit behind the main branch.
+ *
+ * Silent about anything it cannot determine: a workspace that is not a checkout
+ * yet, a main branch this clone does not have, a git that refuses. `doctor` is
+ * read-only advice, and a warning produced by a failed measurement is worse than
+ * no warning at all.
+ *
+ * One finding for all of them, like the model check — the operator had three at
+ * once, and three lines saying the same thing is a wall, not a report.
+ */
+async function checkWorktreeFreshness(
+  config: CrosstalkConfig,
+  repoRoot: string,
+): Promise<Finding[]> {
+  const workers = config.participants.filter((participant) => participant.role === 'worker');
+  if (workers.length === 0) return [];
+
+  let mainSha: string;
+  try {
+    mainSha = await branchSha(repoRoot, config.project.mainBranch);
+  } catch {
+    return [];
+  }
+
+  const behind: string[] = [];
+  for (const participant of workers) {
+    const workspace = resolve(repoRoot, participant.workspace);
+    if (workspace === repoRoot) continue;
+    try {
+      const head = await headSha(workspace);
+      // Behind, not merely different: a worktree carrying commits of its own is
+      // ahead or diverged, and telling someone doing work that they are "behind"
+      // would be both wrong and annoying.
+      if (head !== mainSha && (await isAncestor(head, mainSha, repoRoot))) behind.push(participant.id);
+    } catch {
+      // Not a checkout, or not readable. Not something to report as staleness.
+    }
+  }
+  if (behind.length === 0) return [];
+
+  return [finding(
+    'warn',
+    'WORKTREE_BEHIND_MAIN',
+    `The worktree for ${behind.join(', ')} is behind ${config.project.mainBranch}, so that agent is reading older code than the leader.`,
+    `Run \`git merge --ff-only ${config.project.mainBranch}\` in each of those worktrees, or \`crosstalk down --purge\` and \`crosstalk init\` to rebuild them.`,
+  )];
 }
 
 async function checkParticipant(
@@ -519,6 +568,49 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
     }
 
     findings.push(...await checkParticipant(participant, descriptor, config.policy, tier, repoRoot));
+  }
+
+  // CT-17. `init` accepts `--participant id:role:harness[:model]` and the hub
+  // renders the model when it is there, but nothing prompts for one and nothing
+  // said it was missing — so the default outcome was the uninformative one.
+  //
+  // One finding naming every participant, not one each: a default `init`
+  // already emits two warnings and `up` prints them above the banner, and a
+  // correct first run should not read as a fault report.
+  //
+  // Worth stating in the remedy and not only here: this is hand-declared and
+  // unverified. Nothing checks that the agent claiming a model is running it,
+  // so it is documentation rather than fact.
+  const unnamed = config.participants
+    .filter((participant) => participant.role !== 'human' && participant.model === undefined)
+    .map((participant) => participant.id);
+  if (unnamed.length > 0) {
+    findings.push(finding(
+      'warn',
+      'PARTICIPANT_NO_MODEL',
+      `No model is declared for ${unnamed.join(', ')}, so the hub cannot show which model each agent is running.`,
+      'Re-run init with --participant id:role:harness:model, or add `model:` to those participants in crosstalk.yaml. It is hand-declared and unverified — nothing checks the agent is running what it claims.',
+    ));
+  }
+
+  // The half `init` cannot see. `init` inspects a base branch whose worktree is
+  // gone; a worktree that exists, is registered, and has simply fallen behind is
+  // the ordinary daily case — an agent that has not rebased — and nothing looked
+  // at it. On the machine where CT-12 was found the operator fixed three of them
+  // by hand with `git merge --ff-only main`.
+  findings.push(...await checkWorktreeFreshness(config, repoRoot));
+
+  // CT-19. `src/mirror/` exists and `doctor` checks it, but `init` writes no
+  // mirror key, so the only way to turn it on is hand-editing an undocumented
+  // shape. That is a legitimate not-yet-built; the defect is that nothing said
+  // so, leaving an unbuilt feature and a deliberately disabled one identical.
+  if (config.mirror === undefined) {
+    findings.push(finding(
+      'warn',
+      'MIRROR_UNCONFIGURED',
+      'No GitHub mirror is configured, and init does not yet write one.',
+      'Expected — v1 ships the protocol and the mirror follows. Everything works locally without it. To try it, add a mirror.github block to crosstalk.yaml by hand.',
+    ));
   }
 
   if (config.mirror?.github.enabled) {

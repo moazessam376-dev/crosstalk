@@ -317,7 +317,11 @@ async function checkParticipant(
   } catch {
     // A missing file is reported by the same stale-brief warning as a hand edit.
   }
-  const expected = renderBrief(participant, descriptor, policy, tier);
+  // The same `repoRoot` `writeBrief` was given. The brief now names the
+  // workspace absolutely, and this comparison is byte-for-byte — passing a
+  // different root here would put BRIEF_STALE on every participant, on every
+  // `doctor` and every `up` preflight.
+  const expected = renderBrief(participant, descriptor, policy, tier, repoRoot);
   if (actual === undefined || actual.replaceAll('\r\n', '\n') !== expected) {
     findings.push(finding(
       'warn',

@@ -101,11 +101,28 @@ export function briefVersion(content: string): string {
   return `ct-brief-${digest}`;
 }
 
+/**
+ * @param repo  The repository root, so the brief can name the participant's
+ *   workspace absolutely. CT-13: the brief said "your workspace is
+ *   `.crosstalk/worktrees/binding`" — repo-relative, which is the right thing to
+ *   store in `crosstalk.yaml` and the wrong thing to hand an agent standing in
+ *   it. From inside the workspace that path does not resolve, and the only
+ *   directory where it does is the repository root: the leader's workspace, and
+ *   the identity collision CT-8/CT-9 are about. The Cursor session tried to walk
+ *   there twice on startup, correctly following its brief.
+ *
+ *   Required rather than defaulted. `doctor` renders the expected brief and
+ *   compares it byte-for-byte against what is on disk, so a caller that forgot
+ *   to pass this would put `BRIEF_STALE` on every participant on every `doctor`
+ *   and every `up` preflight. A required parameter fails at compile time
+ *   instead.
+ */
 export function renderBrief(
   participant: Participant,
   descriptor: HarnessDescriptor,
   policy: PolicyConfig,
   tier: Tier,
+  repo: string,
 ): string {
   const template = readTemplate(participant.role === 'leader' ? 'leader' : 'worker');
   const draft = replaceTokens(template, {
@@ -113,6 +130,12 @@ export function renderBrief(
     participantId: participant.id,
     harness: descriptor.key,
     workspace: participant.workspace,
+    // The workspace root, never `dirname` of the brief file. `localBriefFile`
+    // rewrites only the basename, but `cursor-*` declares a `briefFile` of
+    // `.cursor/rules/crosstalk.mdc`, so the directory the brief lands in is two
+    // levels below the workspace. Naming that would reproduce CT-13 for the one
+    // harness that actually wandered.
+    workspaceAbsolute: resolve(repo, participant.workspace),
     tier,
     lifecycle: participant.lifecycle,
     policySummary: policySummary(policy),
@@ -163,7 +186,7 @@ export async function writeBrief(
   tier: Tier,
   repo: string,
 ): Promise<void> {
-  const content = renderBrief(participant, descriptor, policy, tier);
+  const content = renderBrief(participant, descriptor, policy, tier, repo);
   const destination = resolve(repo, participant.workspace, localBriefFile(descriptor.briefFile));
   const directory = dirname(destination);
   await mkdir(directory, { recursive: true });

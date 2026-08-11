@@ -15,6 +15,8 @@ import { EventLog } from '../core/log.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
 import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js';
 import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
+import { workspaceWarning } from './workspace.js';
+import { Presence } from './presence.js';
 import { currentRungOf } from '../core/decisions.js';
 
 import {
@@ -291,6 +293,9 @@ class Daemon {
   /** One sweep at a time: two overlapping ones both read state before either's
    *  marks land, and emit the same `evidence_stale` twice. */
   #sweeping: Promise<void> | undefined;
+  /** Keyed by participant and reported cwd. Empty string means "checked, nothing wrong". */
+  readonly #workspaceWarnings = new Map<string, string>();
+  readonly #presence = new Presence();
 
   /** Absolute path to the clone. `config.project.repo` is relative to the config file. */
   readonly #repo: string;
@@ -365,6 +370,35 @@ class Daemon {
     return sweep;
   }
 
+  /**
+   * Anything the caller should know about its own process, not its request.
+   *
+   * Cached by (participant, cwd): the answer only changes when a process moves,
+   * and the check walks the filesystem. A long-poll that re-canonicalises a
+   * path every 50s for the life of a session is waste nobody asked for.
+   */
+  async #processWarnings(who: ParticipantId, request: IncomingMessage): Promise<string[]> {
+    // Percent-encoded by the client, because a path is not guaranteed to be
+    // Latin-1 and header values are. Decoded defensively: a malformed value is
+    // a reason to say nothing, not to fail the request it rode in on.
+    const raw = headerValue(request, 'x-crosstalk-cwd');
+    if (raw === undefined) return [];
+    let cwd: string;
+    try {
+      cwd = decodeURIComponent(raw);
+    } catch {
+      return [];
+    }
+
+    const key = `${who}\u0000${cwd}`;
+    let warning = this.#workspaceWarnings.get(key);
+    if (warning === undefined) {
+      warning = (await workspaceWarning(this.#config, this.#repo, who, cwd)) ?? '';
+      this.#workspaceWarnings.set(key, warning);
+    }
+    return warning === '' ? [] : [warning];
+  }
+
   /** A rung ran out of time. No request is in flight, so the daemon signs it. */
   async #expireRung(decisionId: string, reason: string): Promise<void> {
     try {
@@ -427,6 +461,26 @@ class Daemon {
     if (method === 'GET' && await this.#serveFrontDoor(url, path, response)) return;
 
     const who = this.#authenticate(request);
+    // Every authenticated response says who the caller turned out to be, so the
+    // MCP layer can attach it to every tool result without each tool
+    // remembering to. An agent whose harness found the wrong `.mcp.json` can
+    // then detect that in its first call rather than after a human notices the
+    // message bodies disagree with the `from` field.
+    response.setHeader('x-crosstalk-you', who);
+    // Presence is "heard from recently", not "has ever spoken". Stamped on
+    // every authenticated request, including this one.
+    this.#presence.touch(who, Date.now());
+    // CT-9. The harness reports where it actually is; the daemon is the only
+    // party that knows where the config says it should be.
+    const warnings = await this.#processWarnings(who, request);
+    if (warnings.length > 0) {
+      // Percent-encoded, and not optional: header values are Latin-1, and this
+      // message contains an em-dash. `setHeader` throws ERR_INVALID_CHAR on it,
+      // which 500s the request — and a 500 has no `warnings` in its body, so
+      // the "stays quiet" tests passed against the failure while the one that
+      // asserted the warning was the only one that noticed.
+      response.setHeader('x-crosstalk-warning', warnings.map(encodeURIComponent).join(','));
+    }
     const joined = await this.#ensureJoined(who);
     const ctx = this.#context(who);
 
@@ -460,7 +514,11 @@ class Daemon {
       return;
     }
     if (path === '/roster' && method === 'GET') {
-      send(response, 200, roster(ctx, this.#pendingWaiters()));
+      const present = (id: ParticipantId): boolean => this.#presence.isPresent(id, Date.now());
+      send(response, 200, {
+        ...roster(ctx, this.#pendingWaiters(), present),
+        ...(warnings.length > 0 ? { warnings } : {}),
+      });
       return;
     }
     if (path === '/board' && method === 'GET') {
@@ -539,6 +597,11 @@ class Daemon {
       config: this.#config,
       get state(): HubState {
         return daemon.#state;
+      },
+      // A getter for the same reason as `state`: a rung entered late in a
+      // request must rank on who was live at that moment, not at dispatch.
+      get seenAt(): ReadonlyMap<ParticipantId, number> {
+        return daemon.#presence.seenAt();
       },
       append: (draft: DraftEvent) => this.#append(draft),
     };
@@ -877,6 +940,13 @@ function wire(
   url?: string,
 ): WireError {
   return { error: { domain, code, message, ...(url === undefined ? {} : { url }) } };
+}
+
+/** A single header value, or undefined. Node hands back an array for repeats. */
+function headerValue(request: IncomingMessage, name: string): string | undefined {
+  const raw = request.headers[name];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value === undefined || value.trim() === '' ? undefined : value;
 }
 
 function send(response: ServerResponse, status: number, payload: unknown): void {

@@ -90,6 +90,21 @@ const CLAIM = {
   evidence: [EVIDENCE],
 };
 
+/**
+ * The tool envelope minus `warnings`, which is a fact about where this test
+ * process happens to be running rather than about the tool.
+ *
+ * The rig serves a temp repo while vitest runs in the Crosstalk checkout, so
+ * CT-9's workspace warning fires on every call here. Split out rather than
+ * folded into the expectation: the shape stays strictly asserted, and the
+ * environment-dependent part is named as such instead of quietly widening a
+ * `toEqual` into a `toMatchObject`.
+ */
+function shapeOf(result: ToolResult): { rest: Record<string, unknown>; warnings: unknown } {
+  const { warnings, ...rest } = payload(result) as Record<string, unknown>;
+  return { rest, warnings };
+}
+
 describe('mcp tools against a real daemon', () => {
   it('raises a claim and derives raisedBy from the token rather than the payload', async () => {
     await withDaemon(async (f) => {
@@ -295,7 +310,10 @@ describe('mcp tools against a real daemon', () => {
       const result = await callTool(f.as('codex'), 'await_turn', { timeout_s: 1 });
 
       expect(result.isError).toBeUndefined();
-      expect(payload(result)).toEqual({ idle: true });
+      const { rest, warnings } = shapeOf(result);
+      expect(rest).toEqual({ idle: true, you: 'codex' });
+      // CT-9 fires here because the rig is outside the temp repo it serves.
+      expect(warnings).toBeDefined();
     });
   });
 
@@ -315,7 +333,10 @@ describe('mcp tools against a real daemon', () => {
       expect(first.events.length).toBeGreaterThan(0);
 
       // The delivered mark has advanced, so the default path now has nothing.
-      expect(payload(await callTool(codex, 'await_turn', { timeout_s: 1 }))).toEqual({ idle: true });
+      expect(shapeOf(await callTool(codex, 'await_turn', { timeout_s: 1 })).rest).toEqual({
+        idle: true,
+        you: 'codex',
+      });
 
       // ...but an explicit `since` must override that mark. Without it being
       // forwarded, this is idle too and the test cannot tell the difference.

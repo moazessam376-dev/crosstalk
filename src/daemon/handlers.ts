@@ -20,6 +20,8 @@ export interface HandlerContext {
   who: ParticipantId;
   config: CrosstalkConfig;
   state: HubState;
+  /** When each participant was last heard from. See `Presence`. */
+  seenAt?: ReadonlyMap<ParticipantId, number>;
   append(draft: DraftEvent): Promise<CrosstalkEvent>;
 }
 
@@ -458,10 +460,32 @@ export interface RosterEntry {
   status: 'awaiting_turn' | 'active' | 'offline';
 }
 
+/**
+ * @returns `you` first, deliberately.
+ *
+ * Identity is resolved from whichever `.mcp.json` a harness happened to find
+ * from its working directory, and nothing echoed the answer back. Two sessions
+ * started in the repo root both authenticated as the leader and neither could
+ * tell: the envelope said `leader` while the message bodies said `metrics` and
+ * `skeleton`, and the only detector was a human noticing they disagreed.
+ *
+ * Everything that routes on participant id degrades to one identity when that
+ * happens — `raisedBy`, `adjudicatorFor`'s exclusion of the two disputants,
+ * `taskAcceptance`, and the self-critique gate all stop holding apart the
+ * things they exist to hold apart. So the first call an agent makes now
+ * answers "who am I", whether or not it thought to ask.
+ */
 export function roster(
-  ctx: Pick<HandlerContext, 'config' | 'state'>,
+  ctx: Pick<HandlerContext, 'config' | 'state' | 'who'>,
   awaiting: ReadonlySet<ParticipantId>,
-): { participants: RosterEntry[] } {
+  /**
+   * Has this participant been heard from recently? Presence used to mean "a
+   * token was presented at some point", which never expired — one read-only
+   * call from a human shell reported a never-started agent as `active` for the
+   * life of the daemon.
+   */
+  isPresent: (who: ParticipantId) => boolean = (who) => ctx.state.participants.has(who),
+): { you: ParticipantId; participants: RosterEntry[] } {
   const participants = ctx.config.participants.map((participant) => ({
     id: participant.id,
     role: participant.role,
@@ -472,11 +496,11 @@ export function roster(
     ...(participant.transport === undefined ? {} : { transport: participant.transport }),
     status: awaiting.has(participant.id)
       ? ('awaiting_turn' as const)
-      : ctx.state.participants.has(participant.id)
+      : isPresent(participant.id)
         ? ('active' as const)
         : ('offline' as const),
   }));
-  return { participants };
+  return { you: ctx.who, participants };
 }
 
 export interface BoardEntry {

@@ -81,7 +81,25 @@ function newTask(id: string) {
   };
 }
 
-describe('the mirror against a live daemon', () => {
+/**
+ * Every case here builds a real repository, runs the real `init` — which adds a
+ * git worktree, writes MCP configs, probes each harness and renders each brief —
+ * and then starts a real daemon. That is thirty-odd subprocess spawns before the
+ * first assertion, against vitest's 5s default.
+ *
+ * It has never fitted. At `ac520f6`, before this branch touched anything, one of
+ * these failed in a full run and all six failed in isolation under load; given
+ * 45s each they pass in about 2.8s. `init` gained a base-branch freshness check
+ * on this branch, which spawns a few more, so the margin is narrower still.
+ *
+ * The same ceiling `front-door.test.ts` sets, for the same reason and with the
+ * same reasoning: the work is legitimate, the default is not. A generous timeout
+ * does not weaken these — nothing here asserts on elapsed time — it only stops a
+ * loaded machine reporting a failure that is not one.
+ */
+const GIT_TEST_TIMEOUT = 45_000;
+
+describe('the mirror against a live daemon', { timeout: GIT_TEST_TIMEOUT }, () => {
   it('opens nothing for a task the leader has only drafted', async () => {
     const repo = await initialised();
     await withDaemon(repo, async (daemon) => {
@@ -289,7 +307,7 @@ async function ok(pending: Promise<Response>): Promise<void> {
  * dispute actually exceeds `maxRounds`, travel over `/stream`, and come out the
  * far end inside the comment the mirror wrote.
  */
-describe('an escalated dispute in the published record', () => {
+describe('an escalated dispute in the published record', { timeout: GIT_TEST_TIMEOUT }, () => {
   it('publishes the rung the ladder entered, and does not for a dispute that never escalated', async () => {
     const repo = await initialised();
     await withDaemon(repo, async (daemon) => {

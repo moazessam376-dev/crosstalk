@@ -72,6 +72,16 @@ export class DaemonClient {
       method,
       headers: {
         authorization: `Bearer ${this.token}`,
+        // CT-9. The daemon knows where the config says this participant should
+        // be; only the process knows where it actually is. Sent on every
+        // request rather than once on connect, because the MCP server is
+        // long-lived and a harness that relocates mid-session is the exact
+        // case that caused this.
+        //
+        // Percent-encoded: header values are Latin-1 and a path is not
+        // guaranteed to be, so an accented directory name would otherwise
+        // throw inside `fetch` and take every tool call with it.
+        'x-crosstalk-cwd': encodeURIComponent(process.cwd()),
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),

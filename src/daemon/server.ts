@@ -378,8 +378,17 @@ class Daemon {
    * path every 50s for the life of a session is waste nobody asked for.
    */
   async #processWarnings(who: ParticipantId, request: IncomingMessage): Promise<string[]> {
-    const cwd = headerValue(request, 'x-crosstalk-cwd');
-    if (cwd === undefined) return [];
+    // Percent-encoded by the client, because a path is not guaranteed to be
+    // Latin-1 and header values are. Decoded defensively: a malformed value is
+    // a reason to say nothing, not to fail the request it rode in on.
+    const raw = headerValue(request, 'x-crosstalk-cwd');
+    if (raw === undefined) return [];
+    let cwd: string;
+    try {
+      cwd = decodeURIComponent(raw);
+    } catch {
+      return [];
+    }
 
     const key = `${who}\u0000${cwd}`;
     let warning = this.#workspaceWarnings.get(key);

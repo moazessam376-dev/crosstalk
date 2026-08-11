@@ -140,3 +140,26 @@ describe('CT-8 every tool result names the caller', () => {
     });
   });
 });
+
+describe('CT-9 the client actually reports where it is running', () => {
+  /**
+   * The daemon's half was tested by a test that sent the header itself, which
+   * proved the daemon reads a header nothing sends. This drives a real MCP
+   * client over a real transport instead.
+   *
+   * The daemon here serves a temp repo whose leader workspace is `.`, while
+   * this process runs in the Crosstalk checkout — so a client that genuinely
+   * reports its cwd is genuinely outside the declared workspace, and the
+   * warning is real rather than staged.
+   */
+  it('warns, end to end, because the process is not in the declared workspace', async () => {
+    await withMcpClient(async (client) => {
+      const result = await client.callTool({ name: 'roster', arguments: {} });
+      const payload = JSON.parse(firstText(result)) as { warnings?: string[] };
+
+      expect(payload.warnings ?? []).toHaveLength(1);
+      expect(payload.warnings![0]).toContain('outside');
+      expect(payload.warnings![0]).toContain(process.cwd());
+    });
+  });
+});

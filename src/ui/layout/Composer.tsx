@@ -76,7 +76,7 @@ export function Composer({ room, self = '@human', onSend }: ComposerProps) {
       className: 'composer-input',
       'data-testid': 'composer-input',
       'aria-label': `post to ${room} as ${self}`,
-      placeholder: `Message ${room} — Enter sends, Shift+Enter adds a line`,
+      placeholder: `Message ${room} — @mention an agent to route it`,
       rows: 2,
       value: body,
       disabled: sending,
@@ -89,8 +89,20 @@ export function Composer({ room, self = '@human', onSend }: ComposerProps) {
       createElement('span', { className: 'composer-route fact' }, 'POST /events'),
       createElement(
         'button',
-        { type: 'submit', className: 'composer-send', 'data-testid': 'composer-send', disabled: sending || body.trim().length === 0 },
-        sending ? 'Sending' : 'Send',
+        {
+          type: 'submit',
+          className: 'composer-send',
+          'data-testid': 'composer-send',
+          'aria-label': sending ? 'Sending' : 'Send',
+          title: sending ? 'Sending' : 'Send',
+          disabled: sending || body.trim().length === 0,
+        },
+        createElement(
+          'svg',
+          { width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, 'aria-hidden': 'true' },
+          createElement('path', { d: 'M8 13V3.5' }),
+          createElement('path', { d: 'M3.8 7.5 8 3.3l4.2 4.2' }),
+        ),
       ),
     ),
     error === undefined

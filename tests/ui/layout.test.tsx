@@ -5,13 +5,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { createElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
-import { ChannelList } from '../../src/ui/layout/ChannelList.js';
+import { Sidebar } from '../../src/ui/layout/Sidebar.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Composer } from '../../src/ui/layout/Composer.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Layout } from '../../src/ui/layout/Layout.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
-import { Rail } from '../../src/ui/layout/Rail.js';
+import { Dock } from '../../src/ui/layout/Dock.js';
 import type { HubState } from '../../src/ui/state/derive.js';
 
 afterEach(cleanup);
@@ -23,30 +23,62 @@ function valueOf(field: Element): string {
 }
 
 const state: HubState = {
-  participants: [{ id: 'codex', role: 'worker', status: 'awaiting_turn', tier: 'mcp' }],
+  participants: [{ id: 'codex', role: 'worker', status: 'awaiting_turn', tier: 'mcp', harness: 'codex-cli', workspace: '.crosstalk/worktrees/codex' }],
   rooms: [{ id: '#floor', kind: 'floor' }],
   events: [],
   lastSeq: 0,
 };
 
 describe('hub layout regions', () => {
-  it('renders participants with live status and tier badge', () => {
-    render(createElement(Rail, { participants: [{ id: 'codex', role: 'worker', status: 'awaiting_turn', tier: 'mcp' }] }));
+  it('renders participants with their status, harness, model and tier', () => {
+    // The participant rail moved into the right dock, which is where the design
+    // puts the roster — beside the room it belongs to rather than in a column
+    // of its own.
+    render(
+      createElement(Dock, {
+        events: [],
+        rooms: [{ id: '#floor', kind: 'floor' }],
+        activeRoom: '#floor',
+        participants: [
+          { id: 'codex', role: 'worker', status: 'awaiting_turn', tier: 'mcp', harness: 'codex-cli', model: 'gpt-5.5-codex', workspace: '.crosstalk/worktrees/codex' },
+        ],
+      }),
+    );
 
-    expect(screen.getByText('codex')).toBeInTheDocument();
-    expect(screen.getByLabelText('awaiting turn')).toBeInTheDocument();
-    expect(screen.getByText('mcp')).toBeInTheDocument();
+    expect(screen.getByTestId('member-codex')).toHaveTextContent('codex');
+    expect(screen.getByTestId('member-codex')).toHaveTextContent('codex-cli · gpt-5.5-codex · mcp');
+    expect(screen.getByTestId('member-dot-codex')).toHaveAttribute('data-status', 'awaiting_turn');
+  });
+
+  it('renders no tier at all when the transport was never probed', () => {
+    // Spec 10.1: `Tier` has no *unknown* member, so a defaulted `file` is
+    // indistinguishable from a probed `file`. Absence says "not probed"; the
+    // two are different claims and only one of them is true.
+    render(
+      createElement(Dock, {
+        events: [],
+        rooms: [{ id: '#floor', kind: 'floor' }],
+        activeRoom: '#floor',
+        participants: [
+          { id: 'codex', role: 'worker', status: 'working', harness: 'codex-cli', workspace: '.' },
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId('member-codex')).toHaveTextContent('codex-cli');
+    expect(screen.getByTestId('member-codex')).not.toHaveTextContent('mcp');
+    expect(screen.getByTestId('member-codex')).not.toHaveTextContent('file');
   });
 
   it('groups channels and shows a round counter on disputes', () => {
-    render(createElement(ChannelList, { rooms: [{ id: 'dispute:C-118', kind: 'dispute', rounds: 2, maxRounds: 3 }] }));
+    render(createElement(Sidebar, { rooms: [{ id: 'dispute:C-118', kind: 'dispute', rounds: 2, maxRounds: 3 }] }));
 
     expect(screen.getByText('2/3')).toBeInTheDocument();
   });
 
   it('sorts rooms awaiting a human decision to the top', () => {
     render(
-      createElement(ChannelList, {
+      createElement(Sidebar, {
         rooms: [
           { id: 'task:T-1', kind: 'task' },
           { id: 'dispute:C-9', kind: 'dispute', awaitingHuman: true },
@@ -58,11 +90,14 @@ describe('hub layout regions', () => {
     expect(items[0]).toHaveTextContent('C-9');
   });
 
-  it('renders the rail, channels, stream, and inspector as four regions', () => {
+  it('renders the sidebar, stream and dock as three regions', () => {
+    // The design is three columns, not four: the participant rail moved into
+    // the right dock beside Room and Workspace, which is where the roster is
+    // read from rather than glanced at.
     render(createElement(Layout, { state, activeRoom: '#floor' }));
 
-    expect(screen.getAllByTestId('hub-region')).toHaveLength(4);
-    expect(screen.getByTestId('hub-layout')).toHaveAttribute('data-layout', 'four-region');
+    expect(screen.getAllByTestId('hub-region')).toHaveLength(3);
+    expect(screen.getByTestId('hub-layout')).toHaveAttribute('data-layout', 'three-region');
   });
 });
 
@@ -73,14 +108,14 @@ describe('hub layout regions', () => {
  */
 describe('C2 channel row denominator', () => {
   it('renders the configured maximum', () => {
-    render(createElement(ChannelList, { rooms: [{ id: 'dispute:C-118', kind: 'dispute', rounds: 2, maxRounds: 5 }] }));
+    render(createElement(Sidebar, { rooms: [{ id: 'dispute:C-118', kind: 'dispute', rounds: 2, maxRounds: 5 }] }));
 
     expect(screen.getByText('2/5')).toBeInTheDocument();
   });
 
   it('renders the round alone when no config supplied a maximum', () => {
     // Not "2/3". A fallback here is the deleted constant coming back.
-    render(createElement(ChannelList, { rooms: [{ id: 'dispute:C-118', kind: 'dispute', rounds: 2 }] }));
+    render(createElement(Sidebar, { rooms: [{ id: 'dispute:C-118', kind: 'dispute', rounds: 2 }] }));
 
     expect(screen.getByText('2')).toBeInTheDocument();
     expect(screen.queryByText('2/3')).not.toBeInTheDocument();

@@ -1,10 +1,8 @@
 import { createElement } from 'react';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
-import { ChannelList } from './ChannelList.js';
+import { Dock } from './Dock.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
-import { Inspector } from './Inspector.js';
-// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
-import { Rail } from './Rail.js';
+import { Sidebar } from './Sidebar.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Stream } from './Stream.js';
 import type { HubState } from '../state/derive.js';
@@ -19,37 +17,55 @@ export interface LayoutProps {
   maxRounds?: number;
   /** Who the daemon attributes this browser's posts to. */
   self?: string;
-  /** Absent when no daemon is attached — the composer is hidden rather than inert. */
+  /** `live`, `connecting` or `reconnecting`. */
+  status?: string;
+  /** Absent when no daemon is attached — the composer is not rendered at all. */
   onSend?: (body: string) => Promise<PostResult>;
-  /** Absent when no daemon is attached. */
   onVote?: (decisionId: string, option: string, rationale: string) => Promise<PostResult>;
   onSelectRoom?: (roomId: string) => void;
   onHumanAction?: (action: HumanAction) => void;
 }
 
-const GRID_TEMPLATE = 'minmax(180px, 220px) minmax(220px, 280px) minmax(0, 1fr) minmax(240px, 320px)';
+/** Sidebar · stream · dock, at the design's widths. */
+const GRID_TEMPLATE = '252px minmax(0, 1fr) 316px';
 
-export function Layout({ state, activeRoom, maxRounds, self, onSend, onVote, onSelectRoom, onHumanAction }: LayoutProps) {
+export function Layout({
+  state,
+  activeRoom,
+  maxRounds,
+  self,
+  status,
+  onSend,
+  onVote,
+  onSelectRoom,
+  onHumanAction,
+}: LayoutProps) {
   return createElement(
     'div',
     {
       className: 'hub-layout',
       'data-testid': 'hub-layout',
-      'data-layout': 'four-region',
-      style: {
-        display: 'grid',
-        gridTemplateColumns: GRID_TEMPLATE,
-        gap: '1px',
-        minHeight: '100vh',
-        backgroundColor: 'var(--border-hairline)',
-        color: 'var(--text-primary)',
-        fontFamily: 'var(--font-ui)',
-        fontSize: 'var(--size-ui)',
-      },
+      'data-layout': 'three-region',
+      style: { gridTemplateColumns: GRID_TEMPLATE },
     },
-    createElement(Rail, { participants: state.participants }),
-    createElement(ChannelList, { rooms: state.rooms, activeRoom, onSelectRoom }),
-    createElement(Stream, { events: state.events, activeRoom, maxRounds, self, onSend, onVote, onHumanAction }),
-    createElement(Inspector, { activeRoom, rooms: state.rooms }),
+    createElement(Sidebar, { rooms: state.rooms, activeRoom, self, onSelectRoom }),
+    createElement(Stream, {
+      events: state.events,
+      activeRoom,
+      rooms: state.rooms,
+      participants: state.participants,
+      maxRounds,
+      self,
+      status,
+      onSend,
+      onVote,
+      onHumanAction,
+    }),
+    createElement(Dock, {
+      events: state.events,
+      participants: state.participants,
+      rooms: state.rooms,
+      activeRoom,
+    }),
   );
 }

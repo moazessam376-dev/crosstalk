@@ -56,7 +56,21 @@ async function messagesIn(repo: string): Promise<CrosstalkEvent[]> {
     .filter((event) => event.kind === 'message');
 }
 
-describe('the seam the inbound mirror posts through', () => {
+/**
+ * The last `runInit` test still on vitest's 5s default. Every other file that
+ * builds a real repository and runs the real `init` — `front-door`,
+ * `mcp-merge`, `wiring`, and the three added on this branch — already raises its
+ * own ceiling, which is the tell that 5s was never the right budget for this
+ * shape of test rather than a property of any one of them.
+ *
+ * `init` adds a git worktree, writes MCP configs, probes each harness and
+ * renders each brief; then this starts a daemon on top. Nothing here asserts on
+ * elapsed time, so the ceiling costs nothing and stops a loaded machine
+ * reporting a failure that is not one.
+ */
+const GIT_TEST_TIMEOUT = 45_000;
+
+describe('the seam the inbound mirror posts through', { timeout: GIT_TEST_TIMEOUT }, () => {
   it('attributes a message to @human when it carries @human\'s token', async () => {
     const repo = await initialised();
     await withDaemon(repo, async (daemon) => {

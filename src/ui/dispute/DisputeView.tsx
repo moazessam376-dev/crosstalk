@@ -376,7 +376,9 @@ export function DisputeView({ roomId, events, maxRounds, self, onVote, onHumanAc
     createElement(
       'header',
       { className: 'dispute-header' },
-      createElement('h2', null, roomId),
+      // The stream header already names the room; repeating it here wasted the
+      // one line the design gives to saying what this block is.
+      createElement('h2', { className: 'dispute-eyebrow' }, 'ESCALATION LADDER'),
       createElement(
         'span',
         { className: 'round-counter fact', 'data-max-rounds': maxRounds === undefined ? 'unknown' : String(maxRounds) },

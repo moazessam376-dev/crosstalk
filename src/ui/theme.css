@@ -319,7 +319,6 @@ button:focus-visible {
   font-family: var(--font-mono);
   font-size: var(--size-mono);
   text-align: center;
-  text-transform: capitalize;
 }
 
 .ladder-rung[data-current="true"] {
@@ -672,4 +671,862 @@ button:focus-visible {
   margin: 0;
   padding: 8px 10px 0;
   color: var(--text-secondary);
+}
+
+/* ===========================================================================
+   The hub, built to docs/design/2026-08-10-hub.dc.html.
+
+   Three regions at the design widths — 252 / fluid / 316 — with a 46px head on
+   the sidebar and the stream so the two align across the seam. Density, radii
+   and hairlines follow spec 10.4: elevation by border and background delta,
+   never a shadow.
+   =========================================================================== */
+
+.hub-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--size-ui);
+}
+
+.hub-layout {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  background: var(--surface-base);
+}
+
+.hub-region {
+  min-width: 0;
+  background: var(--surface-base);
+  overflow: hidden;
+}
+
+/* --- sidebar ------------------------------------------------------------ */
+
+.hub-sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-panel);
+  border-right: 1px solid var(--border-hairline);
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 10px 0 12px;
+  flex: none;
+}
+
+.sidebar-wordmark {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.sidebar-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+.channel-group {
+  margin-top: 10px;
+}
+
+.channel-group-label {
+  margin: 0;
+  padding: 0 8px 4px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+.channel-list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.channel-button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.channel-button:hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+/* The active room is marked twice — fill and an inset edge — because fill
+   alone is easy to lose against the panel it sits on. */
+.channel-button.is-active {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.channel-button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.channel-icon {
+  width: 12px;
+  flex: none;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: center;
+}
+
+.channel-button.is-active .channel-icon {
+  color: var(--accent);
+}
+
+.channel-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-list .round-counter {
+  margin-left: auto;
+  color: var(--status-contested);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.human-badge {
+  margin-left: auto;
+  border: 1px solid var(--status-open);
+  border-radius: 999px;
+  background: transparent;
+  padding: 1px 5px;
+  color: var(--status-open);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.human-badge ~ .round-counter {
+  margin-left: 0;
+}
+
+.sidebar-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 10px 0 12px;
+  border-top: 1px solid var(--border-hairline);
+  flex: none;
+}
+
+.sidebar-self-id {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.sidebar-self-role {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* --- avatars ------------------------------------------------------------ */
+
+.avatar {
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--surface-base);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex: none;
+}
+
+.avatar-sm { width: 22px; height: 22px; font-size: 9.5px; }
+.avatar-md { width: 26px; height: 26px; font-size: 10.5px; }
+.avatar-lg { width: 30px; height: 30px; font-size: 10.5px; }
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  flex: none;
+}
+
+.status-dot[data-status="working"],
+.status-dot[data-status="live"] { background: var(--status-fresh); }
+.status-dot[data-status="awaiting_turn"],
+.status-dot[data-status="connecting"],
+.status-dot[data-status="reconnecting"] { background: var(--status-open); }
+.status-dot[data-status="offline"] { background: var(--text-tertiary); }
+
+/* --- stream ------------------------------------------------------------- */
+
+.hub-stream {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.stream-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border-hairline);
+  flex: none;
+}
+
+.stream-icon {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.stream-title {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.stream-sub {
+  color: var(--text-tertiary);
+}
+
+.stream-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+}
+
+.stream-status[data-status="live"] { color: var(--status-fresh); }
+.stream-status[data-status="connecting"],
+.stream-status[data-status="reconnecting"] { color: var(--status-open); }
+
+.stream-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 14px 4px;
+}
+
+.first-run {
+  display: grid;
+  gap: 10px;
+  max-width: 520px;
+  margin: 64px auto;
+  padding: 20px;
+  border: 1px dashed var(--border-hairline);
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+.first-run-lead {
+  margin: 0;
+  font-size: 14px;
+}
+
+.first-run-note {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.card-stream {
+  display: grid;
+  gap: 2px;
+  padding: 0;
+}
+
+/* --- message rows ------------------------------------------------------- */
+
+.message-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.message-body-col {
+  min-width: 0;
+}
+
+.message-row .message-card-header {
+  padding: 0;
+  border: 0;
+  gap: 8px;
+}
+
+.message-author {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.message-role {
+  border-radius: 4px;
+  background: rgba(157, 167, 179, 0.14);
+  padding: 0 5px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.message-model,
+.message-handle {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
+.message-row .message-time,
+.message-row .message-seq {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+
+.message-row .message-seq {
+  margin-left: 0;
+}
+
+.message-row .message-body {
+  margin: 3px 0 0;
+  padding: 0;
+  line-height: 1.6;
+}
+
+/* --- needs-you tray ----------------------------------------------------- */
+
+.needs-you {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 14px;
+  border: 1px solid var(--status-open);
+  border-bottom: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: rgba(219, 171, 121, 0.09);
+  padding: 9px 12px;
+}
+
+.needs-you-label {
+  color: var(--status-open);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  flex: none;
+}
+
+.needs-you-body {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- right dock --------------------------------------------------------- */
+
+.hub-dock {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+  border-left: 1px solid var(--border-hairline);
+  padding: 12px;
+}
+
+.dock-card {
+  border: 1px solid var(--border-hairline);
+  border-radius: 8px;
+  background: var(--surface-panel);
+}
+
+.dock-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.dock-card-title {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.dock-card-aside {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+
+.dock-rows {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 0;
+  padding: 10px 11px;
+}
+
+.dock-rows dt {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.dock-rows dd {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.dock-members {
+  padding: 6px 6px 10px;
+}
+
+.member-group + .member-group {
+  margin-top: 6px;
+}
+
+.member-group-label {
+  padding: 4px 5px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+
+.member-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 4px 5px;
+  border-radius: var(--radius);
+}
+
+.member-row:hover {
+  background: var(--surface-raised);
+}
+
+.member-avatar-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+}
+
+.member-avatar-wrap .status-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  box-shadow: 0 0 0 2px var(--surface-panel);
+}
+
+/* Offline is stated by the dot; dimming the avatar says the same thing a
+   second time, which is what makes a roster scannable. */
+.member-row[data-status="offline"] .avatar { opacity: 0.45; }
+.member-row[data-status="offline"] .member-id { color: var(--text-tertiary); }
+
+.member-body { min-width: 0; }
+
+.member-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.member-id {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.member-role {
+  border-radius: 4px;
+  background: rgba(157, 167, 179, 0.14);
+  padding: 0 5px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.member-meta {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- not connected (CT-10) ---------------------------------------------- */
+
+.disconnected {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--size-ui);
+}
+
+.disconnected-card {
+  display: grid;
+  gap: 14px;
+  max-width: 560px;
+  border: 1px solid var(--status-stale);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  padding: 22px 24px;
+}
+
+.disconnected-eyebrow {
+  color: var(--status-stale);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+
+.disconnected-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.disconnected-reason {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.disconnected-what {
+  display: grid;
+  gap: 4px;
+}
+
+.disconnected-what p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.disconnected-origin {
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+.disconnected-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+
+.disconnected-sample {
+  justify-self: start;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  padding: 6px 12px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.disconnected-sample:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.sample-banner {
+  margin: 0;
+  border-bottom: 1px solid var(--status-stale);
+  background: rgba(210, 153, 34, 0.12);
+  padding: 7px 14px;
+  color: var(--status-stale);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* Available to a screen reader, absent from the design's chrome. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dispute-eyebrow {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+/* ===========================================================================
+   Gap-list fixes, second pass. Row numbers are the audit's.
+   =========================================================================== */
+
+/* 1.4 — thin dark rounded scrollbars rather than the OS default. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-hairline);
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* 2.8 — the human pill is an outline, not a fill. */
+.human-badge {
+  border: 1px solid var(--status-open);
+  border-radius: 999px;
+  background: transparent;
+  padding: 1px 5px;
+  font-size: 10px;
+}
+
+/* 4.13 — a claim card carries its state on its left edge and stops at 720px. */
+.claim-card {
+  max-width: 720px;
+  border-left: 2px solid var(--status-open);
+}
+
+.claim-card[data-claim-state='contested'] { border-left-color: var(--status-contested); }
+.claim-card[data-claim-state='clarify'] { border-left-color: var(--accent); }
+.claim-card[data-claim-state='resolved'] { border-left-color: var(--status-fresh); }
+
+/* 4.14 — chips are 10.5px mono on a 1px/6px pill. */
+.state-chip,
+.severity-chip {
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+/* 4.15 — contest is the argued-against action and reads as one. */
+.claim-action-contest {
+  border-color: var(--accent);
+  background: rgba(88, 166, 255, 0.1);
+  color: var(--accent);
+}
+
+/* 7.1 — composer box: 8px radius, 14px side inset. */
+.composer {
+  margin: 0 14px 14px;
+  border-radius: 8px;
+}
+
+/* 7.2 — the identity chip is amber-tinted, matching the human's colour. */
+.composer-identity {
+  background: rgba(219, 171, 121, 0.14);
+  color: var(--status-open);
+}
+
+/* 7.9 — send is a 28px circle with an arrow, not a labelled button. */
+.composer-send {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--surface-base);
+}
+
+.composer-send:hover:not(:disabled) {
+  background: #79b8ff;
+  filter: none;
+}
+
+/* 8.3 — each dispute pane carries its state on its left edge, with a 22px
+   avatar in the header so the two sides are told apart before they are read. */
+.dispute-claims .claim-card {
+  max-width: none;
+  border-left-width: 2px;
+}
+
+.claim-card-header .avatar {
+  margin-right: 2px;
+}
+
+/* 9.4 — every interactive row answers the pointer. */
+.member-row:hover,
+.dock-rows:hover {
+  background: var(--surface-raised);
+}
+
+/* 4.11 — protocol events are one grey line with a coloured dot, not a card. */
+.protocol-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px 4px 0;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.protocol-rail {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  flex: none;
+}
+
+.protocol-rail[data-kind='decision_opened'] { background: var(--status-contested); }
+.protocol-rail[data-kind='vote_cast'] { background: var(--accent); }
+.protocol-rail[data-kind='evidence_stale'] { background: var(--status-stale); }
+.protocol-rail[data-kind='rebase_notice'] { background: var(--status-stale); }
+.protocol-rail[data-kind='rung_entered'] { background: var(--accent); }
+.protocol-rail[data-kind='rung_failed'] { background: var(--status-blocker); }
+
+.protocol-kind {
+  letter-spacing: 0.04em;
+}
+
+.protocol-body {
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.protocol-seq {
+  margin-left: auto;
+  flex: none;
+}
+
+/* 4.12 — a task room shows the task, not an "unsupported event" fallback. */
+.task-card {
+  max-width: 720px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-panel);
+}
+
+.task-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.task-eyebrow {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+
+.task-id {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.task-title {
+  font-weight: 600;
+}
+
+.task-brief {
+  margin: 10px 12px 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.task-acceptance {
+  margin: 10px 12px 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.task-acceptance ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0 0 0 16px;
+  line-height: 1.5;
+}
+
+.task-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 10px 12px 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-hairline);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* 4.9 — a mention is called out under the body it appeared in. */
+.message-mention {
+  display: inline-block;
+  margin-top: 4px;
+  border-radius: 4px;
+  background: rgba(88, 166, 255, 0.14);
+  padding: 1px 5px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
 }

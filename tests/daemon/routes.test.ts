@@ -884,8 +884,13 @@ describe('CT-9 a participant running outside its declared workspace is told', ()
   // directory, so a harness that relocates itself — Claude Code creates a
   // per-session worktree under `.claude/worktrees/<slug>` — silently
   // re-resolves to a different participant, or to none.
+  // Encoded exactly as `DaemonClient` encodes it. Sending a raw path here
+  // would pass regardless — an ASCII path decodes to itself — and would stop
+  // pinning the contract the moment the client's encoding changed.
   const cwdHeader = (d: DaemonHandle, id: string, cwd: string): Promise<Response> =>
-    fetch(`${d.url}/roster`, { headers: { ...auth(d, id), 'x-crosstalk-cwd': cwd } });
+    fetch(`${d.url}/roster`, {
+      headers: { ...auth(d, id), 'x-crosstalk-cwd': encodeURIComponent(cwd) },
+    });
 
   /** Like `withDaemon`, but hands back the repo so a cwd can be built under it. */
   async function withRepoDaemon<T>(fn: (d: DaemonHandle, repo: string) => Promise<T>): Promise<T> {
@@ -969,5 +974,28 @@ describe('CT-7 a probe does not make an agent look live', () => {
       const r = await readJson<Roster>(await get(daemon, '/roster', 'leader'));
       expect(statusOf(r, 'cursor')).toBe('active');
     });
+  });
+});
+
+describe('CT-9 the cwd header survives a path that is not Latin-1', () => {
+  it('warns about a directory with an accent in its name', async () => {
+    // Header values are Latin-1. An unencoded path like this throws inside
+    // `fetch` and takes every tool call with it, so the round trip is the
+    // thing under test, not the warning.
+    const repo = await tempRepo();
+    const daemon = await startDaemon({ repo });
+    try {
+      const strayed = join(repo, '.claude', 'wörktrees', 'café');
+      const response = await fetch(`${daemon.url}/roster`, {
+        headers: { ...auth(daemon, 'codex'), 'x-crosstalk-cwd': encodeURIComponent(strayed) },
+      });
+
+      expect(response.status).toBe(200);
+      const warnings = (await readJson<{ warnings?: string[] }>(response)).warnings ?? [];
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain(strayed);
+    } finally {
+      await daemon.close();
+    }
   });
 });

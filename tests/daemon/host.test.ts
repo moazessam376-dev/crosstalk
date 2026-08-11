@@ -74,6 +74,16 @@ describe('the hub binds loopback unless told otherwise', () => {
     GIT_TEST_TIMEOUT,
   );
 
+  it(
+    'refuses an address this machine does not have, by name rather than by errno',
+    async () => {
+      // The operator typo. Left raw it exits with a stack trace naming
+      // EADDRNOTAVAIL, which says nothing about the flag just typed.
+      await expect(daemonOn(await project(), '203.0.113.7')).rejects.toThrow(/203\.0\.113\.7/);
+    },
+    GIT_TEST_TIMEOUT,
+  );
+
   it('warns when the interface is not loopback, and stays quiet when it is', () => {
     // Both sides. A warning that fired on every start would be ignored by the
     // time it mattered.

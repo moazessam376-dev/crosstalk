@@ -17,6 +17,8 @@ export type DaemonErrorCode =
   | 'DAEMON_ALREADY_RUNNING'
   | 'PORT_IN_USE'
   | 'PORT_BLOCKED'
+  /** `--host` naming an address no interface on this machine has. */
+  | 'HOST_UNAVAILABLE'
   | 'PAYLOAD_TOO_LARGE'
   | 'EVENT_KIND_NOT_APPENDABLE';
 

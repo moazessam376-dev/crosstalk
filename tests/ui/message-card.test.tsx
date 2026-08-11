@@ -10,6 +10,17 @@ import { MessageCard } from '../../src/ui/cards/MessageCard.js';
 
 afterEach(cleanup);
 
+// The repo's tsconfig omits the `dom` lib on purpose, so an `HTMLElement` here
+// carries neither `getAttribute` nor `textContent`. Two narrow casts, named
+// once, matching `layout.test.tsx`.
+function attr(element: Element, name: string): string | null {
+  return (element as unknown as { getAttribute(n: string): string | null }).getAttribute(name);
+}
+
+function textOf(element: Element): string {
+  return (element as unknown as { textContent: string }).textContent;
+}
+
 /**
  * CT-16, in the operator's words: *"the agents are speaking in a very AI wayâ€¦
  * I want at least a preview on the message that is readable to a human,
@@ -36,8 +47,8 @@ describe('a long message is previewed, not poured into the stream', () => {
     render(createElement(MessageCard, { from: 'leader', body: LONG, testId: 'card-long' }));
 
     const control = screen.getByTestId('message-expand');
-    expect(control.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByTestId('card-long').getAttribute('data-collapsed')).toBe('true');
+    expect(attr(control, 'aria-expanded')).toBe('false');
+    expect(attr(screen.getByTestId('card-long'), 'data-collapsed')).toBe('true');
   });
 
   it('expands when the control is used, and collapses again', () => {
@@ -45,12 +56,12 @@ describe('a long message is previewed, not poured into the stream', () => {
     const control = screen.getByTestId('message-expand');
 
     fireEvent.click(control);
-    expect(control.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByTestId('card-long').getAttribute('data-collapsed')).toBe('false');
+    expect(attr(control, 'aria-expanded')).toBe('true');
+    expect(attr(screen.getByTestId('card-long'), 'data-collapsed')).toBe('false');
 
     fireEvent.click(control);
-    expect(control.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByTestId('card-long').getAttribute('data-collapsed')).toBe('true');
+    expect(attr(control, 'aria-expanded')).toBe('false');
+    expect(attr(screen.getByTestId('card-long'), 'data-collapsed')).toBe('true');
   });
 
   /**
@@ -64,8 +75,8 @@ describe('a long message is previewed, not poured into the stream', () => {
     render(createElement(MessageCard, { from: 'leader', body: LONG, testId: 'card-long' }));
     const tail = LONG.trim().slice(-40);
 
-    expect(screen.getByTestId('card-long').textContent).toContain(tail);
+    expect(textOf(screen.getByTestId('card-long'))).toContain(tail);
     fireEvent.click(screen.getByTestId('message-expand'));
-    expect(screen.getByTestId('card-long').textContent).toContain(tail);
+    expect(textOf(screen.getByTestId('card-long'))).toContain(tail);
   });
 });

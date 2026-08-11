@@ -18,6 +18,7 @@ import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
 import { workspaceWarning } from './workspace.js';
 import { Presence } from './presence.js';
 import { currentRungOf } from '../core/decisions.js';
+import { normaliseRoom } from '../core/rooms.js';
 
 import {
   DAEMON_STATUS,
@@ -677,7 +678,11 @@ class Daemon {
     };
   }
 
-  async #readRoom(ctx: HandlerContext, room: string, url: URL): Promise<EventsResponse> {
+  async #readRoom(ctx: HandlerContext, requested: string, url: URL): Promise<EventsResponse> {
+    // The read path too, not just the write. The filter below compares the raw
+    // string, so normalising only on append would give a room that accepts
+    // messages under one spelling and then returns none of them under the other.
+    const room = normaliseRoom(requested);
     requireRoomMembership(ctx, room);
     const since = readNonNegativeInt(url.searchParams.get('since'), 0, 'since');
     const events = (await this.#log.readFrom(since + 1)).filter((event) => event.room === room);
@@ -803,13 +808,16 @@ class Daemon {
       throw new DaemonError('MALFORMED_BODY', 'message `to` must be a participant id');
     }
 
-    requireRoomMembership(ctx, room);
+    // Before membership and before the append, so `dm:leader~codex` and
+    // `dm:codex~leader` cannot become two rooms holding one conversation.
+    const canonical = normaliseRoom(room);
+    requireRoomMembership(ctx, canonical);
 
     return [
       await ctx.append({
         kind: 'message',
         from: ctx.who,
-        room,
+        room: canonical,
         body: text,
         ...(to === undefined ? {} : { to }),
       }),

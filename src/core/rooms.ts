@@ -28,6 +28,31 @@ export function dmId(a: ParticipantId, b: ParticipantId): RoomId {
   return `dm:${left}~${right}`;
 }
 
+/**
+ * The canonical spelling of a room id.
+ *
+ * `dmId` sorts its two participants, but nothing sorted an id arriving from
+ * outside — a CLI argument, an MCP call, a request written by hand. So
+ * `dm:leader~codex` and `dm:codex~leader` addressed two different rooms with
+ * identical membership: two entries in the sidebar, neither showing the other's
+ * messages, and `membersOf` cheerfully resolving both.
+ *
+ * Applied on the way in *and* on the way out. The read path filters
+ * `event.room === room` on the raw string, so normalising only on append would
+ * make a room that accepts messages and then returns none of them.
+ *
+ * Only `dm:` ids are touched. A malformed one — no `~`, or more than two parts —
+ * is returned unchanged, so the refusal happens downstream where the message can
+ * name the real problem instead of here, where it would become a plausible id
+ * for a room nobody asked for.
+ */
+export function normaliseRoom(id: RoomId): RoomId {
+  if (!id.startsWith('dm:')) return id;
+  const parts = splitParts(id, 'dm:');
+  if (parts.length !== 2) return id;
+  return dmId(parts[0] as ParticipantId, parts[1] as ParticipantId);
+}
+
 export function membersOf(id: RoomId, state: HubState): ParticipantId[] {
   const room = parseRoom(id);
 

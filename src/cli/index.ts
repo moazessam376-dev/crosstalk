@@ -12,6 +12,7 @@ import { loadConfig } from '../daemon/config.js';
 import { startDaemon, tokenFilename } from '../daemon/server.js';
 import { resolveHubDist } from '../daemon/hub.js';
 import { HUMAN_ID } from '../contracts/room.js';
+import { dmId } from '../core/rooms.js';
 
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
 import { preflight, purgeWorkspaces, runInit } from './init.js';
@@ -26,6 +27,7 @@ const USAGE = `crosstalk — multi-agent development where a finding is a claim,
   crosstalk doctor
 
   ct say      --as <id> --room '#floor' --body '...' [--to <id>]
+  ct dm       --as <id> --with <id> --body '...'      (a side room; @human is in it too)
   ct claim    --as <id> --against <id> --target <file:line> --assertion '...' --falsifier '...'
               [--severity blocker|defect|risk|nit] [--evidence-cmd '...'] [--evidence-sha <sha>]
   ct respond  <claim-id> --as <id> --verdict accept|contest|uphold|concede|amend|clarify
@@ -371,6 +373,37 @@ async function cmdSay(argv: string[]): Promise<number> {
   });
 }
 
+/**
+ * `ct dm --as leader --with codex --body '...'` — a side room, without making
+ * anyone spell `dm:codex~leader` correctly.
+ *
+ * CT-18. Side rooms have been a first-class room kind all along — `dmId`,
+ * `parseRoom` and `membersOf` all handle them, and the hub renders a DIRECT
+ * group for them — but nothing anywhere created one, so the group was always
+ * empty and the feature invisible from every surface.
+ *
+ * `withHuman()` puts `@human` in every room including these, so a side room is
+ * not private from the operator. That is right for this tool — no back channel
+ * the human cannot audit — and it is why the brief calls them side rooms rather
+ * than DMs.
+ */
+async function cmdDm(argv: string[]): Promise<number> {
+  return withClient(argv, { with: { type: 'string' }, body: { type: 'string' } }, async (client, flags) => {
+    const other = require_(flags, 'with');
+    const me = str(flags, 'as');
+    if (me === undefined) {
+      throw new CliError('--as is required to open a side room', EXIT.usage, 'The room id is built from both ids, so both have to be named.');
+    }
+    const result = await client.post<WriteResult>('/events', {
+      kind: 'message',
+      room: dmId(me, other),
+      body: require_(flags, 'body'),
+    });
+    emit(result, flags['json'] === true, () => `posted to ${bold(dmId(me, other))} (@human is in this room too)`);
+    return EXIT.ok;
+  });
+}
+
 async function cmdClaim(argv: string[]): Promise<number> {
   return withClient(
     argv,
@@ -600,6 +633,7 @@ const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   board: cmdBoard,
   mine: cmdMine,
   task: cmdTask,
+  dm: cmdDm,
 };
 
 export const CLI_COMMANDS: readonly string[] = Object.keys(HANDLERS);

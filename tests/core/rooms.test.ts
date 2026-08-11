@@ -1,9 +1,49 @@
 import { describe, expect, it } from 'vitest';
-import { dmId, isMember, membersOf } from '../../src/core/rooms.js';
+import { dmId, isMember, membersOf, normaliseRoom } from '../../src/core/rooms.js';
 import type { Claim } from '../../src/contracts/claim.js';
 import type { Participant, ParticipantId } from '../../src/contracts/participant.js';
 import type { Task } from '../../src/contracts/task.js';
 import type { HubState } from '../../src/core/projection.js';
+
+/**
+ * `dmId` sorts its two participants, but nothing normalised a room id arriving
+ * from outside â€” a CLI argument, an MCP call, a hand-written request. So
+ * `dm:leader~codex` and `dm:codex~leader` addressed two distinct rooms with
+ * identical membership, each with its own entry in the sidebar and neither
+ * showing the other's messages.
+ */
+describe('a side room has one id, whoever spells it', () => {
+  it('sorts the participants of a dm id', () => {
+    expect(normaliseRoom('dm:leader~codex')).toBe('dm:codex~leader');
+    expect(normaliseRoom('dm:codex~leader')).toBe('dm:codex~leader');
+  });
+
+  it('agrees with dmId, which is the id everything else builds', () => {
+    expect(normaliseRoom('dm:leader~codex')).toBe(dmId('leader', 'codex'));
+  });
+
+  it('leaves every other room kind exactly as it found it', () => {
+    // The neighbouring case. A normaliser that rewrote `task:` or `dispute:`
+    // ids would silently reroute the rooms the protocol depends on.
+    for (const room of ['#floor', 'task:T-01', 'dispute:C-118', 'task:b~a']) {
+      expect(normaliseRoom(room)).toBe(room);
+    }
+  });
+
+  it('does not change who is in the room', () => {
+    const s = stateWith(['leader', 'codex']);
+    expect(membersOf(normaliseRoom('dm:leader~codex'), s).sort()).toEqual(
+      membersOf('dm:codex~leader', s).sort(),
+    );
+  });
+
+  it('leaves a malformed dm id alone rather than inventing a room', () => {
+    // Better a refusal downstream, where the message names the real problem,
+    // than a normaliser quietly turning a broken id into a plausible one.
+    expect(normaliseRoom('dm:solo')).toBe('dm:solo');
+    expect(normaliseRoom('dm:a~b~c')).toBe('dm:a~b~c');
+  });
+});
 
 describe('rooms', () => {
   it('sorts dm participants so the id is canonical', () => {
@@ -116,7 +156,7 @@ function task(id: string, assignee: ParticipantId): Task {
     id,
     title: 'Review room membership',
     brief: 'Ensure task rooms include their expected members.',
-    specRefs: ['§4.2'],
+    specRefs: ['ï¿½4.2'],
     assignee,
     deps: [],
     acceptance: ['task room includes leaders and assignee'],

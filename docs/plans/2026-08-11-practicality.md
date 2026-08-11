@@ -387,3 +387,47 @@ The critic also independently confirmed the four "already fixed" verdicts and th
 five "confirmed" ones, and traced every deletion path and git subprocess
 reachable from `up` without finding one that removes tokens — which is the
 strongest available support for the spec's CT-11 correction.
+
+---
+
+## What landed beyond the plan, and why
+
+Five things were not in the plan and are in the branch. Recorded here rather
+than folded silently into the tasks that turned them up.
+
+1. **`init` detects the main branch instead of hard-coding `main`.** T-1's test
+   for a `master` repo failed, and the cause was `init.ts` writing
+   `mainBranch: 'main'` unconditionally. That was not merely cosmetic: staleness
+   is measured against `project.mainBranch` (`staleness.ts:55` calls
+   `branchSha`), so on any clone whose trunk is not `main` the poller that
+   expires evidence threw on its first tick. T-1 would have turned that latent
+   bug into a crash at `init`; detecting the branch fixes both.
+
+2. **`HOST_UNAVAILABLE`.** `--host` naming an address this machine has no
+   interface for rejected with a raw `EADDRNOTAVAIL`, which escapes `cmdUp` as a
+   stack trace and says nothing about the flag just typed. Found by reading back
+   the T-6 code rather than by a test.
+
+3. **The duplicate `.hub-stream` rule.** Two contradictory blocks, `overflow:
+   auto` and `overflow: hidden`, where the composer pin survived only because
+   the second came later in the file. Found while writing T-9's stylesheet
+   assertions. A test now refuses a second declaration.
+
+4. **Two test files given the ceiling their setup needs.**
+   `tests/mirror/wiring.test.ts` and `tests/mirror/daemon-seam.test.ts` build a
+   real repository, run the real `init` and start a daemon inside vitest's 5s
+   default. Both were already marginal at `ac520f6` — one failed in the baseline
+   run before this branch existed — and T-1 adds a few more subprocess spawns to
+   `init`, narrowing it further. Every other `runInit` test in the repo already
+   raises its own ceiling; these were the last two that did not.
+
+5. **`docs/RUNNING.md` corrected.** It devoted a section to warning operators
+   that their brief names four entry points of which two per transport do not
+   exist. True at `88abd4d`, fixed in the front-door work, and the section
+   outlived it — a document telling you your brief is wrong when it is right
+   costs the same as the original bug. Kept as history, with the vocabulary test
+   that makes recurrence impossible named.
+
+Items 1 and 3 are the ones worth noticing: both were *caused* by writing a test
+for something else, and neither would have been found by reading the finding
+that led there.

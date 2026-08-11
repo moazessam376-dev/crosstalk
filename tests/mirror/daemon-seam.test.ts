@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { execFile as execFileCallback } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +10,8 @@ import { runInit } from '../../src/cli/init.js';
 import { humanTokenPath, postAsParticipant } from '../../src/mirror/poll.js';
 
 import type { CrosstalkEvent } from '../../src/contracts/events.js';
+
+const execFile = promisify(execFileCallback);
 
 /**
  * D2 says to request a `src/daemon/server.ts` hook from Track A. These tests
@@ -21,6 +25,15 @@ import type { CrosstalkEvent } from '../../src/contracts/events.js';
 
 async function initialised(): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), 'ct-mirror-'));
+  // A real repository with a commit: `init` now runs the same prerequisite
+  // checks `doctor` does and refuses anything else (issue #23). Minimal repair
+  // to a Track D file, made by Track B in the commit that changed the rule.
+  await execFile('git', ['init', '-q', '-b', 'main', '.'], { cwd: repo, windowsHide: true });
+  await execFile('git', ['config', 'user.email', 'test@crosstalk.invalid'], { cwd: repo, windowsHide: true });
+  await execFile('git', ['config', 'user.name', 'crosstalk test'], { cwd: repo, windowsHide: true });
+  await writeFile(join(repo, 'README.md'), '# mirror\n', 'utf8');
+  await execFile('git', ['add', '-A'], { cwd: repo, windowsHide: true });
+  await execFile('git', ['commit', '-qm', 'initial'], { cwd: repo, windowsHide: true });
   await runInit({ repo, participants: [], force: false });
   return repo;
 }

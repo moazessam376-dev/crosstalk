@@ -137,7 +137,11 @@ describe('crosstalk init and an existing .mcp.json', () => {
 
     const codex = result.mcp.find((entry) => entry.participantId === 'codex');
     expect(codex?.written).toBe(false);
-    expect(codex?.reason).toMatch(/unverified|mcpConfigPath/i);
+    // The declared transport, not the missing path. `codex-app` is both
+    // `mcp: unverified` and pathless, and the path guard used to fire first —
+    // so `mcp` could never be the reported reason for any harness, and the
+    // remedy that followed from it was one nobody could act on.
+    expect(codex?.reason).toMatch(/declares mcp: unverified/i);
     // Printed, so the user can add it by hand rather than being told nothing.
     expect(JSON.stringify(codex?.entry)).toContain('CROSSTALK_TOKEN_FILE');
 

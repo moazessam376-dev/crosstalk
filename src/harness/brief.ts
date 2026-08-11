@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { readFileSync as readFileSyncFromFs } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import type { PolicyConfig, Participant, Tier } from '../contracts/index.js';
 import type { HarnessDescriptor } from './registry.js';
 
@@ -57,23 +57,31 @@ function policySummary(policy: PolicyConfig): string {
 }
 
 function transportInstructions(tier: Tier): string {
+  // Every name below is checked against the real CLI command table and the real
+  // MCP tool list by `tests/harness/brief-vocabulary.test.ts`. This block named
+  // four commands of which two did not exist — `acknowledge` and `submit` on
+  // the shell tier, `acknowledge()` and `submit()` on MCP — and it survived a
+  // full protocol repair because nothing compared it to the code. It is the
+  // first thing every agent reads.
   if (tier === 'mcp') {
     return [
       'Use the registered MCP tools against the Crosstalk daemon.',
-      '- `acknowledge(task_id, restatement, ambiguities[])` is the gate before code.',
+      '- `ack_task(task_id, restatement, ambiguities[])` is the gate before code.',
       '- `raise_claim({...})` requires assertion, severity, falsifier, and evidence.',
       '- `respond_to_claim(claim_id, verdict, ...)` records accept, contest, or clarify.',
-      '- `submit(task_id, critique_record, evidence[])` is the self-critique gate.',
+      '- `submit_task(task_id, critique, evidence[])` is the self-critique gate.',
     ].join('\n');
   }
 
   if (tier === 'shell') {
     return [
       'Use the Crosstalk shell CLI; validation failures are reported by exit code.',
-      '- `crosstalk acknowledge --task TASK_ID --restatement "..." --ambiguity "..."`',
-      '- `crosstalk claim raise --against leader --target src/file.ts:1 --assertion "..." --falsifier "..."`',
-      '- `crosstalk claim respond CLAIM_ID --verdict contest --rationale "..." --falsifier "..."`',
-      '- `crosstalk submit --task TASK_ID --critique-file critique.json`',
+      '- `crosstalk claim --as ID --against leader --target src/file.ts:1 --assertion "..." --falsifier "..."`',
+      '- `crosstalk respond CLAIM_ID --as ID --verdict contest --rationale "..." --falsifier "..."`',
+      '- `crosstalk await --as ID --timeout 50` blocks until there is a turn for you.',
+      '- `crosstalk mine --as ID` lists the tasks you hold; `crosstalk board` shows all of them.',
+      'The task gates — acknowledging a brief and submitting a self-critique — are MCP tools only.',
+      'There is no CLI command for them yet; say so in `#floor` rather than inventing one.',
     ].join('\n');
   }
 
@@ -113,6 +121,41 @@ export function renderBrief(
   return draft.replaceAll('{{briefVersion}}', briefVersion(draft));
 }
 
+/**
+ * Where a participant's brief is actually written.
+ *
+ * CT-4. Briefs went to `descriptor.briefFile` — `CLAUDE.md` for every
+ * `claude-code-*` participant and `AGENTS.md` for every `codex-*` one. Those
+ * are the project's canonical, *tracked* documents, and each worker's worktree
+ * is the same tracked path. So a clean `init`, with no agent having run, left
+ * every claude-code worker dirty:
+ *
+ *     --- skeleton ---
+ *      M CLAUDE.md
+ *     --- metrics ---
+ *      M CLAUDE.md
+ *
+ * A worker that then commits with `git add -A` commits its own brief over the
+ * leader's, and merging that to `main` replaces the project brief with a
+ * worker brief.
+ *
+ * `.gitignore` cannot fix this, which is worth stating because it is the
+ * obvious fix and it does not work: ignore rules have no effect on paths git
+ * already tracks, and `.gitignore` is itself tracked, so writing to it is the
+ * same class of change. The brief has to move to a path git was never
+ * following — and `init` registers that path in `.git/info/exclude`, which is
+ * per-clone and not tracked either.
+ *
+ * `CLAUDE.md` -> `CLAUDE.local.md`, matching the convention this repo already
+ * uses for exactly this purpose.
+ */
+export function localBriefFile(briefFile: string): string {
+  const extension = extname(briefFile);
+  return extension === ''
+    ? `${briefFile}.local`
+    : `${briefFile.slice(0, -extension.length)}.local${extension}`;
+}
+
 export async function writeBrief(
   participant: Participant,
   descriptor: HarnessDescriptor,
@@ -121,7 +164,7 @@ export async function writeBrief(
   repo: string,
 ): Promise<void> {
   const content = renderBrief(participant, descriptor, policy, tier);
-  const destination = resolve(repo, participant.workspace, descriptor.briefFile);
+  const destination = resolve(repo, participant.workspace, localBriefFile(descriptor.briefFile));
   const directory = dirname(destination);
   await mkdir(directory, { recursive: true });
 

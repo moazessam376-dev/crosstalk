@@ -84,10 +84,12 @@ describe('participant fields this plan adds', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails — under `typecheck`, not `vitest`**
 
-Run: `npx vitest run tests/contracts/participant-fields.test.ts`
-Expected: FAIL — `Object literal may only specify known properties, and 'effort' does not exist in type 'Participant'`.
+Run: `npm run typecheck`
+Expected: FAIL with `TS2353: Object literal may only specify known properties, and 'effort' does not exist in type 'Participant'` and four `TS2339`s.
+
+**Corrected during execution.** This step originally said to run `vitest`, and `vitest` **passed** — it transpiles with esbuild and never typechecks, so at runtime the literal simply carries extra properties and both assertions hold. A type-only test cannot go red under the test runner. `tsc -p tsconfig.test.json` is the gate that fails, and any future contract-shape test must cite `npm run typecheck` as its red step.
 
 - [ ] **Step 3: Add the fields**
 

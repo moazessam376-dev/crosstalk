@@ -29,6 +29,29 @@ export interface Participant {
    * and they do not behave alike, so the ledger aggregates by this field.
    */
   model?: string;
+  /**
+   * How hard the harness is told to think, e.g. "max", "high", "medium".
+   *
+   * Free text, not an enum, for the same reason `model` is: harnesses do not
+   * agree on the scale, and a union of every harness's words would either
+   * exclude one or mean nothing. A model at two effort levels does not behave
+   * alike, so a ledger aggregating by participant is aggregating across this
+   * whether or not it can see it.
+   */
+  effort?: string;
+  /**
+   * Repo-relative path prefixes this participant may write, e.g.
+   * `["src/metrics/", "tests/metrics/"]`.
+   *
+   * Prefixes, not globs: the repo allows two runtime dependencies and neither
+   * matches globs, and a hand-rolled matcher that is subtly wrong about `**`
+   * would silently mis-scope the submit gate that reads this.
+   *
+   * Absent means "no declared ownership", which is what every config written
+   * before shared root looks like, and which `doctor` requires of any worker
+   * whose workspace is the repository root.
+   */
+  owns?: string[];
   lifecycle: Lifecycle;
   /** Repo-relative path to this participant's worktree. Resolved at runtime. */
   workspace: string;

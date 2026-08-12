@@ -12,7 +12,7 @@ import {
 } from '../contracts/index.js';
 import { branchSha, headSha, gitVersion, isAncestor, isRepo, samePath } from '../workspace/git.js';
 import { prefixesOverlap } from '../workspace/ownership.js';
-import { briefVersion, localBriefFile, renderBrief } from './brief.js';
+import { briefPathFor, briefVersion, renderBrief } from './brief.js';
 import { linkedInstallRoot, packageRootFromModule } from './install.js';
 import { loadRegistry, probeTier, type HarnessDescriptor } from './registry.js';
 
@@ -384,7 +384,11 @@ async function checkParticipant(
   }
 
   // CT-4: the brief lives at the untracked local path, never the tracked one.
-  const briefFile = localBriefFile(descriptor.briefFile);
+  // CT-20: and is named for its participant when several share the root, so
+  // `briefPathFor` rather than `localBriefFile` — `init` writes through the
+  // same function, and the two computing it differently would be a permanent
+  // BRIEF_STALE on a brief that is correct.
+  const briefFile = briefPathFor(participant, descriptor.briefFile, repoRoot);
   const briefPath = resolve(workspace, briefFile);
   if (!isWithin(workspace, briefPath)) {
     findings.push(finding(

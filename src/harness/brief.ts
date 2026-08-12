@@ -218,12 +218,48 @@ export function renderBrief(
  *
  * `CLAUDE.md` -> `CLAUDE.local.md`, matching the convention this repo already
  * uses for exactly this purpose.
+ *
+ * CT-20 adds the second half. `.local` alone is unique per *directory*, which
+ * was enough while every participant had a worktree of its own. In a shared
+ * root it is not: three `claude-code-app` participants all resolve to
+ * `CLAUDE.local.md` in the same directory, so each brief overwrote the last and
+ * two of the three agents read somebody else's instructions — including which
+ * MCP namespace to use and which paths they own, the two facts shared root
+ * depends on. `doctor` reported it as `BRIEF_STALE` on whichever two lost.
+ *
+ * So a participant that shares the root is named in its own filename. The
+ * unshared case is left exactly as it was: renaming those would strand a
+ * correct brief at the old path on every existing project.
  */
-export function localBriefFile(briefFile: string): string {
+export function localBriefFile(briefFile: string, participantId?: string): string {
   const extension = extname(briefFile);
-  return extension === ''
-    ? `${briefFile}.local`
-    : `${briefFile.slice(0, -extension.length)}.local${extension}`;
+  const stem = extension === '' ? briefFile : briefFile.slice(0, -extension.length);
+  const scope = participantId === undefined ? '' : `.${participantId}`;
+  return `${stem}${scope}.local${extension}`;
+}
+
+/**
+ * The brief path for a participant, scoped by id only when it shares the root.
+ *
+ * One place that decides, because `init` writes the file and `doctor` compares
+ * against it: the two computing that path differently is a permanent
+ * `BRIEF_STALE` on a brief that is perfectly correct.
+ */
+export function briefPathFor(
+  participant: Participant,
+  briefFile: string,
+  repo: string,
+): string {
+  // The leader keeps the unscoped name, and not for neatness. Its workspace is
+  // the repository root in *every* configuration, shared or not, so scoping it
+  // would rename the leader's brief on every project that already exists and
+  // leave the old file sitting beside the new one — a stale brief at the path
+  // an operator would go and read. Workers are the only participants that can
+  // newly arrive in the root, and there is exactly one leader, so scoping just
+  // them is enough for the names to be unique.
+  const shared = resolve(repo, participant.workspace) === resolve(repo);
+  const scoped = shared && participant.role !== 'leader';
+  return localBriefFile(briefFile, scoped ? participant.id : undefined);
 }
 
 export async function writeBrief(
@@ -234,7 +270,7 @@ export async function writeBrief(
   repo: string,
 ): Promise<void> {
   const content = renderBrief(participant, descriptor, policy, tier, repo);
-  const destination = resolve(repo, participant.workspace, localBriefFile(descriptor.briefFile));
+  const destination = resolve(repo, participant.workspace, briefPathFor(participant, descriptor.briefFile, repo));
   const directory = dirname(destination);
   await mkdir(directory, { recursive: true });
 

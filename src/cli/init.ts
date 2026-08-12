@@ -173,6 +173,12 @@ async function ensureWorkspaces(repo: string, participants: Participant[]): Prom
 
   for (const participant of participants) {
     if (participant.role !== 'worker') continue;
+    // CT-20. A worker that shares the repository root has no worktree to build,
+    // and building one anyway is not merely wasted: it puts a directory under
+    // `.crosstalk/worktrees/<id>` and a `ct/<id>-base` branch in the project
+    // that nothing ever checks out, which is the tree clutter shared root was
+    // asked for to remove.
+    if (resolve(root, participant.workspace) === root) continue;
     const worktree = join(root, '.crosstalk', 'worktrees', participant.id);
     if (!(await isRegistered(root, worktree))) {
       await addWorktree(root, participant.id, `ct/${participant.id}-base`, worktree);
@@ -422,6 +428,12 @@ async function untrackedArtifacts(): Promise<string[]> {
   const patterns = new Set<string>(['.mcp.json']);
   for (const descriptor of registry.values()) {
     patterns.add(basename(localBriefFile(descriptor.briefFile)));
+    // CT-20. A shared-root participant's brief carries its id — `CLAUDE.md`
+    // becomes `CLAUDE.metrics.local.md` — and the unscoped entry above does not
+    // match it. Without the glob, git follows every shared-root brief, which is
+    // CT-4 arriving again by the new route: a worker committing with
+    // `git add -A` would commit its own brief into the project.
+    patterns.add(basename(localBriefFile(descriptor.briefFile, '*')));
 
     // Every registration B3 writes carries a participant's bearer token, and
     // `.mcp.json` is only the one at the root: `cursor-*` registers at

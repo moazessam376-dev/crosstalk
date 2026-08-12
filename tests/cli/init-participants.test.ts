@@ -1,5 +1,6 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -76,6 +77,57 @@ describe('init records what each participant is running', { timeout: 90_000 }, (
 
     expect(leader?.model).toBe('opus-5');
     expect(leader?.effort).toBeUndefined();
+  });
+
+  /**
+   * Shared root is declared by `workspace:` and `owns:`, and neither fits a
+   * colon-separated CLI spec — `owns` is a list. So the roster has to be
+   * editable in `crosstalk.yaml` and survive the next `init`.
+   *
+   * It did not. `runInit` reads `--participant` or `DEFAULT_ROSTER` and never
+   * looks at the config it is about to overwrite, and `--force` is mandatory
+   * once the file exists. So the documented way to regenerate `.mcp.json` and
+   * the briefs after an edit was also the way to throw the edit away — silently,
+   * replacing a five-participant roster with the two-participant default.
+   */
+  it('keeps a hand-edited roster when no participant is named', async () => {
+    const repo = await repoWithCommit();
+    await runInit({ repo, force: false, participants: ['leader:leader:claude-code-app'] });
+
+    const edited = await readFile(join(repo, 'crosstalk.yaml'), 'utf8');
+    await writeFile(
+      join(repo, 'crosstalk.yaml'),
+      edited.replace(
+        /participants:\n/,
+        'participants:\n  - id: metrics\n    role: worker\n    harness: claude-code-app\n    model: opus-5\n    effort: max\n    lifecycle: attached\n    workspace: .\n    owns:\n      - src/metrics/\n',
+      ),
+      'utf8',
+    );
+
+    await runInit({ repo, force: true, participants: [] });
+
+    const metrics = (await rosterOf(repo)).find((participant) => participant.id === 'metrics') as
+      | { id: string; model?: string; effort?: string; owns?: string[]; workspace?: string }
+      | undefined;
+
+    expect(metrics).toBeDefined();
+    expect(metrics?.owns).toEqual(['src/metrics/']);
+    expect(metrics?.workspace).toBe('.');
+    expect(metrics?.effort).toBe('max');
+  });
+
+  it('lets an explicit participant list replace the roster, because that is what it is for', async () => {
+    // The other side. Preservation must not become "you can never change the
+    // roster from the command line again".
+    const repo = await repoWithCommit();
+    await runInit({ repo, force: false, participants: ['leader:leader:claude-code-app'] });
+    await runInit({ repo, force: true, participants: ['chief:leader:claude-code-app', 'w:worker:cursor-app'] });
+
+    const ids = (await rosterOf(repo)).map((participant) => participant.id);
+
+    expect(ids).toContain('chief');
+    expect(ids).toContain('w');
+    expect(ids).not.toContain('leader');
   });
 
   it('writes no effort key at all rather than an empty one', async () => {

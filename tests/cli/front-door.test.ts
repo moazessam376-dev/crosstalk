@@ -26,8 +26,17 @@ const execFile = promisify(execFileCallback);
  * subprocess spawns. On Windows under a loaded runner that overruns vitest's
  * 5s default, which showed up as one failure in five consecutive runs of an
  * otherwise green suite. The work is legitimate; the default is not.
+ *
+ * Raised again from 30s for the same reason and with better evidence: on a
+ * machine at 100% CPU, two consecutive runs failed six tests each and the *sets
+ * did not overlap by more than two* — every failure landing within 350ms of the
+ * ceiling. An unstable failing set pinned to the ceiling is contention, not
+ * logic; a real defect fails the same test twice.
+ *
+ * Nothing here asserts on elapsed time, so the ceiling costs a passing run
+ * nothing and only stops a loaded machine reporting a failure that is not one.
  */
-const GIT_TEST_TIMEOUT = 30_000;
+const GIT_TEST_TIMEOUT = 90_000;
 
 async function tempRepo(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'ct-cli-'));
@@ -120,18 +129,22 @@ describe('crosstalk init', () => {
 
   it('points .mcp.json at the package, not at the target repository', async () => {
     const repo = await initialised();
+    // Keyed by participant since CT-20: with every agent in the repository root
+    // this one file serves all of them, and a fixed key meant they all
+    // authenticated as whoever was written last.
     const mcp = JSON.parse(await readFile(join(repo, '.mcp.json'), 'utf8')) as {
-      mcpServers: { crosstalk: { args: string[]; env: Record<string, string> } };
+      mcpServers: { 'crosstalk-leader': { args: string[]; env: Record<string, string> } };
     };
+    const leader = mcp.mcpServers['crosstalk-leader'];
 
     // The MCP server ships with the package. A path under the target repo would
     // name a file that never exists there, and a server that fails to spawn
     // tells the agent nothing it can act on.
-    expect(mcp.mcpServers.crosstalk.args[0]).not.toContain(resolve(repo));
-    expect(mcp.mcpServers.crosstalk.args[0]).toMatch(/dist[\\/]mcp[\\/]index\.js$/);
-    expect(mcp.mcpServers.crosstalk.env['CROSSTALK_REPO']).toBe(resolve(repo));
+    expect(leader.args[0]).not.toContain(resolve(repo));
+    expect(leader.args[0]).toMatch(/dist[\\/]mcp[\\/]index\.js$/);
+    expect(leader.env['CROSSTALK_REPO']).toBe(resolve(repo));
     // The url is discovered from daemon.json, never configured: the port is ephemeral.
-    expect(mcp.mcpServers.crosstalk.env).not.toHaveProperty('CROSSTALK_URL');
+    expect(leader.env).not.toHaveProperty('CROSSTALK_URL');
   }, GIT_TEST_TIMEOUT);
 
   it('gitignores .crosstalk so tokens cannot be committed', async () => {
@@ -153,11 +166,11 @@ describe('crosstalk init', () => {
   it('keeps tokens stable across a daemon restart, so .mcp.json stays valid', async () => {
     const repo = await initialised();
     const minted = JSON.parse(await readFile(join(repo, '.mcp.json'), 'utf8')) as {
-      mcpServers: { crosstalk: { env: Record<string, string> } };
+      mcpServers: { 'crosstalk-leader': { env: Record<string, string> } };
     };
     // The registration references the token file rather than embedding the
     // token, so what has to stay stable is what that file holds.
-    const tokenFile = minted.mcpServers.crosstalk.env['CROSSTALK_TOKEN_FILE']!;
+    const tokenFile = minted.mcpServers['crosstalk-leader'].env['CROSSTALK_TOKEN_FILE']!;
     expect(tokenFile).toBeTruthy();
 
     for (let run = 0; run < 2; run += 1) {

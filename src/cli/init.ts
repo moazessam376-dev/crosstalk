@@ -70,9 +70,19 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     );
   }
 
-  const participants = parseParticipants(
-    options.participants.length > 0 ? options.participants : DEFAULT_ROSTER,
-  );
+  // An explicit `--participant` list means "this is the roster now". Absent
+  // one, keep whatever is already configured.
+  //
+  // CT-20. Shared root is declared by `workspace:` and `owns:`, and `owns` is a
+  // list, so neither fits the colon-separated spec — the roster has to be
+  // hand-editable. But `--force` is mandatory once `crosstalk.yaml` exists, and
+  // `init` never read the file it was overwriting: the only documented way to
+  // regenerate `.mcp.json` and the briefs after an edit was also the way to
+  // silently discard the edit, replacing a five-participant roster with the
+  // two-participant default.
+  const participants = options.participants.length > 0
+    ? parseParticipants(options.participants)
+    : (await configuredRoster(repo)) ?? parseParticipants(DEFAULT_ROSTER);
 
   // Refused before anything is written, with `doctor`'s own words. `init`
   // accepted two leaders happily, `doctor` rejected the result on the very next
@@ -536,7 +546,7 @@ async function writeMcpConfigs(
       continue;
     }
 
-    await mergeRegistration(path, entry);
+    await mergeRegistration(path, participant.id, entry);
     add(path, true);
   }
   return registrations;
@@ -560,7 +570,7 @@ function isWithin(parent: string, target: string): boolean {
  * An unparseable file is left alone and reported. Rewriting JSON we failed to
  * understand is how the damage would happen twice.
  */
-async function mergeRegistration(path: string, entry: unknown): Promise<void> {
+async function mergeRegistration(path: string, id: string, entry: unknown): Promise<void> {
   const existing = await readJsonObject(path);
   if (existing === 'unreadable') {
     throw new CliError(
@@ -571,7 +581,17 @@ async function mergeRegistration(path: string, entry: unknown): Promise<void> {
   }
 
   const servers = isRecord(existing?.['mcpServers']) ? { ...existing['mcpServers'] } : {};
-  servers['crosstalk'] = entry;
+  // CT-20. Keyed by participant, because in shared root every harness reads
+  // this one file: a single fixed `crosstalk` key meant the last participant
+  // written won and every agent authenticated as it, which is CT-8 and CT-9.
+  //
+  // The old key is removed rather than left beside the new ones. It is
+  // Crosstalk's own, not the user's, and leaving it would leave a server that
+  // authenticates as whichever participant happened to write it last — the
+  // exact confusion this change exists to end. Everything else in the file is
+  // still untouched.
+  delete servers['crosstalk'];
+  servers[`crosstalk-${id}`] = entry;
 
   const merged = { ...(existing ?? {}), mcpServers: servers };
   await mkdir(dirname(path), { recursive: true });
@@ -677,6 +697,26 @@ async function kickoffLines(
     });
   }
   return lines;
+}
+
+/**
+ * The roster already in `crosstalk.yaml`, or `undefined` if there is none.
+ *
+ * Read through `loadConfig` rather than parsed here: that function's own comment
+ * is that the CLI shares it because two loaders disagreeing about defaults is a
+ * bug with a long fuse, and a second parser in this file is exactly that bug.
+ *
+ * Unreadable is treated as absent rather than fatal. Someone re-running `init`
+ * with `--force` on a config they have broken is asking to have it rebuilt, and
+ * refusing would leave them with no way through except deleting the file.
+ */
+async function configuredRoster(repo: string): Promise<Participant[] | undefined> {
+  try {
+    const existing = await loadConfig(repo);
+    return existing.participants.length > 0 ? existing.participants : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseParticipants(specs: string[]): Participant[] {

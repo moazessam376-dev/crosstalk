@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PolicyConfig, Participant } from '../../src/contracts/index.js';
 import type { HarnessDescriptor } from '../../src/harness/registry.js';
-import { briefVersion, localBriefFile, renderBrief, writeBrief } from '../../src/harness/brief.js';
+import { briefPathFor, briefVersion, localBriefFile, renderBrief, writeBrief } from '../../src/harness/brief.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -205,5 +205,45 @@ describe('brief generation', () => {
     expect(localBriefFile('.cursor/rules/crosstalk.mdc')).toBe('.cursor/rules/crosstalk.local.mdc');
     // No extension: still has to land somewhere git is not watching.
     expect(localBriefFile('BRIEF')).toBe('BRIEF.local');
+  });
+
+  /**
+   * CT-20, and found by running `init` rather than by any test here.
+   *
+   * `.local` is unique per *directory*, which was enough while every
+   * participant had a worktree of its own. Three `claude-code-app` participants
+   * sharing the root all resolved to `CLAUDE.local.md`, so each brief
+   * overwrote the last and two of the three agents read somebody else's
+   * instructions — including which MCP namespace to call and which paths they
+   * own, the two facts shared root depends on.
+   */
+  it('names a shared-root worker in its own brief filename', () => {
+    const metrics = worker({ id: 'metrics', workspace: '.', owns: ['fixtures/'] });
+    const skeleton = worker({ id: 'skeleton', workspace: '.', owns: ['src/skeleton/'] });
+
+    expect(briefPathFor(metrics, 'CLAUDE.md', '/repo')).toBe('CLAUDE.metrics.local.md');
+    expect(briefPathFor(skeleton, 'CLAUDE.md', '/repo')).toBe('CLAUDE.skeleton.local.md');
+    expect(briefPathFor(metrics, 'CLAUDE.md', '/repo'))
+      .not.toBe(briefPathFor(skeleton, 'CLAUDE.md', '/repo'));
+  });
+
+  it('leaves a worktree worker\'s brief name alone', () => {
+    // Renaming these would strand a correct brief at the old path on every
+    // project that already exists.
+    const codex = worker({ id: 'codex', workspace: '.crosstalk/worktrees/codex' });
+
+    expect(briefPathFor(codex, 'CLAUDE.md', '/repo')).toBe('CLAUDE.local.md');
+  });
+
+  it('leaves the leader unscoped even though it is always in the root', () => {
+    // The leader's workspace is the repository root in every configuration,
+    // shared or not. Scoping it would rename the leader's brief on every
+    // existing project and leave the old file beside the new one — a stale
+    // brief at exactly the path an operator would open.
+    const leader: Participant = {
+      id: 'leader', role: 'leader', harness: 'claude-code-app', lifecycle: 'attached', workspace: '.',
+    };
+
+    expect(briefPathFor(leader, 'CLAUDE.md', '/repo')).toBe('CLAUDE.local.md');
   });
 });

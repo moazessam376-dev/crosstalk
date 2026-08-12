@@ -130,6 +130,45 @@ describe('init records what each participant is running', { timeout: 90_000 }, (
     expect(ids).not.toContain('leader');
   });
 
+  /**
+   * CT-20, and found by running `init` rather than by any test.
+   *
+   * `ensureWorkspaces` built `.crosstalk/worktrees/<id>` and a `ct/<id>-base`
+   * branch for every worker regardless of its declared workspace, so a
+   * shared-root roster still produced a directory and a branch per agent that
+   * nothing ever checks out — the project-tree clutter shared root was asked
+   * for to remove.
+   */
+  it('builds no worktree for a worker that shares the repository root', async () => {
+    const repo = await repoWithCommit();
+    await runInit({ repo, force: false, participants: ['leader:leader:claude-code-app'] });
+
+    const roster = await readFile(join(repo, 'crosstalk.yaml'), 'utf8');
+    await writeFile(
+      join(repo, 'crosstalk.yaml'),
+      roster.replace(
+        /participants:\n/,
+        'participants:\n  - id: metrics\n    role: worker\n    harness: claude-code-app\n    lifecycle: attached\n    workspace: .\n    owns:\n      - fixtures/\n',
+      ),
+      'utf8',
+    );
+    await runInit({ repo, force: true, participants: [] });
+
+    const worktrees = (await execFile('git', ['worktree', 'list'], { cwd: repo, windowsHide: true })).stdout;
+    expect(worktrees).not.toContain('metrics');
+    const branches = (await execFile('git', ['branch', '--list'], { cwd: repo, windowsHide: true })).stdout;
+    expect(branches).not.toContain('ct/metrics-base');
+  });
+
+  it('still builds one for a worker that declares its own workspace', async () => {
+    // The other side. Making the worktree conditional must not make it optional.
+    const repo = await repoWithCommit();
+    await runInit({ repo, force: false, participants: ['leader:leader:claude-code-app', 'codex:worker:cursor-app'] });
+
+    const worktrees = (await execFile('git', ['worktree', 'list'], { cwd: repo, windowsHide: true })).stdout;
+    expect(worktrees).toContain('codex');
+  });
+
   it('writes no effort key at all rather than an empty one', async () => {
     // A written `effort: ""` is worse than no key: it renders as a trailing
     // space beside the model and reads as a configured blank rather than as

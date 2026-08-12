@@ -80,6 +80,59 @@ describe('hub layout regions', () => {
     expect(screen.getByTestId('member-codex')).not.toHaveTextContent('file');
   });
 
+  it('renders effort attached to the model, as the design has it', () => {
+    // `harness · model effort · tier`. Effort qualifies the model rather than
+    // standing beside it: "opus-5 max" is one configuration, "opus-5 · max"
+    // reads as two peer facts.
+    render(
+      createElement(Dock, {
+        events: [],
+        rooms: [{ id: '#floor', kind: 'floor' }],
+        activeRoom: '#floor',
+        participants: [
+          { id: 'metrics', role: 'worker', status: 'working', tier: 'mcp', harness: 'claude-code-app', model: 'opus-5', effort: 'max', workspace: '.' },
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId('member-metrics')).toHaveTextContent('claude-code-app · opus-5 max · mcp');
+  });
+
+  it('renders no effort at all when none is configured', () => {
+    // The other side of the discrimination. A default here would put a level on
+    // screen that nothing configured — the mistake `tier` already avoids.
+    render(
+      createElement(Dock, {
+        events: [],
+        rooms: [{ id: '#floor', kind: 'floor' }],
+        activeRoom: '#floor',
+        participants: [
+          { id: 'metrics', role: 'worker', status: 'working', tier: 'mcp', harness: 'claude-code-app', model: 'opus-5', workspace: '.' },
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId('member-metrics')).toHaveTextContent('claude-code-app · opus-5 · mcp');
+  });
+
+  it('renders effort even when the model is unknown, without a stray space', () => {
+    // `model effort` is a join of two optional parts, and this is the shape that
+    // actually ships first: Rigit's config sets an effort and no model, so a
+    // naive join yields a leading space inside the separators.
+    render(
+      createElement(Dock, {
+        events: [],
+        rooms: [{ id: '#floor', kind: 'floor' }],
+        activeRoom: '#floor',
+        participants: [
+          { id: 'metrics', role: 'worker', status: 'working', tier: 'mcp', harness: 'claude-code-app', effort: 'max', workspace: '.' },
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId('member-metrics')).toHaveTextContent('claude-code-app · max · mcp');
+  });
+
   it('groups channels and shows a round counter on disputes', () => {
     render(createElement(Sidebar, { rooms: [{ id: 'dispute:C-118', kind: 'dispute', rounds: 2, maxRounds: 3 }] }));
 

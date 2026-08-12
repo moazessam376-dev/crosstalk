@@ -15,9 +15,11 @@ export interface Identity {
   colour: string;
   role?: Role;
   model?: string;
+  /** A model at two effort levels does not behave alike. Shown beside it. */
+  effort?: string;
   harness?: string;
   tier?: Tier;
-  /** `harness · model · tier`, omitting whatever the log does not carry. */
+  /** `harness · model effort · tier`, omitting whatever the log does not carry. */
   meta: string;
 }
 
@@ -68,22 +70,29 @@ export function initialsFor(id: string): string {
 }
 
 /**
- * `effort` is deliberately absent.
+ * `harness · model effort · tier`, omitting whatever the log does not carry.
  *
- * The design shows `harness · model effort · tier` and its own comment says
- * effort "has no home in src/contracts/participant.ts yet — it needs a field
- * alongside `model` before this can be read from the log rather than authored".
- * It still has none, so the hub shows the three it can read. Inventing the
- * fourth would put a number on screen that no event ever carried.
+ * Effort attaches to the model rather than standing beside it, because it
+ * qualifies the model: "opus-5 max" is one configuration, "opus-5 · max" reads
+ * as two peer facts. Joining the pair separately also keeps the separator count
+ * honest when only one of them is set — Rigit configures an effort and no
+ * model, and a single flat join would render that as `· max ·` with a leading
+ * space inside the separators.
+ *
+ * The field this reads was added under claim CT-A; before it existed this
+ * function carried a comment explaining that the design's fourth fact had
+ * nowhere in `src/contracts/participant.ts` to come from.
  */
 export function identityFor(id: string, participant?: Participant, colour?: string): Identity {
-  const meta = [participant?.harness, participant?.model, participant?.transport].filter(Boolean).join(' · ');
+  const engine = [participant?.model, participant?.effort].filter(Boolean).join(' ');
+  const meta = [participant?.harness, engine, participant?.transport].filter(Boolean).join(' · ');
   return {
     id,
     initials: initialsFor(id),
     colour: colour ?? hue(id),
     role: participant?.role,
     model: participant?.model,
+    effort: participant?.effort,
     harness: participant?.harness,
     tier: participant?.transport,
     meta,

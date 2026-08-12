@@ -645,6 +645,7 @@ class Daemon {
     return {
       who,
       config: this.#config,
+      repo: this.#repo,
       get state(): HubState {
         return daemon.#state;
       },

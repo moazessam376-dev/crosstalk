@@ -54,6 +54,10 @@ export const PROTOCOL_STATUS: Record<ErrorCode, number> = {
   RULING_WITHOUT_FALSIFIER: 422,
   TEST_WITHOUT_PREDICTION: 422,
   NOT_TASK_AUTHORITY: 403,
+  // 409, not 403: the agent is permitted to submit this task, and the working
+  // tree is simply not in a state where the submit can be taken. Retryable
+  // once the offending paths are moved or the declaration widened.
+  SUBMIT_OUTSIDE_OWNERSHIP: 409,
   UNKNOWN_CLAIM: 404,
   UNKNOWN_TASK: 404,
   UNKNOWN_DECISION: 404,

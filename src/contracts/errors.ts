@@ -30,6 +30,12 @@ export type ErrorCode =
   // Task authority. Legality and permission are different questions:
   // ILLEGAL_TRANSITION says the move is impossible, this says it is not yours.
   | 'NOT_TASK_AUTHORITY'
+  // Shared root. The assignee changed files outside the prefixes it declared,
+  // so the submit is refused whole. Committing the owned subset would drop the
+  // rest while reporting success; committing all of it would overwrite the
+  // agent that does own those paths. In-band and naming the paths, because the
+  // agent can act on this one — move the work, or widen the declaration.
+  | 'SUBMIT_OUTSIDE_OWNERSHIP'
   // Lookups.
   | 'UNKNOWN_CLAIM'
   | 'UNKNOWN_TASK'

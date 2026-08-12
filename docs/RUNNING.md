@@ -193,6 +193,64 @@ The recovery is always the same: reopen from the `Hub:` line that `up` printed.
 
 ---
 
+## One folder, or one folder per agent
+
+By default every worker gets its own git worktree under
+`.crosstalk/worktrees/<id>`. That is what lets three agents write files at once
+without clobbering each other, and it is a fine default.
+
+It has one cost, and on a real project it is the one you notice: **a harness
+registers each opened directory as its own project**, so one Crosstalk project
+appears in the sidebar once per agent, with nothing saying they are the same
+thing. Four participants, four unrelated-looking entries, growing with the
+roster.
+
+The alternative is **shared root**: every agent opens the repository itself, and
+each declares the paths it owns.
+
+```yaml
+  - id: metrics
+    role: worker
+    harness: claude-code-app
+    model: opus-5
+    effort: high
+    lifecycle: attached
+    workspace: .
+    owns:
+      - fixtures/
+```
+
+`workspace: .` puts the agent in the repository root. `owns:` is the part that
+makes it safe, and `doctor` refuses the configuration without it
+(`WORKER_IN_ROOT_WITHOUT_OWNERSHIP`) or when two agents' prefixes contain one
+another (`OWNERSHIP_OVERLAP`). Prefixes are directories, not globs — `src/x/`
+does not contain `src/x-old/`.
+
+Nothing about the protocol changes. Each task still gets its own branch and its
+own pull request; when a shared-root agent moves a task to `submitted`, the
+daemon commits **only that agent's owned paths**, through a throwaway worktree
+on the task's branch. The shared working tree is never touched — its `HEAD` does
+not move and the agent's files stay where they are.
+
+A submit that touches a path the agent does not own is refused whole, naming the
+paths, rather than being trimmed to the part that fits. Trimming would drop work
+while reporting success.
+
+**Editing the roster by hand is the supported path**, because `owns` is a list
+and does not fit the `--participant id:role:harness[:model[:effort]]` spec. Edit
+`crosstalk.yaml`, then run `crosstalk init --force` to regenerate `.mcp.json`
+and the briefs — the roster you wrote is kept, not replaced by the default one.
+
+Two things look different in shared root:
+
+- **Each participant gets its own MCP server** in the one root `.mcp.json` —
+  `crosstalk-leader`, `crosstalk-metrics`, and so on. Every agent can see all of
+  them, so each brief names the one that agent must call. Have the agent run
+  `roster()` first and confirm `you` reads its own id; if it does not, it is
+  holding somebody else's token.
+- **Briefs are named per participant** — `CLAUDE.metrics.local.md` rather than
+  `CLAUDE.local.md`, which would otherwise be one file for three agents.
+
 ## What to paste into each agent
 
 `init` prints the exact line per participant. There are two shapes.

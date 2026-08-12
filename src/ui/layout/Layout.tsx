@@ -6,6 +6,7 @@ import { Sidebar } from './Sidebar.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Stream } from './Stream.js';
 import type { HubState } from '../state/derive.js';
+import type { MirrorView } from '../state/useMirror.js';
 import type { PostResult } from '../state/humanAction.js';
 
 type HumanAction = { type: 'propose_test' | 'intervene_human' };
@@ -26,6 +27,8 @@ export interface LayoutProps {
   onHumanAction?: (action: HumanAction) => void;
   /** Opens a side room with a participant and selects it. CT-18. */
   onOpenSideRoom?: (participantId: string) => void;
+  /** `GET /mirror`, not the log. Undefined until the first response. */
+  mirror?: MirrorView;
 }
 
 /** Sidebar · stream · dock, at the design's widths. */
@@ -42,6 +45,7 @@ export function Layout({
   onSelectRoom,
   onHumanAction,
   onOpenSideRoom,
+  mirror,
 }: LayoutProps) {
   return createElement(
     'div',
@@ -71,6 +75,7 @@ export function Layout({
       activeRoom,
       self,
       onOpenSideRoom,
+      mirror,
     }),
   );
 }

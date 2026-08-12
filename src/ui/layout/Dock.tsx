@@ -5,6 +5,7 @@ import { project } from '../../core/projection.js';
 import type { ChannelRoom, ParticipantStatus, ParticipantView } from '../state/derive.js';
 import { assignColours, identityFor } from '../state/identity.js';
 import { HUMAN_ID } from '../../contracts/room.js';
+import type { MirrorView } from '../state/useMirror.js';
 
 export interface DockProps {
   events: CrosstalkEvent[];
@@ -15,6 +16,14 @@ export interface DockProps {
   self?: string;
   /** Absent without a daemon, which is when no control should render at all. */
   onOpenSideRoom?: (participantId: string) => void;
+  /**
+   * The GitHub mirror, from `GET /mirror` rather than from the log — it has no
+   * write path into the log and this hub does not give it one.
+   *
+   * `undefined` means "not asked yet", which is not "off": a card that said
+   * "not configured" before the first response would be wrong on every load.
+   */
+  mirror?: MirrorView;
 }
 
 const STATUS_GROUPS: readonly { key: ParticipantStatus; label: string }[] = [
@@ -75,7 +84,17 @@ function rows(pairs: [string, string][]) {
  * invented. What a task genuinely carries is its branch, its PR number and its
  * assignee's workspace, and that is what shows.
  */
-export function Dock({ events, participants, rooms, activeRoom, self, onOpenSideRoom }: DockProps) {
+/**
+ * Three states that the operator acts on differently, and which looked
+ * identical while the mirror had no surface: never set up, set up and not
+ * running, running.
+ */
+function mirrorState(mirror: MirrorView): string {
+  if (!mirror.configured) return 'not configured';
+  return mirror.enabled ? 'running' : 'not running';
+}
+
+export function Dock({ events, participants, rooms, activeRoom, self, onOpenSideRoom, mirror }: DockProps) {
   const room = rooms.find((candidate) => candidate.id === activeRoom);
   const scoped = activeRoom === undefined ? [] : events.filter((event) => event.room === activeRoom);
   const lastSeq = scoped.at(-1)?.seq;
@@ -210,5 +229,24 @@ export function Dock({ events, participants, rooms, activeRoom, self, onOpenSide
       ),
       'dock-participants',
     ),
+    mirror === undefined
+      ? null
+      : section(
+          'Mirror',
+          mirrorState(mirror),
+          rows([
+            ...(mirror.lastDrain === undefined
+              ? []
+              : ([
+                  ['synced', String(mirror.lastDrain.completed)],
+                  // Shown even at zero. A mirror retrying every item forever
+                  // publishes nothing and looks, from a `synced` count alone,
+                  // exactly like one with nothing to do.
+                  ['retrying', String(mirror.lastDrain.retrying)],
+                ] as [string, string][])),
+            ...(mirror.lastError === undefined ? [] : ([['error', mirror.lastError]] as [string, string][])),
+          ]),
+          'dock-mirror',
+        ),
   );
 }

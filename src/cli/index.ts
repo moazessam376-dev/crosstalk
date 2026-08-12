@@ -9,7 +9,14 @@ import type { CrosstalkEvent } from '../contracts/events.js';
 import { doctor, type Finding } from '../harness/doctor.js';
 import { runningCliPath } from '../harness/install.js';
 import { loadConfig } from '../daemon/config.js';
-import { exposureWarning, startDaemon, tokenFilename } from '../daemon/server.js';
+import {
+  exposureWarning,
+  startDaemon,
+  tokenFilename,
+  type DaemonHandle,
+  type MirrorStatus,
+} from '../daemon/server.js';
+import { startMirror } from '../mirror/index.js';
 import { resolveHubDist } from '../daemon/hub.js';
 import { HUMAN_ID } from '../contracts/room.js';
 import { dmId } from '../core/rooms.js';
@@ -184,18 +191,46 @@ async function cmdUp(argv: string[]): Promise<number> {
   const findings = await preflight(repo, flags['force'] === true);
   if (findings.length > 0) process.stdout.write(`${formatFindings(findings)}\n\n`);
 
+  // Mutable, and read through a closure rather than captured: the daemon has to
+  // be listening before the mirror can start, because the mirror consumes the
+  // daemon's `/stream`. A value passed by copy here would say `enabled: false`
+  // for the life of the process.
+  const mirror: MirrorStatus = { configured: config.mirror !== undefined, enabled: false };
+
   const daemon = await startDaemon({
     repo,
     ...(port === undefined ? {} : { port }),
     ...(host === undefined ? {} : { host }),
+    mirrorStatus: () => mirror,
   });
+
+  // CT-19. `startMirror` had no caller outside its own tests: the mirror was
+  // written, wired to a queue, given an inbound channel and covered end to end,
+  // and never started by anything an operator runs. Configuring it did nothing
+  // and reported nothing, which is indistinguishable from configuring it wrong.
+  const mirrorHandle = config.mirror === undefined || humanTokenOf(daemon) === undefined
+    ? undefined
+    : await startMirror({
+        repo,
+        url: daemon.url,
+        token: humanTokenOf(daemon)!,
+        config: config.mirror,
+        base: config.project.mainBranch,
+      }).catch((error: unknown) => {
+        // Same contract as every other mirror failure: it costs the mirror, not
+        // the protocol. Recorded so the hub can say so rather than showing the
+        // silence that means "never configured".
+        mirror.lastError = error instanceof Error ? error.message : String(error);
+        return undefined;
+      });
+  if (mirrorHandle !== undefined) mirror.enabled = mirrorHandle.enabled;
 
   // Above the banner, not below it: the one line saying the hub is now on the
   // network should not arrive after four lines of paths.
   const exposure = exposureWarning(daemon.host);
   if (exposure !== undefined) process.stdout.write(`${bold('Exposed:')} ${exposure}\n\n`);
 
-  const humanToken = daemon.tokens.get(HUMAN_ID);
+  const humanToken = humanTokenOf(daemon);
   const hubUrl = humanToken === undefined ? undefined : `${daemon.url}/?t=${humanToken}`;
 
   // A terminal is what makes opening a browser meaningful. `rundll32` exits zero
@@ -229,12 +264,21 @@ async function cmdUp(argv: string[]): Promise<number> {
   // Hold the process open; the listening socket does the rest.
   await new Promise<void>((done) => {
     const stop = (): void => {
-      void daemon.close().then(done);
+      // The mirror first, and never fatally: a drain that throws on the way out
+      // must not stop the daemon closing and releasing its lock.
+      void (mirrorHandle?.stop().catch(() => {}) ?? Promise.resolve())
+        .then(() => daemon.close())
+        .then(done);
     };
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
   });
   return EXIT.ok;
+}
+
+/** `@human`'s token, which is both the hub's way in and the mirror's identity. */
+function humanTokenOf(daemon: DaemonHandle): string | undefined {
+  return daemon.tokens.get(HUMAN_ID);
 }
 
 /**

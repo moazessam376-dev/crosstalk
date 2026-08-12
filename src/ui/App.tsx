@@ -6,6 +6,7 @@ import { Layout } from './layout/Layout.js';
 import { deriveState } from './state/derive.js';
 import { useLog, type LogSource } from './state/useLog.js';
 import { loadHubConfig, type HubConnection } from './state/hubConfig.js';
+import { useMirror } from './state/useMirror.js';
 import { postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
 import { dmId } from '../core/rooms.js';
 
@@ -42,6 +43,7 @@ export default function App({ connection: injected }: AppProps = {}) {
   const [connection, setConnection] = useState<HubConnection>(injected ?? { kind: 'loading' });
   const [notice, setNotice] = useState<string | undefined>();
   const [sampleOpened, setSampleOpened] = useState(false);
+  const mirror = useMirror(connection.kind === 'live');
 
   useEffect(() => {
     if (injected !== undefined) return;
@@ -152,6 +154,9 @@ export default function App({ connection: injected }: AppProps = {}) {
       onOpenSideRoom: connection.kind === 'live'
         ? (participantId: string) => setSelectedRoom(dmId(connection.config.self, participantId))
         : undefined,
+      // Only against a live daemon. The fixture hub has no `/mirror` to poll,
+      // and a card there would describe a mirror that does not exist.
+      mirror,
     }),
   );
 }

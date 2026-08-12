@@ -190,7 +190,13 @@ report. `init` should write one, and CT-19 already covers that.
 | Contract | Change | For |
 |---|---|---|
 | `participant.ts` | `effort?: string` | §5 |
-| `participant.ts` | `owns?: string[]` — repo-relative path globs | §3 |
+| `participant.ts` | `owns?: string[]` — repo-relative path prefixes | §3 |
+
+Prefixes rather than globs, for two reasons. The repo allows two runtime
+dependencies and neither is a glob matcher, so globs would mean writing one —
+and a hand-rolled glob matcher that is subtly wrong about `**` is a way to
+silently mis-scope a submit gate. Prefixes also happen to be exactly what was
+asked for: *"their own folders."*
 | `config.ts` | `mirror` present in what `init` writes | §6 |
 
 `Task.branch` stays required and unchanged, which is the point of approach C.

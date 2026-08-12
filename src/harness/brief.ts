@@ -94,6 +94,50 @@ function transportInstructions(tier: Tier): string {
   ].join('\n');
 }
 
+/**
+ * The rules that depend on whether this agent has a checkout to itself.
+ *
+ * Two layouts, two different things to say, and saying the wrong one is
+ * actively harmful: telling a shared-root agent "the repository root belongs to
+ * someone else" contradicts where it is standing, and telling a worktree agent
+ * it owns three prefixes invents a restriction nobody configured.
+ *
+ * For shared root, both facts are conventions rather than enforcement, which is
+ * exactly why they must be stated. Every participant's MCP server is visible in
+ * the one root `.mcp.json`, so an agent calling the wrong namespace posts as
+ * someone else and the daemon accepts it — holding a token *is* the identity.
+ * And ownership is only checked at submit, so an agent that discovers its
+ * boundary there has already done the work twice.
+ */
+function workspaceRules(participant: Participant): string {
+  const owns = participant.owns ?? [];
+  if (owns.length === 0) {
+    // CT-13. The one that sent a Cursor session walking to the repository root
+    // twice on startup, correctly following its brief.
+    return 'That checkout is yours alone — it is not the leader\'s, and the repository root belongs to someone else.';
+  }
+
+  return [
+    '## Your identity and your paths',
+    '',
+    `Every agent on this project shares this one directory, so your MCP server is`,
+    `one of several registered here. Yours is \`crosstalk-${participant.id}\` — call`,
+    'its tools and no others. Confirm it before anything else: `roster()` returns',
+    `\`you\`, and it must read \`${participant.id}\`. If it does not, stop and say so in`,
+    '`#floor`; you are holding somebody else\'s token and everything you write will',
+    'be attributed to them.',
+    '',
+    'These are the paths you own, and the only ones you may write:',
+    '',
+    ...owns.map((prefix) => `- \`${prefix}\``),
+    '',
+    'A submit that touches anything outside them is refused whole — not trimmed to',
+    'the part that fits — so check before you write rather than after. If the work',
+    'genuinely needs a path you do not own, raise a claim instead of taking it.',
+    '',
+  ].join('\n');
+}
+
 function canonicalContent(content: string): string {
   return content.replaceAll('\r\n', '\n').replace(VERSION_MARKER, VERSION_PLACEHOLDER);
 }
@@ -142,6 +186,7 @@ export function renderBrief(
     lifecycle: participant.lifecycle,
     policySummary: policySummary(policy),
     transportInstructions: transportInstructions(tier),
+    workspaceRules: workspaceRules(participant),
   });
   return draft.replaceAll('{{briefVersion}}', briefVersion(draft));
 }

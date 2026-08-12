@@ -264,6 +264,9 @@ describe('doctor', () => {
   }, 60_000);
 
   it('rejects a worker whose workspace resolves to the repo root', async () => {
+    // Still a reject, under a narrower code. CT-20 made the rule conditional on
+    // declared ownership rather than removing it: a worker that declares
+    // nothing and sits in the root is exactly the case that was always wrong.
     const findings = await doctor(cfg({
       participants: [
         participant('leader', 'leader'),
@@ -271,15 +274,21 @@ describe('doctor', () => {
       ],
     }), repo);
 
-    expect(findings).toContainEqual(expect.objectContaining({ level: 'reject', code: 'WORKER_IN_REPO_ROOT' }));
+    expect(findings).toContainEqual(
+      expect.objectContaining({ level: 'reject', code: 'WORKER_IN_ROOT_WITHOUT_OWNERSHIP' }),
+    );
   }, 60_000);
 
   it('allows the leader to occupy the repo root', async () => {
+    // This filtered on `WORKER_IN_REPO_ROOT` and kept passing after that code
+    // stopped being emitted — a test asserting the absence of something that
+    // can no longer occur passes whatever the code does. It now names the code
+    // that actually fires, so it can fail again.
     const findings = await doctor(cfg({
       participants: [participant('leader', 'leader', { workspace: '.' })],
     }), repo);
 
-    expect(findings.filter((finding) => finding.code === 'WORKER_IN_REPO_ROOT')).toHaveLength(0);
+    expect(findings.filter((finding) => finding.code === 'WORKER_IN_ROOT_WITHOUT_OWNERSHIP')).toHaveLength(0);
   }, 60_000);
 
   it('rejects zero or multiple leaders', async () => {
@@ -312,5 +321,82 @@ describe('doctor', () => {
 
     expect(findings).toHaveLength(1);
     expect(findings[0]?.level).toBe('reject');
+  }, 60_000);
+});
+
+/**
+ * CT-20. A worker in the repository root used to be an unconditional reject,
+ * because two agents in one working tree can overwrite each other. That is what
+ * forced one worktree per agent, and one *project entry per agent* in the
+ * harness's sidebar — one Crosstalk project rendering as three unrelated ones.
+ *
+ * Ownership is what makes shared root safe: each participant declares the
+ * prefixes it may write, `doctor` refuses a roster whose declarations overlap,
+ * and the submit gate refuses a commit that reaches outside them. So the reject
+ * becomes conditional on the declaration rather than disappearing.
+ */
+describe('ownership is what permits a worker in the repository root', () => {
+  const codes = async (config: CrosstalkConfig): Promise<string[]> =>
+    (await doctor(config, repo)).map((f) => f.code);
+
+  it('rejects a worker in the root that declares no ownership', async () => {
+    const found = await codes(cfg({ participants: [participant('metrics', 'worker', { workspace: '.' })] }));
+
+    expect(found).toContain('WORKER_IN_ROOT_WITHOUT_OWNERSHIP');
+  }, 60_000);
+
+  it('permits a worker in the root that declares ownership', async () => {
+    // The other side of the discrimination, and the whole point of the change:
+    // without this the reject is merely renamed.
+    const found = await codes(cfg({
+      participants: [participant('metrics', 'worker', { workspace: '.', owns: ['src/metrics/'] })],
+    }));
+
+    expect(found).not.toContain('WORKER_IN_ROOT_WITHOUT_OWNERSHIP');
+    expect(found).not.toContain('WORKER_IN_REPO_ROOT');
+  }, 60_000);
+
+  it('rejects an empty ownership list, which declares nothing while looking declared', async () => {
+    const found = await codes(cfg({
+      participants: [participant('metrics', 'worker', { workspace: '.', owns: [] })],
+    }));
+
+    expect(found).toContain('WORKER_IN_ROOT_WITHOUT_OWNERSHIP');
+  }, 60_000);
+
+  it('rejects two workers whose owned prefixes overlap', async () => {
+    // `src/` contains `src/metrics/`, so these two can clobber each other and
+    // the submit gate would let both through — each is inside its own
+    // declaration.
+    const found = await codes(cfg({
+      participants: [
+        participant('metrics', 'worker', { workspace: '.', owns: ['src/metrics/'] }),
+        participant('skeleton', 'worker', { workspace: '.', owns: ['src/'] }),
+      ],
+    }));
+
+    expect(found).toContain('OWNERSHIP_OVERLAP');
+  }, 60_000);
+
+  it('leaves sibling prefixes alone', async () => {
+    const found = await codes(cfg({
+      participants: [
+        participant('metrics', 'worker', { workspace: '.', owns: ['src/metrics/'] }),
+        participant('skeleton', 'worker', { workspace: '.', owns: ['src/skeleton/'] }),
+      ],
+    }));
+
+    expect(found).not.toContain('OWNERSHIP_OVERLAP');
+  }, 60_000);
+
+  it('still rejects a worker in a worktree it does not own, unchanged', async () => {
+    // Ownership must not become a way to opt out of the original rule. A worker
+    // whose workspace is neither the root nor its own worktree is still wrong,
+    // and this change must not have quietly widened what is accepted.
+    const found = await codes(cfg({
+      participants: [participant('metrics', 'worker', { workspace: '../elsewhere' })],
+    }));
+
+    expect(found).toContain('WORKSPACE_OUTSIDE_REPO');
   }, 60_000);
 });

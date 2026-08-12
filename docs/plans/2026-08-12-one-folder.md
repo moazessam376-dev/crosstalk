@@ -1138,6 +1138,10 @@ git commit -m "Commit a shared-root submit through a throwaway worktree"
 - Modify: `docs/RUNNING.md`
 - Test: manual, against `D:\Opensource\Rigit`
 
+**Hazard, found while preparing this task.** `metrics` has unmerged work: `ct/T-01-analytic-fixtures` is at `6d304bd` ("T-01 blocker 1: the harmonic-linear-axial weight oracle"), ahead of `main`. Removing a worktree does not touch its branch — but **`crosstalk down --purge` calls `deleteBranch`**, so the obvious way to tear down the old layout destroys that work.
+
+Convert by editing the config and removing worktrees individually. Do not `--purge`. Verify `git branch -vv` still lists `ct/T-01-analytic-fixtures` at `6d304bd` afterwards, and stop if it does not.
+
 - [ ] **Step 1: Convert Rigit's roster**
 
 Rewrite `D:\Opensource\Rigit\crosstalk.yaml` so `skeleton`, `metrics` and `binding` have `workspace: .` and an `owns:` list, and every participant carries `model` and `effort`. Keep a copy of the old file first.

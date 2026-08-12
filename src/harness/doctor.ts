@@ -11,6 +11,7 @@ import {
   type Participant,
 } from '../contracts/index.js';
 import { branchSha, headSha, gitVersion, isAncestor, isRepo, samePath } from '../workspace/git.js';
+import { prefixesOverlap } from '../workspace/ownership.js';
 import { briefVersion, localBriefFile, renderBrief } from './brief.js';
 import { linkedInstallRoot, packageRootFromModule } from './install.js';
 import { loadRegistry, probeTier, type HarnessDescriptor } from './registry.js';
@@ -103,6 +104,34 @@ async function repositoryPrerequisite(repoRoot: string): Promise<Finding | undef
 
 function configuredAgentCount(config: CrosstalkConfig): number {
   return config.participants.filter((participant) => participant.role !== 'human').length;
+}
+
+/**
+ * Pairs of participants whose declared prefixes contain one another.
+ *
+ * This is the check the shared-root permission rests on. Each of two workers
+ * owning `src/` and `src/metrics/` passes its own submit gate — every file it
+ * touches is inside its own declaration — while both write the same files. The
+ * only place that can be caught is here, across the whole roster, before either
+ * of them starts.
+ */
+function overlappingOwnership(participants: Participant[]): string[] {
+  const declared = participants.filter((participant) => (participant.owns?.length ?? 0) > 0);
+  const clashes: string[] = [];
+  for (let left = 0; left < declared.length; left += 1) {
+    for (let right = left + 1; right < declared.length; right += 1) {
+      const one = declared[left]!;
+      const other = declared[right]!;
+      for (const mine of one.owns ?? []) {
+        for (const theirs of other.owns ?? []) {
+          if (prefixesOverlap(mine, theirs)) {
+            clashes.push(`${one.id} (${mine}) and ${other.id} (${theirs})`);
+          }
+        }
+      }
+    }
+  }
+  return clashes;
 }
 
 function duplicateParticipantIds(participants: Participant[]): Set<string> {
@@ -319,13 +348,29 @@ async function checkParticipant(
   const findings: Finding[] = [];
   const workspace = resolve(repoRoot, participant.workspace);
   if (participant.role === 'worker' && workspace === repoRoot) {
-    findings.push(finding(
-      'reject',
-      'WORKER_IN_REPO_ROOT',
-      `Worker ${participant.id} resolves to the repository root, which belongs to the leader.`,
-      'Give every worker its own repo-relative git worktree under .crosstalk/worktrees/<id>.',
-    ));
-    return findings;
+    // CT-20. This was an unconditional reject, and it is why every agent needed
+    // its own worktree — and therefore why one Crosstalk project rendered as one
+    // top-level project entry *per agent* in the harness's sidebar.
+    //
+    // What made shared root unsafe was never identity: `.crosstalk/tokens/` sits
+    // at the repository root and every worktree can already read every token, so
+    // worktrees gave write isolation and never identity isolation. It is the
+    // writes that need a boundary, and a declared one is checkable where a
+    // worktree boundary was merely structural.
+    //
+    // So the reject becomes conditional on the declaration rather than
+    // disappearing: no `owns`, no shared root. An empty list counts as absent —
+    // it declares nothing while looking declared, and `outsideOwnership` treats
+    // it as owning nothing, so a submit would refuse every file anyway.
+    if (participant.owns === undefined || participant.owns.length === 0) {
+      findings.push(finding(
+        'reject',
+        'WORKER_IN_ROOT_WITHOUT_OWNERSHIP',
+        `Worker ${participant.id} resolves to the repository root without declaring any owned paths.`,
+        'Add `owns:` listing the repo-relative directories this worker may write, for example `owns: [src/metrics/]`, or give it its own worktree under .crosstalk/worktrees/<id>.',
+      ));
+      return findings;
+    }
   }
 
   if (!isWithin(repoRoot, workspace)) {
@@ -415,6 +460,16 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
       'LEADER_COUNT',
       `Expected exactly one leader participant, found ${leaders.length}.`,
       'Configure exactly one participant with role: leader; all other agents should be workers or observers.',
+    ));
+  }
+
+  const clashes = overlappingOwnership(config.participants);
+  if (clashes.length > 0) {
+    findings.push(finding(
+      'reject',
+      'OWNERSHIP_OVERLAP',
+      `Declared ownership overlaps, so these participants can overwrite each other: ${clashes.join('; ')}.`,
+      'Narrow one of each pair so no declared prefix contains another. Sibling directories do not overlap; a parent and its child do.',
     ));
   }
 

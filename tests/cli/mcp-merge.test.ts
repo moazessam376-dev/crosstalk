@@ -64,9 +64,9 @@ describe('crosstalk init and an existing .mcp.json', () => {
     await runInit({ repo, participants: [], force: false });
 
     const merged = await read(path);
-    expect(Object.keys(merged['mcpServers'] as object).sort()).toEqual(['another', 'crosstalk', 'my-existing-server']);
+    expect(Object.keys(merged['mcpServers'] as object).sort()).toEqual(['another', 'crosstalk-leader', 'my-existing-server']);
     expect(merged['mcpServers']['my-existing-server']).toEqual({ command: 'node', args: ['important.js'] });
-    expect(merged['mcpServers']['crosstalk']['env']['CROSSTALK_REPO']).toBeTruthy();
+    expect(merged['mcpServers']['crosstalk-leader']['env']['CROSSTALK_REPO']).toBeTruthy();
   }, 60_000);
 
   it('preserves unrelated top-level keys', async () => {
@@ -90,13 +90,62 @@ describe('crosstalk init and an existing .mcp.json', () => {
 
     const second = await read(path);
     expect(second['mcpServers']['mine']).toEqual({ command: 'x' });
-    expect(second['mcpServers']['crosstalk']).toBeDefined();
+    expect(second['mcpServers']['crosstalk-leader']).toBeDefined();
   }, 60_000);
 
   it('writes the file when there is none', async () => {
     await runInit({ repo, participants: [], force: false });
 
-    expect((await read(join(repo, '.mcp.json')))['mcpServers']['crosstalk']).toBeDefined();
+    expect((await read(join(repo, '.mcp.json')))['mcpServers']['crosstalk-leader']).toBeDefined();
+  }, 60_000);
+
+  /**
+   * CT-20. With every agent in the repository root, every harness reads this one
+   * file. A single fixed `crosstalk` key meant the last participant written won
+   * and all of them authenticated as it — which is CT-8 and CT-9 verbatim, the
+   * failure that happened twice on day one.
+   */
+  it('gives each participant sharing the root its own server and its own token', async () => {
+    const path = join(repo, '.mcp.json');
+    await runInit({ repo, participants: ['leader:leader:claude-code-app'], force: false });
+
+    const roster = await readFile(join(repo, 'crosstalk.yaml'), 'utf8');
+    await writeFile(
+      join(repo, 'crosstalk.yaml'),
+      roster.replace(
+        /participants:\n/,
+        'participants:\n  - id: metrics\n    role: worker\n    harness: claude-code-app\n    lifecycle: attached\n    workspace: .\n    owns:\n      - src/metrics/\n',
+      ),
+      'utf8',
+    );
+    await runInit({ repo, participants: [], force: true });
+
+    const servers = (await read(path))['mcpServers'] as Record<string, any>;
+
+    expect(Object.keys(servers).sort()).toEqual(['crosstalk-leader', 'crosstalk-metrics']);
+    // The whole point: two agents in one directory holding different tokens.
+    expect(servers['crosstalk-leader']['env']['CROSSTALK_TOKEN_FILE'])
+      .not.toBe(servers['crosstalk-metrics']['env']['CROSSTALK_TOKEN_FILE']);
+    // And no leftover from the fixed-key era, which would authenticate as
+    // whoever it happened to name.
+    expect(servers['crosstalk']).toBeUndefined();
+  }, 60_000);
+
+  it('removes a stale fixed-key entry left by an older init', async () => {
+    const path = join(repo, '.mcp.json');
+    await writeFile(path, JSON.stringify({
+      mcpServers: {
+        crosstalk: { command: 'node', env: { CROSSTALK_TOKEN_FILE: '/old/token' } },
+        mine: { command: 'x' },
+      },
+    }, null, 2), 'utf8');
+
+    await runInit({ repo, participants: [], force: false });
+
+    const servers = (await read(path))['mcpServers'] as Record<string, any>;
+    expect(servers['crosstalk']).toBeUndefined();
+    // Deleting our own stale key is not licence to touch anyone else's.
+    expect(servers['mine']).toEqual({ command: 'x' });
   }, 60_000);
 
   it('gives every MCP-capable participant its own registration and its own token', async () => {
@@ -109,8 +158,8 @@ describe('crosstalk init and an existing .mcp.json', () => {
     // Each lands in its own workspace at its own harness's path — one shared
     // registration means two agents present one token, and `from` is the field
     // the ledger attributes by.
-    const leaderEntry = (await read(join(repo, '.mcp.json')))['mcpServers']['crosstalk'];
-    const workerEntry = (await read(join(repo, '.crosstalk', 'worktrees', 'w', '.cursor', 'mcp.json')))['mcpServers']['crosstalk'];
+    const leaderEntry = (await read(join(repo, '.mcp.json')))['mcpServers']['crosstalk-leader'];
+    const workerEntry = (await read(join(repo, '.crosstalk', 'worktrees', 'w', '.cursor', 'mcp.json')))['mcpServers']['crosstalk-w'];
 
     expect(leaderEntry['env']['CROSSTALK_TOKEN_FILE']).toContain('tokens');
     expect(workerEntry['env']['CROSSTALK_TOKEN_FILE']).toContain('tokens');

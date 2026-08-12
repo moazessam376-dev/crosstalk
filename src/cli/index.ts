@@ -144,7 +144,11 @@ async function cmdInit(argv: string[]): Promise<number> {
             '',
             ...manual.flatMap((entry) => [
               `  ${bold(entry.participantId)}  ${dim(entry.reason ?? '')}`,
-              ...JSON.stringify({ mcpServers: { crosstalk: entry.entry } }, null, 2).split('\n').map((line) => `    ${line}`),
+              // Keyed by participant, matching what `init` writes since CT-20.
+              // A snippet naming a different key than the tool actually reads is
+              // a paste that silently does nothing.
+              ...JSON.stringify({ mcpServers: { [`crosstalk-${entry.participantId}`]: entry.entry } }, null, 2)
+                .split('\n').map((line) => `    ${line}`),
               '',
             ]),
           ]),

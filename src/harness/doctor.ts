@@ -505,10 +505,11 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
     }
 
     // `crosstalk` is reserved for the same reason `human` is: it already names
-    // something. It is the key every MCP registration is written under
-    // (`mcpServers.crosstalk`) and the name of the tool itself, so a
-    // participant called `crosstalk` produces a worktree, a token file and a
-    // server entry that read as the product rather than as an agent.
+    // something. Registrations are now keyed `mcpServers.crosstalk-<id>`, so
+    // the collision is no longer exact — but the name is still the product's,
+    // and a participant called `crosstalk` produces a worktree, a token file
+    // and a `crosstalk-crosstalk` server that read as the tool rather than as
+    // an agent.
     if (participant.id.toLowerCase() === RESERVED_PARTICIPANT_ID) {
       findings.push(finding(
         'reject',

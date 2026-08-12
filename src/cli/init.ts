@@ -704,7 +704,12 @@ async function kickoffLines(
       // descriptor live, and passing it explicitly makes identity immune to
       // whatever the harness does with its working directory.
       line: tier === 'mcp'
-        ? `You are "${participant.id}" on Crosstalk. Open this agent in ${workspace} — your MCP server is registered at ${resolveConfigPath(descriptor!.mcpConfigPath!, workspace)} and its token is yours alone. Call roster() to see who else is here, then await_turn().`
+        // CT-20. Names the *server*, not just the file. In a shared root three
+        // participants are registered in one `.mcp.json`, so "your MCP server is
+        // registered at <path>" points at a file holding somebody else's
+        // credentials as well as yours, and the agent has no way to tell which
+        // entry is its own.
+        ? `You are "${participant.id}" on Crosstalk. Open this agent in ${workspace} — your MCP server is \`crosstalk-${participant.id}\`, registered at ${resolveConfigPath(descriptor!.mcpConfigPath!, workspace)}, and its token is yours alone. Call roster() first and check that \`you\` reads "${participant.id}", then await_turn().`
         : `You are "${participant.id}" on Crosstalk. Work in ${workspace} — that is your checkout, not the leader's. Use the CLI: \`${cli} await --repo ${root} --as ${participant.id} --timeout 50\` to receive work, \`${cli} say --repo ${root} --as ${participant.id} --room '#floor' --body '...'\` to speak.`,
     });
   }

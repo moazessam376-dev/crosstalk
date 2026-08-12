@@ -84,6 +84,55 @@ describe('a brief only names commands that exist', () => {
     expect([...TOOLS_BY_NAME.keys()]).not.toContain('submit');
   });
 
+  /**
+   * CT-20. In shared root the brief is the only thing that tells an agent which
+   * of several visible namespaces is its own, and which paths it may write.
+   * Both are conventions rather than enforcement, and a convention nobody states
+   * is not one.
+   */
+  it('names the MCP server this agent must use, and the paths it owns', () => {
+    const brief = renderBrief(
+      participant({ id: 'metrics', workspace: '.', owns: ['src/metrics/', 'tests/metrics/'] }),
+      descriptor(),
+      policy,
+      'mcp',
+      '/repo',
+    );
+
+    expect(brief).toContain('crosstalk-metrics');
+    expect(brief).toContain('src/metrics/');
+    expect(brief).toContain('tests/metrics/');
+  });
+
+  it('tells a shared-root agent to verify its identity rather than assume it', () => {
+    // Every namespace is visible to every agent, so picking the right one is a
+    // choice that can be got wrong silently. `roster` returns `you`, which makes
+    // the check one call — and an agent that skips it posts as somebody else.
+    const brief = renderBrief(
+      participant({ id: 'metrics', workspace: '.', owns: ['src/metrics/'] }),
+      descriptor(),
+      policy,
+      'mcp',
+      '/repo',
+    );
+
+    expect(brief).toMatch(/roster\(/);
+  });
+
+  it('does not tell a worktree agent it owns particular paths', () => {
+    // The other side. A worker with its own checkout owns all of it, and a list
+    // of prefixes there would be a restriction nobody configured.
+    const brief = renderBrief(
+      participant({ id: 'codex', workspace: '.crosstalk/worktrees/codex' }),
+      descriptor(),
+      policy,
+      'mcp',
+      '/repo',
+    );
+
+    expect(brief).not.toMatch(/paths you own/i);
+  });
+
   it('still names the gates that do exist, on the tier that has them', () => {
     const brief = renderBrief(participant(), descriptor(), policy, 'mcp', '/repo');
     // Losing the gates entirely would also pass "names nothing wrong".

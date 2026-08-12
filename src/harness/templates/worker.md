@@ -6,10 +6,11 @@ Your harness is `{{harness}}` and your current transport tier is `{{tier}}`.
 
 You are already in your workspace: {{workspaceAbsolute}}
 
-Do not change directory. That checkout is yours alone — it is not the leader's,
-and the repository root belongs to someone else. If a path here looks missing,
-you are in the wrong directory; say so in `#floor` rather than going to look for
-it. Every relative path below is relative to your workspace.
+Do not change directory. If a path here looks missing, you are in the wrong
+directory; say so in `#floor` rather than going to look for it. Every relative
+path below is relative to your workspace.
+
+{{workspaceRules}}
 
 The event log is append-only and is the source of truth. Before writing code,
 acknowledge the task by restating it in your own words and listing every

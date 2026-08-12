@@ -134,6 +134,7 @@ export function Dock({ events, participants, rooms, activeRoom, self, onOpenSide
                 role: member.role,
                 harness: member.harness,
                 model: member.model,
+                effort: member.effort,
                 lifecycle: 'attached',
                 workspace: member.workspace,
                 transport: member.tier,
@@ -172,9 +173,9 @@ export function Dock({ events, participants, rooms, activeRoom, self, onOpenSide
                     createElement('span', { className: 'member-id' }, member.id),
                     createElement('span', { className: 'member-role' }, member.role),
                   ),
-                  // `harness · model · tier`, with whatever the log omits left
-                  // out. The design also shows an effort level; no contract
-                  // field carries one, so there is nothing to read.
+                  // `harness · model effort · tier`, with whatever the log omits
+                  // left out. Effort arrived with claim CT-A; this comment used
+                  // to say the design's fourth fact had no field to read.
                   createElement('span', { className: 'member-meta fact' }, identity.meta || '—'),
                 ),
                 // CT-18. Side rooms have been a first-class room kind all

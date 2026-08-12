@@ -11,6 +11,8 @@ export interface ParticipantView extends Pick<Participant, 'id' | 'role' | 'harn
   tier?: Tier;
   /** A harness does not identify a model, and the dock shows both. */
   model?: string;
+  /** A model at two effort levels does not behave alike. Shown beside it. */
+  effort?: string;
 }
 
 export interface ChannelRoom {
@@ -71,6 +73,7 @@ function projectParticipants(events: readonly CrosstalkEvent[]): ParticipantView
       harness: participant.harness,
       workspace: participant.workspace,
       model: participant.model,
+      effort: participant.effort,
       status: latest.has(participant.id) ? statusForEvent(latest.get(participant.id)!) : 'awaiting_turn',
       // Undefined means "not probed" and must stay undefined — `Tier` has no
       // unknown member, so a defaulted `file` is indistinguishable from a

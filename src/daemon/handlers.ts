@@ -11,6 +11,7 @@ import type { HubState } from '../core/projection.js';
 import { isMember } from '../core/rooms.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { validateTransition } from '../core/tasks.js';
+import { commitOwnedPaths, wasRefused } from '../workspace/submit.js';
 
 import { DaemonError } from './errors.js';
 import { closeLadderIfResolved, escalateIfNeeded } from './ladder.js';
@@ -19,6 +20,11 @@ export interface HandlerContext {
   /** Derived from the presenting token. Never read from a body. */
   who: ParticipantId;
   config: CrosstalkConfig;
+  /**
+   * The repository root. Needed because a shared-root submit is committed from
+   * here (`commitSharedRootWork`) rather than from a worktree the assignee owns.
+   */
+  repo: string;
   state: HubState;
   /** When each participant was last heard from. See `Presence`. */
   seenAt?: ReadonlyMap<ParticipantId, number>;
@@ -235,8 +241,22 @@ export async function setTaskState(
   // for a stranger. `ILLEGAL_TRANSITION` stays reachable for everyone who does
   // have the authority — the two codes answer different questions and neither
   // may swallow the other.
-  requireTaskAuthority(ctx, requireTask(ctx, taskId), state);
+  const task = requireTask(ctx, taskId);
+  requireTaskAuthority(ctx, task, state);
   validateTransition(taskId, state, ctx.state);
+
+  // CT-20, approach C. When the assignee works in the shared root rather than a
+  // worktree of its own, this is where its work becomes a commit: in a
+  // throwaway worktree on the task's branch, holding only the paths it owns.
+  //
+  // Here rather than in `submitTask`, which despite serving `/tasks/:id/submit`
+  // appends `self_review` and lands in `self_reviewed` — the endpoint is named
+  // for the human act. Committing there would commit mid-critique, while the
+  // assignee is still changing the code its own review is about.
+  //
+  // Before the append, so a refusal leaves no `task_state` event claiming a
+  // submit that did not happen.
+  if (state === 'submitted') await commitSharedRootWork(ctx, task);
 
   return [
     await ctx.append({
@@ -248,6 +268,34 @@ export async function setTaskState(
       ...(reason === undefined ? {} : { reason }),
     }),
   ];
+}
+
+/**
+ * Commits an assignee's work when it shares the repository root with everyone
+ * else, and does nothing at all when it has a worktree of its own.
+ *
+ * The no-`owns` path must stay a no-op: that is every project configured before
+ * shared root existed, and this must not change how any of them submit.
+ */
+async function commitSharedRootWork(ctx: HandlerContext, task: Task): Promise<void> {
+  const assignee = ctx.config.participants.find((candidate) => candidate.id === task.assignee);
+  const owns = assignee?.owns;
+  if (owns === undefined || owns.length === 0) return;
+
+  const result = await commitOwnedPaths({
+    repo: ctx.repo,
+    branch: task.branch,
+    worktreeId: task.id,
+    owns,
+    message: `${task.id} ${task.title}`,
+  });
+
+  if (wasRefused(result)) {
+    throw new ProtocolError(
+      'SUBMIT_OUTSIDE_OWNERSHIP',
+      `${task.assignee} changed paths it does not own, so ${task.id} was not committed: ${result.refused.join(', ')}. Owned: ${owns.join(', ')}.`,
+    );
+  }
 }
 
 function requireTaskAuthority(ctx: HandlerContext, task: Task, to: TaskState): void {

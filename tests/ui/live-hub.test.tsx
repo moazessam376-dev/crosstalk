@@ -287,9 +287,15 @@ describe('C3 the human can actually speak', () => {
     fireEvent.change(field, { target: { value: 'Stop and wait for my ruling.' } });
     fireEvent.keyDown(field, { key: 'Enter' });
 
-    await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]!.url).toBe('/events');
-    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+    // Counted by url, not by total fetches. "One request" means the composer
+    // posted once rather than twice — it never meant the hub makes exactly one
+    // request in its lifetime, and reading it that way made this test fail the
+    // moment anything else on the page fetched anything (the mirror status
+    // card, which polls `/mirror`).
+    const posts = (): typeof calls => calls.filter((call) => call.url === '/events');
+
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect(JSON.parse(String(posts()[0]!.init.body))).toEqual({
       kind: 'message',
       room: '#floor',
       body: 'Stop and wait for my ruling.',

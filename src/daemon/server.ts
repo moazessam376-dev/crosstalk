@@ -91,9 +91,32 @@ export interface DaemonHandle {
   close(): Promise<void>;
 }
 
+/**
+ * What the hub can learn about the GitHub mirror.
+ *
+ * Not an event, and deliberately. The mirror has no write path into the log and
+ * that is what makes "mirror failure never blocks the protocol" structural
+ * rather than a discipline (`mirror/index.ts`). Reporting its health through a
+ * route keeps the one-way street intact.
+ */
+export interface MirrorStatus {
+  /** A `mirror:` block exists in the config. Absent is a gap, not a failure. */
+  configured: boolean;
+  /** It started and is running. False when `gh` or a credential is missing. */
+  enabled: boolean;
+  lastDrain?: { completed: number; retrying: number };
+  lastError?: string;
+}
+
 export interface StartDaemonOptions {
   repo: string;
   port?: number;
+  /**
+   * Read per request, never captured: `up` starts the daemon before the mirror,
+   * because the mirror consumes the daemon's `/stream`. A snapshot taken here
+   * would report `enabled: false` forever.
+   */
+  mirrorStatus?: () => MirrorStatus;
   /**
    * The interface to bind. Defaults to loopback and should stay there: the hub
    * carries the whole conversation and a bearer token is all that guards it.
@@ -130,6 +153,7 @@ export async function startDaemon(opts: StartDaemonOptions): Promise<DaemonHandl
       log,
       opts.hubDist ?? resolveHubDist(import.meta.url),
       opts.repo,
+      ...(opts.mirrorStatus === undefined ? [] : [opts.mirrorStatus]),
     );
     await daemon.init();
     server = createServer((request, response) => {
@@ -350,17 +374,22 @@ class Daemon {
   /** Absolute path to the clone. `config.project.repo` is relative to the config file. */
   readonly #repo: string;
 
+  /** Defaults to "nothing configured", which is the truth until `up` says otherwise. */
+  readonly #mirrorStatus: () => MirrorStatus;
+
   constructor(
     config: CrosstalkConfig,
     tokens: Map<ParticipantId, string>,
     log: EventLog,
     hubDist: string,
     repo: string,
+    mirrorStatus: () => MirrorStatus = () => ({ configured: false, enabled: false }),
   ) {
     this.#config = config;
     this.#log = log;
     this.#hubDist = hubDist;
     this.#repo = repo;
+    this.#mirrorStatus = mirrorStatus;
     this.#byToken = new Map([...tokens].map(([id, token]) => [token, id]));
     this.#state = project([]);
   }
@@ -549,6 +578,13 @@ class Daemon {
         room: FLOOR,
         maxRounds: this.#config.policy.dispute.maxRounds,
       });
+      return;
+    }
+    if (path === '/mirror' && method === 'GET') {
+      // Called, not read: `up` starts the daemon before the mirror, so a value
+      // captured at construction reports `enabled: false` for the life of the
+      // process — indistinguishable from a mirror that failed to start.
+      send(response, 200, this.#mirrorStatus());
       return;
     }
     if (path === '/events' && method === 'GET') {

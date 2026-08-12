@@ -284,9 +284,11 @@ git commit -m "Show effort beside the model in the roster"
 
 ---
 
-## Task 2: `init` collects model and effort
+## Task 2: `init` collects effort
 
-Rigit's `crosstalk.yaml` sets no `model:` on any of five participants, which is why the hub shows `claude-code-app · mcp`. The field has existed all along and nothing ever asked for it.
+**Corrected during execution.** This task was written believing `init` never asks for a model. It does: `parseParticipants` splits `--participant id:role:harness[:model]` and writes `model` conditionally (`init.ts:684,699`). Rigit's config simply was not created with one — `--participant metrics:worker:claude-code-app` was used where `--participant metrics:worker:claude-code-app:opus-5` would have worked.
+
+So the code change is only `effort`, and the roster fix for Rigit is a configuration change (Task 9), not a code change. `RunInitOptions.participants` is `string[]`, not `Participant[]`, and the test below is written against that rather than the object form the original draft assumed.
 
 **Files:**
 - Modify: `src/cli/init.ts`
@@ -993,9 +995,13 @@ git commit -m "Tell each agent its namespace and its subtree"
 
 The heart of approach C. `submitTask` (`handlers.ts:167`) gains a commit step that touches no shared git state.
 
+**Corrected during execution.** This task said to hook `submitTask` (`handlers.ts:167`). That handler serves `POST /tasks/:id/submit` but appends `self_review` and transitions to **`self_reviewed`**, not `submitted` — the endpoint is named for the human act, not the state. The `submitted` transition runs through the generic `POST /tasks/:id/state` (`server.ts:630`, `contract.ts:101`).
+
+Hooking `submitTask` would commit at self-review, one state too early: the assignee is still working and its own critique may yet change the code. The commit belongs on the transition **into `submitted`**, which is the point the work is handed over.
+
 **Files:**
 - Create: `src/workspace/submit.ts`
-- Modify: `src/daemon/handlers.ts:167`
+- Modify: `src/daemon/handlers.ts` — the `/tasks/:id/state` handler, on the transition into `submitted`
 - Test: `tests/workspace/submit.test.ts` (create)
 
 **Interfaces:**

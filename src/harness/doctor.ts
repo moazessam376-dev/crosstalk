@@ -570,7 +570,7 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
     findings.push(...await checkParticipant(participant, descriptor, config.policy, tier, repoRoot));
   }
 
-  // CT-17. `init` accepts `--participant id:role:harness[:model]` and the hub
+  // CT-17. `init` accepts `--participant id:role:harness[:model[:effort]]` and the hub
   // renders the model when it is there, but nothing prompts for one and nothing
   // said it was missing — so the default outcome was the uninformative one.
   //
@@ -589,7 +589,7 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
       'warn',
       'PARTICIPANT_NO_MODEL',
       `No model is declared for ${unnamed.join(', ')}, so the hub cannot show which model each agent is running.`,
-      'Re-run init with --participant id:role:harness:model, or add `model:` to those participants in crosstalk.yaml. It is hand-declared and unverified — nothing checks the agent is running what it claims.',
+      'Re-run init with --participant id:role:harness:model[:effort], or add `model:` to those participants in crosstalk.yaml. `effort:` sits beside it and the hub shows the pair. Both are hand-declared and unverified — nothing checks the agent is running what it claims.',
     ));
   }
 

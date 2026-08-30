@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { SAY_LIMIT } from '../../src/contracts/events.js';
 import type { Inbox } from '../../src/core/inbox.js';
 import { startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
 
@@ -50,11 +51,21 @@ async function getInbox(d: DaemonHandle, id: string, query = ''): Promise<{ stat
 }
 
 async function say(d: DaemonHandle, from: string, body: string, to?: string): Promise<void> {
-  await fetch(`${d.url}/events`, {
+  await postSay(d, from, body, to);
+}
+
+async function postSay(
+  d: DaemonHandle,
+  from: string,
+  body: string,
+  to?: string,
+): Promise<{ status: number; body: unknown }> {
+  const response = await fetch(`${d.url}/events`, {
     method: 'POST',
     headers: { ...auth(d, from), 'content-type': 'application/json' },
     body: JSON.stringify({ kind: 'message', room: '#floor', body, ...(to === undefined ? {} : { to }) }),
   });
+  return { status: response.status, body: await response.json() };
 }
 
 describe('GET /inbox', () => {
@@ -83,17 +94,43 @@ describe('GET /inbox', () => {
     });
   });
 
-  it('clips a long body so the raw text never appears in summary', async () => {
+  it('delivers a long body whole, and still gives one scannable line', async () => {
     await withDaemon(async (daemon) => {
-      const long = 'x'.repeat(2000);
+      // Under SAY_LIMIT, so it posts — and the finding is at the end, where the
+      // old 120-character clip lost it.
+      const long = `${'context. '.repeat(120)}the run is unwinnable after a single wreck`;
+      expect(long.length).toBeLessThan(SAY_LIMIT);
+
       await say(daemon, 'leader', long);
       const { body } = await getInbox(daemon, 'codex', '?wait=0');
       const said = body.unread.find((card) => card.kind === 'said');
 
       expect(said).toBeDefined();
       expect(said!.summary.length).toBeLessThanOrEqual(120);
-      expect(said!.summary).not.toBe(long);
-      expect(JSON.stringify(body)).not.toContain(long);
+      expect(said!.body).toBe(long);
+      expect(said!.body).toContain('unwinnable after a single wreck');
+    });
+  });
+
+  it('refuses a body over the cap, and names the way out', async () => {
+    await withDaemon(async (daemon) => {
+      const { status, body } = await postSay(daemon, 'leader', 'x'.repeat(SAY_LIMIT + 1));
+
+      expect(status).toBe(422);
+      const wire = body as { error: { code: string; message: string } };
+      expect(wire.error.code).toBe('MESSAGE_TOO_LONG');
+      expect(wire.error.message).toContain('ref');
+
+      // Refused means not posted: nothing reaches the board half-said.
+      const { body: inbox } = await getInbox(daemon, 'codex', '?wait=0');
+      expect(inbox.unread.filter((card) => card.kind === 'said')).toEqual([]);
+    });
+  });
+
+  it('exempts the operator, whose job brief is not chat', async () => {
+    await withDaemon(async (daemon) => {
+      const { status } = await postSay(daemon, '@human', 'J'.repeat(SAY_LIMIT * 2));
+      expect(status).toBe(201);
     });
   });
 

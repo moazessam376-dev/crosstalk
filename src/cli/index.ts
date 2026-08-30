@@ -537,13 +537,15 @@ async function cmdAct(argv: string[]): Promise<number> {
 }
 
 async function cmdSay(argv: string[]): Promise<number> {
-  return withClient(argv, { room: { type: 'string' }, body: { type: 'string' }, to: { type: 'string' } }, async (client, flags) => {
+  return withClient(argv, { room: { type: 'string' }, body: { type: 'string' }, to: { type: 'string' }, ref: { type: 'string' } }, async (client, flags) => {
     const to = str(flags, 'to');
+    const ref = str(flags, 'ref');
     const result = await client.post<WriteResult>('/events', {
       kind: 'message',
       room: require_(flags, 'room'),
       body: require_(flags, 'body'),
       ...(to === undefined ? {} : { to }),
+      ...(ref === undefined ? {} : { ref }),
     });
     emit(result, flags['json'] === true, () => `posted seq ${result.events[result.events.length - 1]!.seq}`);
     return EXIT.ok;
@@ -565,8 +567,9 @@ async function cmdSay(argv: string[]): Promise<number> {
  * than DMs.
  */
 async function cmdDm(argv: string[]): Promise<number> {
-  return withClient(argv, { with: { type: 'string' }, body: { type: 'string' } }, async (client, flags) => {
+  return withClient(argv, { with: { type: 'string' }, body: { type: 'string' }, ref: { type: 'string' } }, async (client, flags) => {
     const other = require_(flags, 'with');
+    const ref = str(flags, 'ref');
     const me = str(flags, 'as');
     if (me === undefined) {
       throw new CliError('--as is required to open a side room', EXIT.usage, 'The room id is built from both ids, so both have to be named.');
@@ -575,6 +578,7 @@ async function cmdDm(argv: string[]): Promise<number> {
       kind: 'message',
       room: dmId(me, other),
       body: require_(flags, 'body'),
+      ...(ref === undefined ? {} : { ref }),
     });
     emit(result, flags['json'] === true, () => `posted to ${bold(dmId(me, other))} (@human is in this room too)`);
     return EXIT.ok;

@@ -61,6 +61,7 @@ function transportInstructions(tier: Tier): string {
   if (tier === 'mcp') {
     return [
       'Call `inbox()` first. If `job` is set, that is the work. If next is idle, wait.',
+      '`say({room, body, ref})` — body is capped at 1500 characters. Lead with the finding; put the detail in a file or a commit and name it with `ref`.',
       '`act({kind:"ack"|"assign"|"done"|"accept"|"reject"})` for tasks. `claim({kind})` only for contradictions.',
       'Confirm `inbox()` says `you` is you before you write.',
     ].join('\n');
@@ -70,7 +71,7 @@ function transportInstructions(tier: Tier): string {
     return [
       'Use the Crosstalk shell CLI; validation failures are reported by exit code.',
       '- `crosstalk inbox --as ID` returns cards now. Pass `--timeout 50` only to wait.',
-      '- `crosstalk say --as ID --room \'#floor\' --body "..."`',
+      '- `crosstalk say --as ID --room \'#floor\' --body "..." [--ref path-or-sha]` — body is capped at 1500 characters; lead with the finding and put detail behind `--ref`.',
       '- `crosstalk act --as ID --kind ack --task T-01 --restatement "..."`',
       '- `crosstalk claim --as ID --against leader --target src/file.ts:1 --assertion "..." --falsifier "..."`',
     ].join('\n');
@@ -78,6 +79,7 @@ function transportInstructions(tier: Tier): string {
 
   return [
     'Use the Crosstalk file inbox/outbox format; each action is one fenced crosstalk block.',
+    'A message body is capped at 1500 characters; lead with the finding and name any detail with `ref`.',
     'Write the same payload fields required by the protocol validator, including a falsifier.',
     'Read the rendered inbox response after each action and correct rejected blocks there.',
   ].join('\n');

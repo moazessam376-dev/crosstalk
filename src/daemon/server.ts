@@ -8,6 +8,7 @@ import type { AddressInfo } from 'node:net';
 
 import type { CrosstalkConfig } from '../contracts/config.js';
 import type { CrosstalkEvent, DraftEvent, EventKind } from '../contracts/events.js';
+import { refuseOversizeBody } from '../contracts/events.js';
 import { ProtocolError } from '../contracts/errors.js';
 import type { ParticipantId } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
@@ -945,6 +946,18 @@ class Daemon {
     if (to !== undefined && typeof to !== 'string') {
       throw new DaemonError('MALFORMED_BODY', 'message `to` must be a participant id');
     }
+    const ref = body['ref'];
+    if (ref !== undefined && typeof ref !== 'string') {
+      throw new DaemonError('MALFORMED_BODY', 'message `ref` must be a string');
+    }
+
+    // The cap is enforced here rather than in each tool so both tiers get it:
+    // the shell CLI and the MCP facade are two spellings of one interface, and
+    // beacon-1 showed what happens when they drift.
+    const oversize = refuseOversizeBody(text, ctx.who);
+    if (oversize !== null) {
+      throw new DaemonError('MESSAGE_TOO_LONG', oversize);
+    }
 
     // Before membership and before the append, so `dm:leader~codex` and
     // `dm:codex~leader` cannot become two rooms holding one conversation.
@@ -958,6 +971,7 @@ class Daemon {
         room: canonical,
         body: text,
         ...(to === undefined ? {} : { to }),
+        ...(ref === undefined ? {} : { ref }),
       }),
     ];
   }

@@ -144,6 +144,7 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
       const decision = state.decisions.get(event.decisionId);
       if (decision) {
         state.decisions.set(event.decisionId, { ...decision, outcome: event.outcome });
+        bindOutcomeToClaim(state, decision, event.outcome);
       }
       return state;
     }
@@ -185,6 +186,34 @@ export function applyEvent(state: HubState, event: CrosstalkEvent): HubState {
  * it a claim that never carried any evidence would reopen on the first stale
  * event naming a sha it has never seen.
  */
+/**
+ * A ruling settles the claim it was opened about.
+ *
+ * The ladder escalates a dispute into a decision whose options are `uphold`
+ * and `withdraw`, and until this existed the outcome bound nothing: the claim
+ * stayed `contested`, `UNRESOLVED_CLAIMS` blocked the task forever, and the
+ * whole climb was advisory unless the losing side volunteered a concession.
+ *
+ * Only the two option outcomes carry. `claim_resolved` is the bookkeeping
+ * outcome `closeLadderIfResolved` writes *because* the claim already settled —
+ * folding it in here would be circular. A claim that settled on its own while
+ * the ladder was still open keeps its own resolution: the parties' agreement
+ * outranks a ruling that arrived after it.
+ */
+function bindOutcomeToClaim(state: HubState, decision: Decision, outcome: string): void {
+  if (decision.claimId === undefined) return;
+  if (outcome !== 'uphold' && outcome !== 'withdraw') return;
+
+  const claim = state.claims.get(decision.claimId);
+  if (claim === undefined || claim.state === 'resolved') return;
+
+  state.claims.set(decision.claimId, {
+    ...claim,
+    state: 'resolved',
+    resolution: outcome === 'uphold' ? 'upheld' : 'withdrawn',
+  });
+}
+
 function shouldReopen(claim: Claim): boolean {
   if (claim.state !== 'resolved') return false;
   if (claim.resolution === 'withdrawn' || claim.resolution === 'superseded') return false;

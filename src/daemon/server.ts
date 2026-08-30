@@ -359,6 +359,8 @@ class Daemon {
   readonly #subscribers = new Set<Subscriber>();
   readonly #delivered = new Map<ParticipantId, number>();
   #writeTail: Promise<unknown> = Promise.resolve();
+  /** Serializes whole write handlers, not just appends — see the call site. */
+  #handlerTail: Promise<unknown> = Promise.resolve();
   /**
    * Rung timers. Driven by appended events, so every path that enters a rung
    * arms one without each caller having to remember.
@@ -648,7 +650,16 @@ class Daemon {
 
     const body = await readJsonBody(request);
     rejectDerivedAuthorFields(body);
-    send(response, 201, { events: [...joined, ...(await handler(ctx, body))] } satisfies WriteResponse);
+    // Serialized: a handler validates against state and *then* appends, and two
+    // concurrent raises both computed `C-${claims.size + 1}` from the same
+    // snapshot — two distinct claims under one id, silently merged by the
+    // projection. The append queue cannot fix that on its own because the id is
+    // minted before the queue is reached; the validate-and-append pair has to
+    // be atomic. Loopback traffic from a handful of agents, so the serial write
+    // path costs nothing anyone can observe.
+    send(response, 201, {
+      events: [...joined, ...(await this.#enqueueWrite(() => handler(ctx, body)))],
+    } satisfies WriteResponse);
   }
 
   #writeHandler(
@@ -990,6 +1001,16 @@ class Daemon {
       events.push(await this.#append({ kind: 'participant_left', from: who, participantId: who }));
     }
     return events;
+  }
+
+  /**
+   * One write handler at a time. A failure must not poison the chain — the
+   * next writer runs whatever became of this one.
+   */
+  #enqueueWrite<T>(run: () => Promise<T>): Promise<T> {
+    const queued = this.#handlerTail.then(run);
+    this.#handlerTail = queued.catch(() => {});
+    return queued;
   }
 
   /** Every write funnels through here: one EventLog, one seq sequence, no gaps. */

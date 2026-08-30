@@ -90,7 +90,10 @@ export const TOOLS: ToolDefinition[] = [
         specRefs: { type: 'array', items: { type: 'string' } },
         deps: { type: 'array', items: { type: 'string' } },
         acceptance: { type: 'array', items: { type: 'string' } },
-        critique: { type: 'object' },
+        critique: {
+          type: 'object',
+          description: 'Required for done: {rounds, critic, findings}. findings may be [].',
+        },
       },
       required: ['kind'],
     },

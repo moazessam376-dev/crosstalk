@@ -89,11 +89,23 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   // command, and `up` started it anyway. A generator that emits what the
   // validator rejects is the bug, not the validator.
   const leaders = participants.filter((participant) => participant.role === 'leader');
-  if (leaders.length !== 1) {
+  const peers = participants.filter((participant) => participant.role === 'peer');
+  // Two shapes: led (exactly one leader, no peers) or flat (two or more peers,
+  // no leader). A flat roster has no task authority on purpose — peers
+  // coordinate on the board and no assign/accept machinery operates.
+  const flat = leaders.length === 0 && peers.length >= 2;
+  if (!flat && leaders.length !== 1) {
     throw new CliError(
-      `LEADER_COUNT: Expected exactly one leader participant, found ${leaders.length}.`,
+      `LEADER_COUNT: Expected exactly one leader participant (or a flat roster of two or more peers), found ${leaders.length} leader(s) and ${peers.length} peer(s).`,
       EXIT.protocol,
-      'Configure exactly one participant with role: leader; all other agents should be workers or observers.',
+      'Configure exactly one participant with role: leader, or an all-peer roster with no leader.',
+    );
+  }
+  if (flat === false && peers.length > 0) {
+    throw new CliError(
+      `LEADER_COUNT: A roster is led or flat, not both — found ${leaders.length} leader(s) alongside ${peers.length} peer(s).`,
+      EXIT.protocol,
+      'Use worker seats under a leader, or make every builder a peer and remove the leader.',
     );
   }
   const config: CrosstalkConfig = {
@@ -748,8 +760,8 @@ function parseParticipants(specs: string[]): Participant[] {
         'Use --participant id:role:harness[:model[:effort]], for example --participant codex:worker:codex-app:luna-5.6:high',
       );
     }
-    if (!['leader', 'worker', 'observer', 'human', 'spoc'].includes(role)) {
-      throw new CliError(`Unknown role "${role}" in "${spec}"`, EXIT.usage, 'Roles: leader, worker, observer, human, spoc.');
+    if (!['leader', 'worker', 'observer', 'human', 'spoc', 'peer'].includes(role)) {
+      throw new CliError(`Unknown role "${role}" in "${spec}"`, EXIT.usage, 'Roles: leader, worker, observer, human, spoc, peer.');
     }
     return {
       id,

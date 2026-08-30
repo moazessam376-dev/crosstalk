@@ -9,7 +9,7 @@ const VERSION_PLACEHOLDER = '<!-- crosstalk brief version: {{briefVersion}} -->'
 const VERSION_MARKER = /<!-- crosstalk brief version: ct-brief-[0-9a-f]{8} -->/g;
 const TOKEN = /\{\{([A-Za-z][A-Za-z0-9_]*)\}\}/g;
 
-function readTemplate(name: 'leader' | 'worker' | 'spoc'): string {
+function readTemplate(name: 'leader' | 'worker' | 'spoc' | 'peer'): string {
   const candidates = [
     new URL(`./templates/${name}.md`, import.meta.url),
     new URL(`../../src/harness/templates/${name}.md`, import.meta.url),
@@ -160,7 +160,13 @@ export function renderBrief(
   repo: string,
 ): string {
   const template = readTemplate(
-    participant.role === 'leader' ? 'leader' : participant.role === 'spoc' ? 'spoc' : 'worker',
+    participant.role === 'leader'
+      ? 'leader'
+      : participant.role === 'spoc'
+        ? 'spoc'
+        : participant.role === 'peer'
+          ? 'peer'
+          : 'worker',
   );
   const draft = replaceTokens(template, {
     briefVersion: '{{briefVersion}}',

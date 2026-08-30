@@ -1,4 +1,4 @@
-# Team OS and the Cinder bench
+# Team OS and the Vault bench
 
 Settled in the 2026-08-31 grilling session, on evidence from the beacon-1
 post-mortem and two primary-source research notes in `docs/research/`.
@@ -32,7 +32,7 @@ Two findings from the research bound what a fix can achieve:
 | Goal | Higher ceiling — tasks a solo run cannot finish well. Not cheaper-tie. |
 | Success | Core acceptance met bug-free, then judged on quality, graphics, gameplay. |
 | Writers | Three, each owning one system, behind a contract frozen before build. |
-| Benchmark | Own fixture (`bench/cinder`), two cells. No external benchmark. No GitHub *communication* arm — but the team cell uses a GitHub repo as merge plumbing. |
+| Benchmark | Own fixture (`bench/vault`), two cells. No external benchmark. No GitHub *communication* arm — but the team cell uses a GitHub repo as merge plumbing. |
 | Delivery | Full body up to a 1,500-char cap, plus an optional artifact reference. |
 | Presence | Harness hooks first; supervised stream later behind the same seam. |
 | Gates | Mechanical on phase transitions only. Free inside each phase. |
@@ -119,9 +119,9 @@ were wrong. One presence row would have prevented the duplicated build.
 - `/presence` route; sidebar rendering.
 - Brief rule: do not ping a seat holding active working-state.
 
-### W5 — Cinder fixture
+### W5 — Vault fixture
 
-`bench/cinder/JOB.md` is written. Still needed, byte-identical for both cells:
+`bench/vault/JOB.md` is written. Still needed, byte-identical for both cells:
 `package.json`, `vite.config.ts`, `tsconfig.json`, `vitest.config.ts`,
 `index.html`, a `src/main.ts` stub, and a seed test. Freeze the fixture SHA and
 record it.
@@ -141,7 +141,7 @@ this repo, so `CLAUDE.md`, `AGENTS.md` and `CONTEXT.md` were in scope, and
 auto-memory now carries a beacon-1 results file that a fresh session in this
 project loads on its own. That is the contamination vector, not the game design.
 
-1. Run both cells outside the Crosstalk tree — `~/bench/cinder-1/{solo,team}`.
+1. Run both cells outside the Crosstalk tree — `~/bench/vault-1/{solo,team}`.
 2. No `CLAUDE.md` or `AGENTS.md` in the fixture beyond the seat brief.
 3. Launch seats with `--bare` (or an explicit `--settings`) to skip auto-memory
    and `CLAUDE.md` auto-discovery.

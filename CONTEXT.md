@@ -74,10 +74,10 @@ Two runtime dependencies. No native modules. Append-only log. Order by `seq`. Wi
 
 1. Delivery — the one measured defect, and the smallest change.
 2. Collapse the agent-facing coordination module into Team Shape + the phase machine. Presence alongside it.
-3. Benchmark (`bench/cinder`), which needs 1 and 2 to be worth running.
+3. Benchmark (`bench/vault`), which needs 1 and 2 to be worth running.
 4. Then the launcher, downstream of Team Shape; it does not gate a run.
 
-Full plan: `docs/plans/2026-08-31-team-os-and-cinder-bench.md`.
+Full plan: `docs/plans/2026-08-31-team-os-and-vault-bench.md`.
 
 ## Benchmark (partial)
 

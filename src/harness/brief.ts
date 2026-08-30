@@ -60,7 +60,7 @@ function transportInstructions(tier: Tier): string {
   // first thing every agent reads.
   if (tier === 'mcp') {
     return [
-      'Call `inbox()` first. If `job` is set, start or cut tasks. Do not wait when next is not idle.',
+      'Call `inbox()` first. If `job` is set, that is the work. If next is idle, wait.',
       '`act({kind:"ack"|"assign"|"done"|"accept"|"reject"})` for tasks. `claim({kind})` only for contradictions.',
       'Confirm `inbox()` says `you` is you before you write.',
     ].join('\n');

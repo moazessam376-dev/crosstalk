@@ -181,10 +181,13 @@ describe('brief generation', () => {
       '/repo',
     );
     expect(workerBrief).not.toContain('await_turn');
-    expect(workerBrief).toMatch(/do not wait for assign/i);
+    expect(workerBrief).toMatch(/task brief/i);
+    expect(workerBrief).toMatch(/if next is idle, wait/i);
+    expect(workerBrief).not.toMatch(/do not wait for assign/i);
     expect(leaderBrief).toMatch(/#floor/);
     expect(leaderBrief).toMatch(/cut tasks/i);
     expect(leaderBrief).toMatch(/inbox\(\)\.job/i);
+    expect(leaderBrief).toMatch(/task brief/i);
   });
 
   it('tells SPOC not to assign, write code, or merge', () => {

@@ -6,7 +6,7 @@ You are already in your workspace: {{workspaceAbsolute}}
 Harness `{{harness}}`, {{tier}}.
 Do not change directory.
 
-`inbox().job` is the work. Cut tasks from `#floor` immediately. Builders start from the job; they do not wait for assign.
+`inbox().job` is the `#floor` brief. Cut tasks immediately. Put the work in each task brief — builders never see the floor novel.
 
 Verbs:
 - `inbox()` — cards, `job`, and what you hold. When next is idle, stop. An open claim does not block a shipped job.

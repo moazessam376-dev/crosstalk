@@ -26,7 +26,11 @@ export interface Inbox {
   role: InboxRole;
   unread: InboxCard[];
   mine: InboxTask[];
-  /** Latest `#floor` body from `@human`. Not clipped — this is the job. */
+  /**
+   * The work this seat should start from. Leader / SPOC / human get the
+   * latest `@human` `#floor` body. A builder gets the brief of a task they
+   * hold — never the floor novel. That split is first-edit ceremony.
+   */
   job?: string;
   next?: string;
 }
@@ -47,13 +51,15 @@ export function renderInbox(args: {
   const mine = [...args.state.tasks.values()]
     .filter((task) => task.assignee === args.who)
     .map((task) => ({ id: task.id, title: task.title, state: task.state }));
-  const job = floorJob(args.state);
+  const floor = floorJob(args.state);
+  const held = heldTask(args.state, args.who);
+  const job = jobFor(args.role, floor, held);
   const submitted = [...args.state.tasks.values()]
     .filter((task) => task.state === 'submitted')
     .map((task) => task.id);
   const tasked = args.state.tasks.size > 0;
 
-  const next = nextLine(unread, mine, args.role, job, submitted, tasked);
+  const next = nextLine(unread, mine, args.role, floor, submitted, tasked);
   return {
     you: args.who,
     role: displayRole(args.role),
@@ -74,11 +80,30 @@ function floorJob(state: HubState): string | undefined {
   return body;
 }
 
+const ACTIVE_TASK: ReadonlySet<string> = new Set([
+  'assigned',
+  'acknowledged',
+  'in_progress',
+  'self_reviewed',
+]);
+
+function heldTask(state: HubState, who: ParticipantId) {
+  return [...state.tasks.values()].find((task) => task.assignee === who && ACTIVE_TASK.has(task.state));
+}
+
+function jobFor(role: Role, floor: string | undefined, held: { id: string; title: string; brief: string } | undefined): string | undefined {
+  if (role === 'worker') {
+    if (held === undefined) return undefined;
+    return `${held.id} ${held.title}\n\n${held.brief}`;
+  }
+  return floor;
+}
+
 function nextLine(
   unread: InboxCard[],
   mine: InboxTask[],
   role: Role,
-  job: string | undefined,
+  floor: string | undefined,
   submitted: string[],
   tasked: boolean,
 ): string | undefined {
@@ -86,13 +111,13 @@ function nextLine(
   if (assigned !== undefined) return assigned.summary;
   const held = mine.find((task) => task.state === 'assigned' || task.state === 'acknowledged');
   if (held !== undefined) return `${held.id} is assigned to you`;
+  if (role === 'worker' && mine.length === 0) return 'idle';
   if ((role === 'leader' || role === 'spoc' || role === 'human') && submitted[0] !== undefined) {
     return `${submitted[0]} is submitted — accept`;
   }
-  if (job !== undefined && role === 'leader' && !tasked) return 'cut tasks from #floor';
-  if (job !== undefined && role === 'worker' && mine.length === 0) return 'job on #floor — start';
-  // After the job is tasked and accepted, an open claim is not more work.
-  // Loop 3's leader stayed in court after act.accept because next was the claim.
+  if (floor !== undefined && role === 'leader' && !tasked) return 'cut tasks from #floor';
+  // Builders wait for assign. next stays `idle` so GET /inbox still blocks.
+  // "job on #floor — start" made them read the novel and lose first-edit ceremony.
   if (role === 'leader' && tasked && submitted.length === 0) return 'idle';
   const claim = unread.find((card) => card.kind === 'claim');
   if (claim !== undefined) return claim.summary;

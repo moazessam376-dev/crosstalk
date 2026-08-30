@@ -7,7 +7,7 @@ export type ParticipantId = string;
  * party to: a reviewer's whole purpose is to speak, and it needs its own brief
  * telling it explicitly not to implement.
  */
-export type Role = 'leader' | 'worker' | 'observer' | 'human' | 'plan_reviewer';
+export type Role = 'leader' | 'worker' | 'observer' | 'human' | 'plan_reviewer' | 'spoc';
 
 /**
  * How a participant reaches the hub. Descending fidelity: `mcp` validates

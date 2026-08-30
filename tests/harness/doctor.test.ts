@@ -193,6 +193,61 @@ describe('rules that keep a config from stranding work', () => {
     }
   }, 60_000);
 
+  it('rejects method: spoc without a delegate, and accepts a named SPOC', async () => {
+    const missing = cfg({
+      participants: [
+        participant('leader', 'leader'),
+        participant('w', 'worker'),
+        participant('spoc', 'spoc'),
+      ],
+      taskAcceptance: 'spoc',
+    });
+    expect(await doctor(missing, repo)).toContainEqual(
+      expect.objectContaining({ level: 'reject', code: 'SPOC_DELEGATE_MISSING' }),
+    );
+
+    const ok = cfg({
+      participants: [
+        participant('leader', 'leader'),
+        participant('w', 'worker'),
+        participant('spoc', 'spoc'),
+      ],
+    });
+    ok.policy.taskAcceptance = { method: 'spoc', delegate: 'spoc' };
+    const codes = (await doctor(ok, repo)).map((finding) => finding.code);
+    expect(codes).not.toContain('SPOC_DELEGATE_MISSING');
+    expect(codes).not.toContain('SPOC_IS_LEADER');
+  }, 60_000);
+
+  it('rejects two SPOC seats', async () => {
+    const two = cfg({
+      participants: [
+        participant('leader', 'leader'),
+        participant('w', 'worker'),
+        participant('spoc', 'spoc'),
+        participant('other', 'spoc'),
+      ],
+    });
+    expect(await doctor(two, repo)).toContainEqual(
+      expect.objectContaining({ level: 'reject', code: 'SPOC_COUNT' }),
+    );
+
+    const one = cfg({
+      participants: [participant('leader', 'leader'), participant('w', 'worker'), participant('spoc', 'spoc')],
+    });
+    expect((await doctor(one, repo)).map((finding) => finding.code)).not.toContain('SPOC_COUNT');
+  }, 60_000);
+
+  it('rejects a SPOC delegate who is the leader', async () => {
+    const collided = cfg({
+      participants: [participant('leader', 'leader'), participant('w', 'worker')],
+    });
+    collided.policy.taskAcceptance = { method: 'spoc', delegate: 'leader' };
+    expect(await doctor(collided, repo)).toContainEqual(
+      expect.objectContaining({ level: 'reject', code: 'SPOC_IS_LEADER' }),
+    );
+  }, 60_000);
+
   it('reserves the id `crosstalk`, as it reserves `human`', async () => {
     const reserved = cfg({ participants: [participant('crosstalk', 'leader'), participant('w', 'worker')] });
     expect(await doctor(reserved, repo)).toContainEqual(

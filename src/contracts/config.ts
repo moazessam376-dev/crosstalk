@@ -1,5 +1,8 @@
-import type { Participant } from './participant.js';
+import type { Participant, ParticipantId } from './participant.js';
 import type { DecisionMethod, LadderRung } from './decision.js';
+
+/** Who may move a task to `accepted`. `spoc` is the named team-OS amendment. */
+export type TaskAcceptanceMethod = DecisionMethod | 'spoc';
 
 export interface ProjectConfig {
   /** Repo root, relative to the config file. */
@@ -40,7 +43,12 @@ export interface PolicyConfig {
     rungTimeouts: Partial<Record<LadderRung, Duration>>;
   };
   taskAcceptance: {
-    method: DecisionMethod;
+    method: TaskAcceptanceMethod;
+    /**
+     * Required when `method` is `spoc`. The participant who may accept.
+     * Absent on every config written before the team-OS amendment.
+     */
+    delegate?: ParticipantId;
   };
 }
 

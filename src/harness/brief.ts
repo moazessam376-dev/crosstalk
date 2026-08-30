@@ -61,7 +61,7 @@ function transportInstructions(tier: Tier): string {
   if (tier === 'mcp') {
     return [
       'Call `inbox()` first. If `job` is set, start or cut tasks. Do not wait when next is not idle.',
-      '`act({kind:"ack"|"assign"|"done"})` for tasks. `claim({kind})` only for contradictions.',
+      '`act({kind:"ack"|"assign"|"done"|"accept"|"reject"})` for tasks. `claim({kind})` only for contradictions.',
       'Confirm `inbox()` says `you` is you before you write.',
     ].join('\n');
   }

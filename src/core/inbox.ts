@@ -48,8 +48,11 @@ export function renderInbox(args: {
     .filter((task) => task.assignee === args.who)
     .map((task) => ({ id: task.id, title: task.title, state: task.state }));
   const job = floorJob(args.state);
+  const submitted = [...args.state.tasks.values()]
+    .filter((task) => task.state === 'submitted')
+    .map((task) => task.id);
 
-  const next = nextLine(unread, mine, args.role, job);
+  const next = nextLine(unread, mine, args.role, job, submitted);
   return {
     you: args.who,
     role: displayRole(args.role),
@@ -70,13 +73,22 @@ function floorJob(state: HubState): string | undefined {
   return body;
 }
 
-function nextLine(unread: InboxCard[], mine: InboxTask[], role: Role, job: string | undefined): string | undefined {
+function nextLine(
+  unread: InboxCard[],
+  mine: InboxTask[],
+  role: Role,
+  job: string | undefined,
+  submitted: string[],
+): string | undefined {
   const assigned = unread.find((card) => card.kind === 'assigned');
   if (assigned !== undefined) return assigned.summary;
   const claim = unread.find((card) => card.kind === 'claim');
   if (claim !== undefined) return claim.summary;
   const held = mine.find((task) => task.state === 'assigned' || task.state === 'acknowledged');
   if (held !== undefined) return `${held.id} is assigned to you`;
+  if ((role === 'leader' || role === 'spoc' || role === 'human') && submitted[0] !== undefined) {
+    return `${submitted[0]} is submitted — accept`;
+  }
   if (job !== undefined) {
     if (role === 'leader') return 'cut tasks from #floor';
     if (role === 'worker') return 'job on #floor — start';

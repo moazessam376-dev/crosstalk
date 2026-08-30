@@ -74,11 +74,11 @@ export const TOOLS: ToolDefinition[] = [
 
   {
     name: 'act',
-    description: 'Task lifecycle: ack, assign (leader), or done. Court is claim, not this.',
+    description: 'Task lifecycle: ack, assign, done, accept, or reject. Court is claim, not this.',
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['ack', 'assign', 'done'] },
+        kind: { type: 'string', enum: ['ack', 'assign', 'done', 'accept', 'reject'] },
         taskId: { type: 'string' },
         restatement: { type: 'string', description: 'One line is enough. Required for ack.' },
         ambiguities: { type: 'array', items: { type: 'string' } },
@@ -158,6 +158,17 @@ async function invokeAct(client: DaemonClient, args: Record<string, unknown>): P
       state: 'submitted',
     });
     return { events: [...submit.events, ...submitted.events] };
+  }
+  if (kind === 'accept') {
+    const { taskId } = args;
+    return client.post<WriteResponse>(`/tasks/${encodeURIComponent(String(taskId))}/state`, { state: 'accepted' });
+  }
+  if (kind === 'reject') {
+    const { taskId, restatement } = args;
+    return client.post<WriteResponse>(`/tasks/${encodeURIComponent(String(taskId))}/state`, {
+      state: 'in_progress',
+      reason: typeof restatement === 'string' && restatement !== '' ? restatement : 'rejected',
+    });
   }
   throw new Error(`Unknown act kind: ${String(kind)}`);
 }

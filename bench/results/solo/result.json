@@ -6,9 +6,9 @@
   "seedVisible": true,
   "contradictionNamed": true,
   "vacuousGreenWin": false,
-  "wallClockSeconds": 205,
+  "wallClockSeconds": 169,
   "blockedWaitSeconds": 0,
   "ceremonyTokensBeforeFirstEdit": 450,
   "operatorMinutes": 1,
-  "lookNote": "App() HTML: <header data-resolved-count=\"2\">2 resolved</header><ul><li data-id=\"D-2\">Keep the log append-only</li><li data-id=\"D-3\">Four tools on the agent surface</li><li data-id=\"D-5\">Hide resolved rows in the list</li></ul> Open seeds visible; D-1/D-4 hidden. Independent npm typecheck/test/build pass (10 tests)."
+  "lookNote": "App() HTML: header 2 resolved, list D-2 D-3 D-5. Independent typecheck/test(12)/build pass."
 }

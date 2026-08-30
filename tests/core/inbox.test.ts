@@ -134,6 +134,36 @@ describe('renderInbox', () => {
     expect(inbox.next).toBe('idle');
   });
 
+  it('tells the leader to accept a submitted task', () => {
+    const job = 'Build Quorum';
+    let state = project([]);
+    state = applyEvent(state, message({ seq: 1, from: '@human', body: job }));
+    state = applyEvent(state, {
+      kind: 'task_created',
+      seq: 2,
+      ts: '2026-08-30T00:00:00.000Z',
+      from: 'leader',
+      room: 'task:T-01',
+      task: {
+        id: 'T-01',
+        title: 'Wire seed',
+        brief: 'do it',
+        specRefs: [],
+        assignee: 'codex',
+        deps: [],
+        acceptance: [],
+        state: 'submitted',
+        branch: 'main',
+      },
+    });
+    const lead = renderInbox({ who: 'leader', role: 'leader', unread: [], state });
+    expect(lead.job).toBe(job);
+    expect(lead.next).toBe('T-01 is submitted — accept');
+
+    const builder = renderInbox({ who: 'codex', role: 'worker', unread: [], state });
+    expect(builder.next).toBe('job on #floor — start');
+  });
+
   it('prefers an assigned task over the floor job for next', () => {
     const job = 'Build Quorum';
     let state = project([]);

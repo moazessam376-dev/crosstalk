@@ -6,9 +6,9 @@
   "seedVisible": true,
   "contradictionNamed": true,
   "vacuousGreenWin": false,
-  "wallClockSeconds": 271,
-  "blockedWaitSeconds": 39,
-  "ceremonyTokensBeforeFirstEdit": 2200,
+  "wallClockSeconds": 206,
+  "blockedWaitSeconds": 0,
+  "ceremonyTokensBeforeFirstEdit": 700,
   "operatorMinutes": 6,
-  "lookNote": "Same App() HTML as the other cells. C-1 named hide-resolved vs header count on the board. Builder shipped App() at 02:11:29 after eight idle inbox polls; leader assigned T-01 at 02:11:49. T-01 never acked. Independent npm typecheck/test/build pass (7 tests)."
+  "lookNote": "Same visible seed HTML. C-1 accepted on the board. Builder acked and submitted T-01 (loop-1 did not). Leader could not accept via act and reopened submitted tasks. Independent typecheck/test(7)/build pass."
 }

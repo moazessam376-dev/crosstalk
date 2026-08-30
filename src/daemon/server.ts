@@ -841,12 +841,18 @@ class Daemon {
 
   async #inboxTurn(who: ParticipantId, url: URL): Promise<Inbox> {
     const wait = url.searchParams.get('wait') !== '0';
-    const query = new URL(url.href);
-    if (!wait) query.searchParams.set('timeout_s', '0');
-    const awaited = await this.#awaitTurn(who, query);
-    const unread = 'events' in awaited ? awaited.events : [];
     const role = this.#config.participants.find((participant) => participant.id === who)?.role ?? 'observer';
-    return renderInbox({ who, role, unread, state: this.#state });
+    const peek = new URL(url.href);
+    peek.searchParams.set('timeout_s', '0');
+    const peeked = await this.#awaitTurn(who, peek);
+    const unread = 'events' in peeked ? peeked.events : [];
+    const inbox = renderInbox({ who, role, unread, state: this.#state });
+    // A #floor job or an assigned task is already work. Waiting 50s after that
+    // is how the Quorum builder spent eight polls idle while the job sat on the board.
+    if (unread.length > 0 || !wait || inbox.next !== 'idle') return inbox;
+    const blocked = await this.#awaitTurn(who, url);
+    const later = 'events' in blocked ? blocked.events : [];
+    return renderInbox({ who, role, unread: later, state: this.#state });
   }
 
   /**

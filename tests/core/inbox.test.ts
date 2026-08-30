@@ -107,5 +107,57 @@ describe('renderInbox', () => {
     });
     expect(inbox.next).toBe('idle');
     expect(inbox.unread).toEqual([]);
+    expect(inbox.job).toBeUndefined();
+  });
+
+  it('keeps the @human #floor job after the card is read, and does not say idle', () => {
+    const job = '# Quorum\n\nHide resolved rows. The header shows a resolved count.';
+    let state = project([]);
+    state = applyEvent(state, message({ seq: 1, from: '@human', body: job }));
+    state = applyEvent(state, message({ seq: 2, from: 'leader', body: 'cutting tasks' }));
+
+    const builder = renderInbox({ who: 'codex', role: 'worker', unread: [], state });
+    expect(builder.job).toBe(job);
+    expect(builder.next).toBe('job on #floor — start');
+    expect(builder.unread).toEqual([]);
+
+    const lead = renderInbox({ who: 'leader', role: 'leader', unread: [], state });
+    expect(lead.job).toBe(job);
+    expect(lead.next).toBe('cut tasks from #floor');
+  });
+
+  it('does not treat a teammate #floor post as the job', () => {
+    let state = project([]);
+    state = applyEvent(state, message({ seq: 1, from: 'leader', body: 'not the job' }));
+    const inbox = renderInbox({ who: 'codex', role: 'worker', unread: [], state });
+    expect(inbox.job).toBeUndefined();
+    expect(inbox.next).toBe('idle');
+  });
+
+  it('prefers an assigned task over the floor job for next', () => {
+    const job = 'Build Quorum';
+    let state = project([]);
+    state = applyEvent(state, message({ seq: 1, from: '@human', body: job }));
+    state = applyEvent(state, {
+      kind: 'task_created',
+      seq: 2,
+      ts: '2026-08-30T00:00:00.000Z',
+      from: 'leader',
+      room: 'task:T-01',
+      task: {
+        id: 'T-01',
+        title: 'Wire seed',
+        brief: 'do it',
+        specRefs: [],
+        assignee: 'codex',
+        deps: [],
+        acceptance: [],
+        state: 'assigned',
+        branch: 'main',
+      },
+    });
+    const inbox = renderInbox({ who: 'codex', role: 'worker', unread: [], state });
+    expect(inbox.job).toBe(job);
+    expect(inbox.next).toBe('T-01 is assigned to you');
   });
 });

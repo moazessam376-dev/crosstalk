@@ -1,0 +1,14 @@
+{
+  "cell": "github",
+  "typecheck": "pass",
+  "test": "pass",
+  "build": "pass",
+  "seedVisible": true,
+  "contradictionNamed": true,
+  "vacuousGreenWin": false,
+  "wallClockSeconds": 204,
+  "blockedWaitSeconds": 0,
+  "ceremonyTokensBeforeFirstEdit": 900,
+  "operatorMinutes": 3,
+  "lookNote": "Same App() HTML as solo (D-2/D-3/D-5 visible, header 2 resolved). Contradiction named in REVIEW.md by alex and casey. Independent npm typecheck/test/build pass (6 tests)."
+}

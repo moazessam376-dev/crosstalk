@@ -1,5 +1,6 @@
 import type { CrosstalkEvent } from '../contracts/events.js';
 import type { ParticipantId, Role } from '../contracts/participant.js';
+import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import type { HubState } from './projection.js';
 
 export type InboxRole = 'leader' | 'builder' | 'spoc' | 'observer' | 'human' | 'plan_reviewer';
@@ -25,6 +26,8 @@ export interface Inbox {
   role: InboxRole;
   unread: InboxCard[];
   mine: InboxTask[];
+  /** Latest `#floor` body from `@human`. Not clipped — this is the job. */
+  job?: string;
   next?: string;
 }
 
@@ -44,24 +47,40 @@ export function renderInbox(args: {
   const mine = [...args.state.tasks.values()]
     .filter((task) => task.assignee === args.who)
     .map((task) => ({ id: task.id, title: task.title, state: task.state }));
+  const job = floorJob(args.state);
 
-  const next = nextLine(unread, mine);
+  const next = nextLine(unread, mine, args.role, job);
   return {
     you: args.who,
     role: displayRole(args.role),
     unread,
     mine,
+    ...(job === undefined ? {} : { job }),
     ...(next === undefined ? {} : { next }),
   };
 }
 
-function nextLine(unread: InboxCard[], mine: InboxTask[]): string | undefined {
+function floorJob(state: HubState): string | undefined {
+  let body: string | undefined;
+  for (const event of state.messages) {
+    if (event.kind === 'message' && event.room === FLOOR && event.from === HUMAN_ID) {
+      body = event.body;
+    }
+  }
+  return body;
+}
+
+function nextLine(unread: InboxCard[], mine: InboxTask[], role: Role, job: string | undefined): string | undefined {
   const assigned = unread.find((card) => card.kind === 'assigned');
   if (assigned !== undefined) return assigned.summary;
   const claim = unread.find((card) => card.kind === 'claim');
   if (claim !== undefined) return claim.summary;
   const held = mine.find((task) => task.state === 'assigned' || task.state === 'acknowledged');
   if (held !== undefined) return `${held.id} is assigned to you`;
+  if (job !== undefined) {
+    if (role === 'leader') return 'cut tasks from #floor';
+    if (role === 'worker') return 'job on #floor — start';
+  }
   if (unread.length === 0) return 'idle';
   return undefined;
 }

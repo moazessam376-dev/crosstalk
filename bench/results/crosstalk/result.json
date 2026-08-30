@@ -1,0 +1,14 @@
+{
+  "cell": "crosstalk",
+  "typecheck": "pass",
+  "test": "pass",
+  "build": "pass",
+  "seedVisible": true,
+  "contradictionNamed": true,
+  "vacuousGreenWin": false,
+  "wallClockSeconds": 271,
+  "blockedWaitSeconds": 39,
+  "ceremonyTokensBeforeFirstEdit": 2200,
+  "operatorMinutes": 6,
+  "lookNote": "Same App() HTML as the other cells. C-1 named hide-resolved vs header count on the board. Builder shipped App() at 02:11:29 after eight idle inbox polls; leader assigned T-01 at 02:11:49. T-01 never acked. Independent npm typecheck/test/build pass (7 tests)."
+}

@@ -9,7 +9,7 @@ Do not change directory.
 {{workspaceRules}}
 
 Verbs:
-- `inbox()` — unread cards and your tasks. Call again if next is idle.
+- `inbox()` — cards, tasks, and `job` (the #floor brief). Start that job. Do not wait for assign. Call again only if next is idle.
 - `say(room, body)` — board post. Use `to` to wake someone.
 - `act({kind:"ack"|"done"})` — one-line ack, then done. Empty findings are legal.
 - `claim({kind})` — court only, when two statements cannot both be true.

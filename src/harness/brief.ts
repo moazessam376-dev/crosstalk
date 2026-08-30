@@ -60,7 +60,7 @@ function transportInstructions(tier: Tier): string {
   // first thing every agent reads.
   if (tier === 'mcp') {
     return [
-      'Call `inbox()` when idle. `say(room, body)` to speak.',
+      'Call `inbox()` first. If `job` is set, start or cut tasks. Do not wait when next is not idle.',
       '`act({kind:"ack"|"assign"|"done"})` for tasks. `claim({kind})` only for contradictions.',
       'Confirm `inbox()` says `you` is you before you write.',
     ].join('\n');
@@ -69,7 +69,7 @@ function transportInstructions(tier: Tier): string {
   if (tier === 'shell') {
     return [
       'Use the Crosstalk shell CLI; validation failures are reported by exit code.',
-      '- `crosstalk inbox --as ID` waits for cards that address you.',
+      '- `crosstalk inbox --as ID` returns cards now. Pass `--timeout 50` only to wait.',
       '- `crosstalk say --as ID --room \'#floor\' --body "..."`',
       '- `crosstalk act --as ID --kind ack --task T-01 --restatement "..."`',
       '- `crosstalk claim --as ID --against leader --target src/file.ts:1 --assertion "..." --falsifier "..."`',

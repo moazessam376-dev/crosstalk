@@ -160,7 +160,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   await ensureWorkspaces(repo, participants);
   const mcp = await writeMcpConfigs(repo, participants);
   await ensureGitignored(repo);
-  await writeBriefs(repo, participants, config.policy);
+  await writeBriefs(repo, participants, config.policy, config.shape);
 
   return { configPath, mcp, tokens, config, kickoff: await kickoffLines(repo, participants) };
 }
@@ -471,6 +471,7 @@ async function writeBriefs(
   repo: string,
   participants: Participant[],
   policy: CrosstalkConfig['policy'],
+  shape?: string,
 ): Promise<void> {
   let registry: Map<string, HarnessDescriptor>;
   try {
@@ -486,7 +487,7 @@ async function writeBriefs(
     if (descriptor === undefined) continue;
 
     const tier = participant.transport ?? (await probeTier(descriptor, resolve(repo, participant.workspace)));
-    await writeBrief(participant, descriptor, policy, tier, repo);
+    await writeBrief(participant, descriptor, policy, tier, repo, shape);
   }
 }
 

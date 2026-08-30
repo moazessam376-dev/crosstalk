@@ -2,6 +2,7 @@ import type { CrosstalkEvent } from '../contracts/events.js';
 import type { ParticipantId, Role } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import type { HubState } from './projection.js';
+import type { PhaseStatus } from './phase.js';
 
 export type InboxRole = 'leader' | 'builder' | 'spoc' | 'observer' | 'human' | 'plan_reviewer' | 'peer';
 
@@ -47,6 +48,14 @@ export interface Inbox {
    */
   job?: string;
   next?: string;
+  /**
+   * Where the team is, and what is stopping the next phase.
+   *
+   * Delivered with every turn rather than behind a fifth verb: the seat is told
+   * the rule when it is about to act, which is the only moment a rule changes
+   * anything. Absent when the roster names no shape.
+   */
+  phase?: PhaseStatus;
 }
 
 const SUMMARY_LIMIT = 120;
@@ -76,6 +85,7 @@ export function renderInbox(args: {
   role: Role;
   unread: CrosstalkEvent[];
   state: HubState;
+  phase?: PhaseStatus;
 }): Inbox {
   const unread = args.unread.map(cardFor);
   const mine = [...args.state.tasks.values()]
@@ -89,7 +99,9 @@ export function renderInbox(args: {
     .map((task) => task.id);
   const tasked = args.state.tasks.size > 0;
 
-  const next = nextLine(unread, mine, args.role, floor, submitted, tasked);
+  const next = args.phase === undefined
+    ? nextLine(unread, mine, args.role, floor, submitted, tasked)
+    : phaseLine(args.phase);
   return {
     you: args.who,
     role: displayRole(args.role),
@@ -97,6 +109,7 @@ export function renderInbox(args: {
     mine,
     ...(job === undefined ? {} : { job }),
     ...(next === undefined ? {} : { next }),
+    ...(args.phase === undefined ? {} : { phase: args.phase }),
   };
 }
 
@@ -127,6 +140,18 @@ function jobFor(role: Role, floor: string | undefined, held: { id: string; title
     return `${held.id} ${held.title}\n\n${held.brief}`;
   }
   return floor;
+}
+
+/**
+ * With a shape, `next` is the phase — not a guess assembled from role and
+ * inbox shape. The blocking reason comes with it, because "you are in build"
+ * without "waiting on sonnet" sends the seat to ask on the board, which is the
+ * traffic the shape exists to remove.
+ */
+function phaseLine(phase: PhaseStatus): string {
+  if (phase.complete) return 'every gate is met';
+  if (phase.blocking.length === 0) return `${phase.id} — ready to advance`;
+  return `${phase.id}: ${phase.blocking.join('; ')}`;
 }
 
 function nextLine(

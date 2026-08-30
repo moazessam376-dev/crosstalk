@@ -400,6 +400,7 @@ async function checkParticipant(
   policy: CrosstalkConfig['policy'],
   tier: 'mcp' | 'shell' | 'file',
   repoRoot: string,
+  shape?: string,
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
   const workspace = resolve(repoRoot, participant.workspace);
@@ -475,7 +476,7 @@ async function checkParticipant(
   // workspace absolutely, and this comparison is byte-for-byte — passing a
   // different root here would put BRIEF_STALE on every participant, on every
   // `doctor` and every `up` preflight.
-  const expected = renderBrief(participant, descriptor, policy, tier, repoRoot);
+  const expected = renderBrief(participant, descriptor, policy, tier, repoRoot, shape);
   if (actual === undefined || actual.replaceAll('\r\n', '\n') !== expected) {
     findings.push(finding(
       'warn',
@@ -697,7 +698,7 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
       }
     }
 
-    findings.push(...await checkParticipant(participant, descriptor, config.policy, tier, repoRoot));
+    findings.push(...await checkParticipant(participant, descriptor, config.policy, tier, repoRoot, config.shape));
   }
 
   // CT-17. `init` accepts `--participant id:role:harness[:model[:effort]]` and the hub

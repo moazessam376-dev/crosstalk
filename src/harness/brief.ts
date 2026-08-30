@@ -4,6 +4,7 @@ import { readFileSync as readFileSyncFromFs } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import type { PolicyConfig, Participant, Tier } from '../contracts/index.js';
 import type { HarnessDescriptor } from './registry.js';
+import { shapeNamed } from '../core/shape.js';
 
 const VERSION_PLACEHOLDER = '<!-- crosstalk brief version: {{briefVersion}} -->';
 const VERSION_MARKER = /<!-- crosstalk brief version: ct-brief-[0-9a-f]{8} -->/g;
@@ -160,6 +161,14 @@ export function renderBrief(
   policy: PolicyConfig,
   tier: Tier,
   repo: string,
+  /**
+   * The team's shape, by name. Its fragment is appended rather than replacing
+   * the role template: the role says what a seat *is*, the shape says how this
+   * particular team works, and a project with no shape renders exactly the
+   * brief it did before. `doctor` compares briefs byte-for-byte, so this has to
+   * reach both writers or every participant reports BRIEF_STALE.
+   */
+  shape?: string,
 ): string {
   const template = readTemplate(
     participant.role === 'leader'
@@ -187,7 +196,17 @@ export function renderBrief(
     transportInstructions: transportInstructions(tier),
     workspaceRules: workspaceRules(participant),
   });
-  return draft.replaceAll('{{briefVersion}}', briefVersion(draft));
+  const fragment = shapeFragment(participant, shape);
+  const whole = fragment === undefined ? draft : `${draft.trimEnd()}\n\n## How this team works\n\n${fragment}\n`;
+  return whole.replaceAll('{{briefVersion}}', briefVersion(whole));
+}
+
+/** The shape's own words for this seat, or nothing when the roster names no shape. */
+function shapeFragment(participant: Participant, name: string | undefined): string | undefined {
+  const shape = shapeNamed(name);
+  if (shape === undefined) return undefined;
+  const seat = shape.seats.find((candidate) => candidate.role === participant.role);
+  return seat?.brief;
 }
 
 /**
@@ -267,8 +286,9 @@ export async function writeBrief(
   policy: PolicyConfig,
   tier: Tier,
   repo: string,
+  shape?: string,
 ): Promise<void> {
-  const content = renderBrief(participant, descriptor, policy, tier, repo);
+  const content = renderBrief(participant, descriptor, policy, tier, repo, shape);
   const destination = resolve(repo, participant.workspace, briefPathFor(participant, descriptor.briefFile, repo));
   const directory = dirname(destination);
   await mkdir(directory, { recursive: true });

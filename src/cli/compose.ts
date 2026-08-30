@@ -2,12 +2,14 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parse, stringify } from 'yaml';
 
-import { HUMAN_ID } from '../contracts/room.js';
+import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import type { Participant } from '../contracts/participant.js';
 import { loadConfig } from '../daemon/config.js';
 import { loadRegistry, type HarnessDescriptor } from '../harness/registry.js';
 import { probeCliHarnesses, type PathProbe } from '../harness/path.js';
-import { spawnSupervised, type ExecFile } from '../harness/runner.js';
+import { boardTurn, driveSupervised, spawnSupervised, type ExecFile } from '../harness/runner.js';
+import { openSession, type SpawnProcess } from '../harness/session.js';
+import type { Inbox } from '../core/inbox.js';
 import { CliError, DaemonClient, EXIT, type WriteResult } from './client.js';
 import { runInit } from './init.js';
 
@@ -20,6 +22,8 @@ export interface ComposeOptions {
   spawn?: (argv: string[], cwd: string) => void;
   execFile?: ExecFile;
   postJob?: (repo: string, job: string) => Promise<void>;
+  /** Injected in tests, so supervision can be driven without a real binary. */
+  spawnProcess?: SpawnProcess;
 }
 
 export interface ComposeResult {
@@ -27,6 +31,14 @@ export interface ComposeResult {
   attached: string[];
   posted: boolean;
   harnesses: PathProbe[];
+  /** Seats that take a pushed turn, and so never sit in a poll loop. */
+  supervised: string[];
+  /**
+   * Runs the wake loops until every supervised seat exits. Returned rather than
+   * awaited so `runCompose` stays a function that returns: only the CLI, which
+   * owns the process lifetime, decides to block on it.
+   */
+  supervise: () => Promise<void>;
 }
 
 export function selectSpawnTargets(
@@ -84,20 +96,69 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
   }
 
   const spawned: string[] = [];
+  const supervised: string[] = [];
+  const loops: Array<() => Promise<void>> = [];
+
   for (const participant of spawn) {
-    const argv = registry.get(participant.harness)?.spawn;
+    const descriptor = registry.get(participant.harness);
+    const argv = descriptor?.spawn;
     if (argv === undefined) continue;
     const cwd = resolve(repo, participant.workspace);
-    const full = [...argv, job];
+
+    // The injected spawn is the test seam and stays a fire-and-forget call.
     if (options.spawn !== undefined) {
-      options.spawn(full, cwd);
-    } else {
-      spawnSupervised({ argv: full, cwd, execFile: options.execFile });
+      options.spawn([...argv, job], cwd);
+      spawned.push(participant.id);
+      continue;
     }
+
+    if (descriptor?.turnFormat === undefined) {
+      // No way in after start. Spawn it with the job as its prompt and let it
+      // pull — better than pretending every harness can be woken.
+      spawnSupervised({ argv: [...argv, job], cwd, execFile: options.execFile });
+      spawned.push(participant.id);
+      continue;
+    }
+
+    const session = openSession({
+      argv,
+      cwd,
+      first: job,
+      turnFormat: descriptor.turnFormat,
+      ...(options.spawnProcess === undefined ? {} : { spawn: options.spawnProcess }),
+    });
     spawned.push(participant.id);
+    supervised.push(participant.id);
+
+    loops.push(async () => {
+      const seat = await DaemonClient.open(repo, participant.id);
+      const human = await DaemonClient.open(repo, HUMAN_ID);
+      await driveSupervised({
+        // Long-poll. The seat is not asked to check anything: the wake arrives
+        // because something was said, which is the whole point of the change.
+        wait: () => seat.get<Inbox>('/inbox?timeout_s=50'),
+        write: (turn) => session.send(turn),
+        exited: session.exited,
+        formatTurn: boardTurn,
+        // A seat that dies silently is how beacon-1 lost twenty minutes to a
+        // teammate inferring, wrongly, that it was still working.
+        notify: async (body) => {
+          await human.post('/events', { kind: 'message', room: FLOOR, body: `${participant.id}: ${body}` });
+        },
+      });
+    });
   }
 
-  return { spawned, attached: attach.map((participant) => participant.id), posted: true, harnesses };
+  return {
+    spawned,
+    attached: attach.map((participant) => participant.id),
+    posted: true,
+    harnesses,
+    supervised,
+    supervise: async () => {
+      await Promise.all(loops.map((run) => run()));
+    },
+  };
 }
 
 async function markSupervised(repo: string): Promise<void> {

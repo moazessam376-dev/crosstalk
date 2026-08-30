@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
 import type { Tier } from '../contracts/index.js';
+import type { TurnFormat } from './session.js';
 
 export interface HarnessDescriptor {
   key: string;
@@ -12,6 +13,13 @@ export interface HarnessDescriptor {
   mcpConfigPath?: string;
   supervisable: boolean;
   spawn?: string[];
+  /**
+   * How this harness takes a turn once it is running. Absent means it cannot:
+   * it reads its prompt once, and a supervisor must fall back to letting the
+   * seat pull. Declared per harness because it is a property of the binary,
+   * not of Crosstalk.
+   */
+  turnFormat?: TurnFormat;
 }
 
 const MCP_KINDS = new Set<HarnessDescriptor['mcp']>(['stdio', 'http', 'unverified', 'none']);
@@ -45,6 +53,11 @@ function descriptorFrom(key: string, raw: unknown): HarnessDescriptor {
     throw new Error(`Harness ${key} has an invalid spawn command`);
   }
 
+  const turnFormat = raw.turnFormat;
+  if (turnFormat !== undefined && turnFormat !== 'stream-json') {
+    throw new Error(`Harness ${key} has an invalid turnFormat`);
+  }
+
   return {
     key,
     briefFile: requiredString(raw.briefFile, 'briefFile', key),
@@ -52,6 +65,7 @@ function descriptorFrom(key: string, raw: unknown): HarnessDescriptor {
     ...(mcpConfigPath === undefined ? {} : { mcpConfigPath }),
     supervisable: raw.supervisable === true,
     ...(spawn === undefined ? {} : { spawn: [...spawn] as string[] }),
+    ...(turnFormat === undefined ? {} : { turnFormat }),
   };
 }
 

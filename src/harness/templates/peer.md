@@ -9,7 +9,7 @@ Do not change directory.
 {{workspaceRules}}
 
 Verbs:
-- `inbox()` — cards and `job` (the `#floor` brief). Read it before every work step, not only when idle.
+- `inbox()` — cards and `job` (the `#floor` brief). New board traffic is delivered to you; call this when you want to re-read, not on a schedule.
 - `say(room, body)` — the board. Use `to` to wake someone.
 - `claim({kind})` — court only, when two statements cannot both be true.
 

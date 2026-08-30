@@ -192,10 +192,17 @@ async function cmdCompose(argv: string[]): Promise<number> {
       `${bold('Job posted')} on #floor as @human.`,
       result.spawned.length === 0 ? 'No CLI harnesses spawned.' : `Spawned: ${result.spawned.join(', ')}`,
       result.attached.length === 0 ? '' : `Attach: ${result.attached.join(', ')}`,
+      result.supervised.length === 0 ? '' : `Waking: ${result.supervised.join(', ')} — Ctrl-C to stop.`,
     ]
       .filter((line) => line !== '')
       .join('\n'),
   );
+
+  // Blocks while any seat can be woken: the loops are the delivery path, so
+  // returning here would leave those seats with nothing but their first turn.
+  if (result.supervised.length > 0 && flags['json'] !== true) {
+    await result.supervise();
+  }
   return EXIT.ok;
 }
 
@@ -678,6 +685,39 @@ async function cmdAwait(argv: string[]): Promise<number> {
   });
 }
 
+/**
+ * Where the team is, and what is stopping the next phase.
+ *
+ * A gate is only a rule if something reports it. `inbox()` carries the same
+ * status to the seats every turn; this is the operator's view of it, and the
+ * one that answers "why has nobody moved" without reading the board.
+ */
+async function cmdPhase(argv: string[]): Promise<number> {
+  return withClient(argv, {}, async (client, flags) => {
+    const phase = await client.get<{
+      id?: string;
+      intent?: string;
+      writes?: string;
+      complete?: boolean;
+      gates?: { id: string; need: string; met: boolean; missing?: string }[];
+    }>('/phase');
+
+    emit(phase, flags['json'] === true, () => {
+      if (phase.id === undefined) return 'No shape configured — add `shape:` to crosstalk.yaml.';
+      const lines = [
+        `${bold(phase.complete === true ? 'complete' : phase.id)} — ${phase.intent ?? ''}`,
+        `writes: ${phase.writes ?? 'unknown'}`,
+        '',
+      ];
+      for (const gate of phase.gates ?? []) {
+        lines.push(`${gate.met ? '✓' : '·'} ${gate.id} — ${gate.met ? 'met' : (gate.missing ?? gate.need)}`);
+      }
+      return lines.join('\n');
+    });
+    return EXIT.ok;
+  });
+}
+
 async function cmdRoster(argv: string[]): Promise<number> {
   return withClient(argv, {}, async (client, flags) => {
     const result = await client.get<{ participants: Record<string, string>[] }>('/roster');
@@ -818,6 +858,7 @@ const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   mine: cmdMine,
   task: cmdTask,
   dm: cmdDm,
+  phase: cmdPhase,
 };
 
 export const CLI_COMMANDS: readonly string[] = Object.keys(HANDLERS);

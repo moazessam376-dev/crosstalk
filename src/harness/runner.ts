@@ -38,6 +38,34 @@ export async function driveSupervised(args: {
   await Promise.race([loop, exit]);
 }
 
+/**
+ * A turn as prose, because a model reads it.
+ *
+ * `defaultTurn` hands over the raw inbox JSON, which was fine when a card was a
+ * 120-character summary and there was nothing else in it. Now that a card
+ * carries the whole message, the difference between a JSON blob and a readable
+ * turn is the difference between a seat skimming and a seat reading.
+ */
+export function boardTurn(inbox: Inbox): string {
+  const lines: string[] = ['Crosstalk board — new since your last turn.'];
+
+  for (const card of inbox.unread) {
+    const where = card.room === undefined ? '' : ` in ${card.room}`;
+    lines.push('', `[${card.seq}] ${card.from}${where} — ${card.kind}`);
+    lines.push(card.body ?? card.summary);
+    if (card.truncated === true) lines.push('(cut — read the log for the rest)');
+    if (card.ref !== undefined) lines.push(`ref: ${card.ref}`);
+  }
+
+  if (inbox.mine.length > 0) {
+    lines.push('', 'Yours:');
+    for (const task of inbox.mine) lines.push(`- ${task.id} ${task.title} (${task.state})`);
+  }
+
+  if (inbox.next !== undefined) lines.push('', `next: ${inbox.next}`);
+  return lines.join('\n');
+}
+
 export function defaultTurn(inbox: Inbox): string {
   return JSON.stringify({
     you: inbox.you,

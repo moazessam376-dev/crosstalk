@@ -272,6 +272,41 @@ describe('mcp tools against a real daemon', () => {
     });
   });
 
+  it('lets the leader accept a submitted task and refuses a worker', async () => {
+    await withDaemon(async (f) => {
+      await callTool(f.as('leader'), 'act', {
+        kind: 'assign',
+        id: 'T-04',
+        title: 'Ship it',
+        brief: 'Done.',
+        assignee: 'codex',
+        branch: 'ct/T-04',
+      });
+      await callTool(f.as('codex'), 'act', {
+        kind: 'ack',
+        taskId: 'T-04',
+        restatement: 'Ship it',
+      });
+      await f.as('codex').post('/tasks/T-04/state', { state: 'in_progress' });
+      await callTool(f.as('codex'), 'act', { kind: 'done', taskId: 'T-04' });
+
+      const waiting = payload(await callTool(f.as('leader'), 'inbox', { wait: false })) as { next?: string };
+      expect(waiting.next).toBe('T-04 is submitted — accept');
+
+      const worker = await callTool(f.as('codex'), 'act', { kind: 'accept', taskId: 'T-04' });
+      expect(worker.isError).toBe(true);
+      expect(text(worker)).toContain('NOT_TASK_AUTHORITY');
+
+      const accepted = await callTool(f.as('leader'), 'act', { kind: 'accept', taskId: 'T-04' });
+      expect(accepted.isError).toBeUndefined();
+      const inbox = payload(await callTool(f.as('leader'), 'inbox', { wait: false })) as {
+        next?: string;
+        mine: { id: string; state: string }[];
+      };
+      expect(inbox.next).not.toBe('T-04 is submitted — accept');
+    });
+  });
+
   it('refuses a task transition the table forbids instead of applying it', async () => {
     await withDaemon(async (f) => {
       const leader = f.as('leader');

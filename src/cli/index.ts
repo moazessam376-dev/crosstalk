@@ -37,7 +37,7 @@ const USAGE = `crosstalk — multi-agent development where a finding is a claim,
 
   ct inbox    [--as <id>] [--timeout 0] [--no-wait]
   ct say      --as <id> --room '#floor' --body '...' [--to <id>]
-  ct act      --as <id> --kind ack|assign|done [--task T-01] [--restatement '...']
+  ct act      --as <id> --kind ack|assign|done|accept|reject [--task T-01] [--restatement '...']
               [--id T-01 --title '...' --brief '...' --assignee <id> --branch <branch>]
   ct dm       --as <id> --with <id> --body '...'      (a side room; @human is in it too)
   ct claim    --as <id> --against <id> --target <file:line> --assertion '...' --falsifier '...'
@@ -514,7 +514,24 @@ async function cmdAct(argv: string[]): Promise<number> {
         emit(result, flags['json'] === true, () => `${taskId} submitted`);
         return EXIT.ok;
       }
-      throw new CliError(`Unknown act kind "${kind}"`, EXIT.usage, 'Use ack, assign, or done.');
+      if (kind === 'accept') {
+        const taskId = require_(flags, 'task');
+        const result = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/state`, {
+          state: 'accepted',
+        });
+        emit(result, flags['json'] === true, () => `${taskId} accepted`);
+        return EXIT.ok;
+      }
+      if (kind === 'reject') {
+        const taskId = require_(flags, 'task');
+        const result = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/state`, {
+          state: 'in_progress',
+          reason: str(flags, 'restatement') ?? 'rejected',
+        });
+        emit(result, flags['json'] === true, () => `${taskId} rejected`);
+        return EXIT.ok;
+      }
+      throw new CliError(`Unknown act kind "${kind}"`, EXIT.usage, 'Use ack, assign, done, accept, or reject.');
     },
   );
 }

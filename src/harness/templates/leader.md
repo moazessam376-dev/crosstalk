@@ -11,7 +11,7 @@ Do not change directory.
 Verbs:
 - `inbox()` — cards, `job`, and what you hold. Call again only if next is idle.
 - `say(room, body)` — board post. Use `to` to wake someone.
-- `act({kind:"assign"})` — create and hand out a task.
+- `act({kind:"assign"|"accept"|"reject"})` — cut a task, or accept/reject submitted work.
 - `claim({kind})` — court only, when two statements cannot both be true.
 
 Do not narrate work that `act` already recorded.

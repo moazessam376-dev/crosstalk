@@ -3,7 +3,7 @@ import type { ParticipantId, Role } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import type { HubState } from './projection.js';
 
-export type InboxRole = 'leader' | 'builder' | 'spoc' | 'observer' | 'human' | 'plan_reviewer';
+export type InboxRole = 'leader' | 'builder' | 'spoc' | 'observer' | 'human' | 'plan_reviewer' | 'peer';
 
 export type InboxCardKind = 'said' | 'assigned' | 'acked' | 'done' | 'claim' | 'decision' | 'system';
 
@@ -112,6 +112,12 @@ function nextLine(
   const held = mine.find((task) => task.state === 'assigned' || task.state === 'acknowledged');
   if (held !== undefined) return `${held.id} is assigned to you`;
   if (role === 'worker' && mine.length === 0) return 'idle';
+  // A peer's work comes from the floor, not from an assignment: with a job
+  // posted it should be building, and with unread cards it should read them.
+  if (role === 'peer') {
+    if (unread.length > 0) return undefined;
+    return floor === undefined ? 'idle' : 'build from #floor';
+  }
   if ((role === 'leader' || role === 'spoc' || role === 'human') && submitted[0] !== undefined) {
     return `${submitted[0]} is submitted — accept`;
   }

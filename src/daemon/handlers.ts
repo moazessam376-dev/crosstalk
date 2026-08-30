@@ -722,7 +722,16 @@ function readStringList(body: Body, field: string): string[] {
 function readCritique(body: Body): CritiqueRecord {
   const value = body['critique'];
   if (value === undefined) {
-    return { rounds: 1, critic: 'self', findings: [] };
+    // Gate 2 used to fabricate `{rounds: 1, critic: 'self', findings: []}`
+    // here, which made the gate a rubber stamp: an agent that never looked at
+    // its own work passed by saying nothing, and the README's "nothing reaches
+    // submitted without a self-critique record" was false at the API. The
+    // record must be authored. Empty findings stay legal — the gate asks for
+    // the review to have happened, not for it to have found something.
+    throw new ProtocolError(
+      'GATE_NOT_SELF_REVIEWED',
+      'submit requires a `critique` record: {rounds, critic, findings} — findings may be [] if your review found nothing',
+    );
   }
   if (value === null || typeof value !== 'object') {
     throw new DaemonError('MALFORMED_BODY', '`critique` is required');

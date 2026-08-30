@@ -113,6 +113,32 @@ export async function deleteBranch(cwd: string, branch: string): Promise<void> {
   await runGit(cwd, ['branch', '-D', branch]).catch(() => undefined);
 }
 
+/**
+ * Whether any local branch can still reach `sha`.
+ *
+ * The staleness predicate used to be `isAncestor(sha, mainBranch)` alone, and
+ * that misfires on this project's own workflow: work happens on branch-per-task
+ * worktrees, so honest evidence gathered at a branch HEAD was *never* an
+ * ancestor of main and the sweep flagged it stale within one tick — bouncing a
+ * freshly submitted task back to `in_progress` and reopening claims that were
+ * settled minutes earlier. Evidence goes stale when the commit it names is
+ * *orphaned* — rebased away, pruned, or never in this repository — not when it
+ * is simply unmerged.
+ *
+ * Local branches only (`--all` would count a remote ref the clone no longer
+ * advances), which includes every worktree branch by construction.
+ */
+export async function isReachable(sha: string, cwd: string): Promise<boolean> {
+  try {
+    const holders = await runGit(cwd, ['branch', '--contains', sha, '--format=%(refname:short)']);
+    return holders !== '';
+  } catch {
+    // `branch --contains` errors on an object the repository does not hold,
+    // which is precisely "unreachable".
+    return false;
+  }
+}
+
 export async function isAncestor(sha: string, of: string, cwd: string): Promise<boolean> {
   try {
     await runGit(cwd, ['merge-base', '--is-ancestor', sha, of]);

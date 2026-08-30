@@ -244,7 +244,7 @@ describe('mcp tools against a real daemon', () => {
     });
   });
 
-  it('writes a short self-review then submitted when act.done omits critique', async () => {
+  it('refuses act.done without a critique record, and submits with one', async () => {
     await withDaemon(async (f) => {
       await callTool(f.as('leader'), 'act', {
         kind: 'assign',
@@ -261,7 +261,18 @@ describe('mcp tools against a real daemon', () => {
       });
       await f.as('codex').post('/tasks/T-03/state', { state: 'in_progress' });
 
-      const done = await callTool(f.as('codex'), 'act', { kind: 'done', taskId: 'T-03' });
+      // Gate 2 is authored, never fabricated: the server used to invent
+      // `{rounds: 1, critic: 'self', findings: []}` on omission, which made the
+      // gate a rubber stamp for the agent that said nothing.
+      const silent = await callTool(f.as('codex'), 'act', { kind: 'done', taskId: 'T-03' });
+      expect(silent.isError).toBe(true);
+      expect(text(silent)).toContain('GATE_NOT_SELF_REVIEWED');
+
+      const done = await callTool(f.as('codex'), 'act', {
+        kind: 'done',
+        taskId: 'T-03',
+        critique: { rounds: 1, critic: 'self', findings: [] },
+      });
       expect(done.isError).toBeUndefined();
       expect(kinds(done)).toEqual(expect.arrayContaining(['self_review', 'task_state']));
 
@@ -288,7 +299,11 @@ describe('mcp tools against a real daemon', () => {
         restatement: 'Ship it',
       });
       await f.as('codex').post('/tasks/T-04/state', { state: 'in_progress' });
-      await callTool(f.as('codex'), 'act', { kind: 'done', taskId: 'T-04' });
+      await callTool(f.as('codex'), 'act', {
+        kind: 'done',
+        taskId: 'T-04',
+        critique: { rounds: 1, critic: 'self', findings: [] },
+      });
 
       const waiting = payload(await callTool(f.as('leader'), 'inbox', { wait: false })) as { next?: string };
       expect(waiting.next).toBe('T-04 is submitted — accept');

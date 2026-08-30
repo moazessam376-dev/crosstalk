@@ -195,6 +195,9 @@ describe('the staleness sweep over submitted tasks', () => {
     await git(repo, ['commit', '--allow-empty', '-m', 'other']);
     const alsoOrphaned = await git(repo, ['rev-parse', 'HEAD']);
     await git(repo, ['checkout', 'main']);
+    // Deleted so both shas are genuinely orphaned: a live branch would keep
+    // them fresh under the reachability predicate, and rightly so.
+    await git(repo, ['branch', '-D', 'other']);
 
     const ctx = context(repo);
     ctx.state.tasks.set('T-1', task('T-1', 'submitted', [before, alsoOrphaned]));
@@ -217,28 +220,28 @@ describe('the staleness sweep over submitted tasks', () => {
 });
 
 /**
- * The bug the plan names: `headSha` is `rev-parse HEAD`, and HEAD is whatever
- * the daemon's checkout happens to be on. Here the evidence is an ancestor of
- * HEAD and *not* of the main branch — measured against HEAD nothing is stale,
- * which is the wrong answer.
+ * The predicate is orphaned-ness, not ancestry of main. Honest evidence lives
+ * at branch-per-task worktree HEADs — commits that are *never* ancestors of
+ * main until merge — and the old ancestry-only sweep flagged all of it stale
+ * within one tick, bouncing fresh submissions back to `in_progress` and
+ * reopening claims settled minutes earlier.
  */
 describe('the sweep measures against the main branch', () => {
-  it('calls evidence stale that only the checked-out branch still contains', async () => {
+  it('keeps evidence fresh that an unmerged local branch still contains', async () => {
     const repo = await tempRepo();
     await git(repo, ['checkout', '-b', 'work']);
     await git(repo, ['commit', '--allow-empty', '-m', 'work']);
     const onlyOnWork = await git(repo, ['rev-parse', 'HEAD']);
     const mainTip = await git(repo, ['rev-parse', 'main']);
+    await git(repo, ['checkout', 'main']);
 
     expect(onlyOnWork).not.toBe(mainTip);
 
     const ctx = context(repo);
     ctx.state.claims.set('C-1', upheldClaim('C-1', [ev(onlyOnWork)]));
 
-    const events = await checkStaleness(ctx);
-
-    expect(events).toHaveLength(1);
-    expect(ctx.state.claims.get('C-1')?.state).toBe('open');
+    expect(await checkStaleness(ctx)).toEqual([]);
+    expect(ctx.state.claims.get('C-1')?.state).toBe('resolved');
   }, TIMEOUT_MS);
 
   it('names the branch when the configured one is not in this clone', async () => {

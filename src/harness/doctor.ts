@@ -360,7 +360,7 @@ async function checkWorktreeFreshness(
   config: CrosstalkConfig,
   repoRoot: string,
 ): Promise<Finding[]> {
-  const workers = config.participants.filter((participant) => participant.role === 'worker');
+  const workers = config.participants.filter((participant) => participant.role === 'worker' || participant.role === 'peer');
   if (workers.length === 0) return [];
 
   let mainSha: string;
@@ -403,7 +403,7 @@ async function checkParticipant(
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
   const workspace = resolve(repoRoot, participant.workspace);
-  if (participant.role === 'worker' && workspace === repoRoot) {
+  if ((participant.role === 'worker' || participant.role === 'peer') && workspace === repoRoot) {
     // CT-20. This was an unconditional reject, and it is why every agent needed
     // its own worktree — and therefore why one Crosstalk project rendered as one
     // top-level project entry *per agent* in the harness's sidebar.
@@ -514,12 +514,24 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
 
   const findings: Finding[] = [];
   const leaders = config.participants.filter((participant) => participant.role === 'leader');
-  if (leaders.length !== 1) {
+  const peers = config.participants.filter((participant) => participant.role === 'peer');
+  // Same rule `init` enforces: led (one leader, no peers) or flat (two or more
+  // peers, no leader). The generator and the validator must agree or `init`
+  // emits what `doctor` rejects.
+  const flat = leaders.length === 0 && peers.length >= 2;
+  if (!flat && leaders.length !== 1) {
     findings.push(finding(
       'reject',
       'LEADER_COUNT',
-      `Expected exactly one leader participant, found ${leaders.length}.`,
-      'Configure exactly one participant with role: leader; all other agents should be workers or observers.',
+      `Expected exactly one leader participant (or a flat roster of two or more peers), found ${leaders.length} leader(s) and ${peers.length} peer(s).`,
+      'Configure exactly one participant with role: leader, or an all-peer roster with no leader.',
+    ));
+  } else if (!flat && peers.length > 0) {
+    findings.push(finding(
+      'reject',
+      'LEADER_COUNT',
+      `A roster is led or flat, not both — found ${leaders.length} leader(s) alongside ${peers.length} peer(s).`,
+      'Use worker seats under a leader, or make every builder a peer and remove the leader.',
     ));
   }
 
@@ -601,7 +613,7 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
 
   findings.push(...await checkInstallSkew());
 
-  const workers = config.participants.filter((participant) => participant.role === 'worker');
+  const workers = config.participants.filter((participant) => participant.role === 'worker' || participant.role === 'peer');
   if (workers.length < 2) {
     findings.push(finding(
       'warn',

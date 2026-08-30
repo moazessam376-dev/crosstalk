@@ -6,9 +6,9 @@
   "seedVisible": true,
   "contradictionNamed": true,
   "vacuousGreenWin": false,
-  "wallClockSeconds": 97,
+  "wallClockSeconds": 89,
   "blockedWaitSeconds": 0,
-  "ceremonyTokensBeforeFirstEdit": 900,
+  "ceremonyTokensBeforeFirstEdit": 311,
   "operatorMinutes": 3,
-  "lookNote": "Same visible seed HTML. Contradiction named in REVIEW.md (casey + alex). Independent typecheck/test(11)/build pass."
+  "lookNote": "Same visible seed HTML. Contradiction named in REVIEW.md. Independent typecheck/test(9)/build pass. Ceremony is JOB.md plus kickoff REVIEW.md."
 }

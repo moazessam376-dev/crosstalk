@@ -6,9 +6,9 @@
   "seedVisible": true,
   "contradictionNamed": true,
   "vacuousGreenWin": false,
-  "wallClockSeconds": 198,
+  "wallClockSeconds": 94,
   "blockedWaitSeconds": 0,
   "ceremonyTokensBeforeFirstEdit": 700,
   "operatorMinutes": 6,
-  "lookNote": "Same visible seed HTML. C-1 named. act.accept closed T-01 and T-02. Leader then stayed on an open claim because inbox still said cut tasks / claim after accept. Independent typecheck/test(4)/build pass."
+  "lookNote": "Same visible seed HTML. C-1 raised (seq 6). act.accept closed T-01 and T-02; inbox went idle; leader stopped. Independent typecheck/test(4)/build pass."
 }

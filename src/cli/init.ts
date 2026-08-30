@@ -709,8 +709,8 @@ async function kickoffLines(
         // registered at <path>" points at a file holding somebody else's
         // credentials as well as yours, and the agent has no way to tell which
         // entry is its own.
-        ? `You are "${participant.id}" on Crosstalk. Open this agent in ${workspace} — your MCP server is \`crosstalk-${participant.id}\`, registered at ${resolveConfigPath(descriptor!.mcpConfigPath!, workspace)}, and its token is yours alone. Call roster() first and check that \`you\` reads "${participant.id}", then await_turn().`
-        : `You are "${participant.id}" on Crosstalk. Work in ${workspace} — that is your checkout, not the leader's. Use the CLI: \`${cli} await --repo ${root} --as ${participant.id} --timeout 50\` to receive work, \`${cli} say --repo ${root} --as ${participant.id} --room '#floor' --body '...'\` to speak.`,
+        ? `You are "${participant.id}". Call inbox(). Open this agent in ${workspace} — your MCP server is \`crosstalk-${participant.id}\`, registered at ${resolveConfigPath(descriptor!.mcpConfigPath!, workspace)}, and its token is yours alone.`
+        : `You are "${participant.id}". Work in ${workspace} — that is your checkout, not the leader's. Use the CLI: \`${cli} inbox --repo ${root} --as ${participant.id}\` to receive work, \`${cli} say --repo ${root} --as ${participant.id} --room '#floor' --body '...'\` to speak.`,
     });
   }
   return lines;

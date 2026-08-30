@@ -7,7 +7,7 @@ import { deriveState } from './state/derive.js';
 import { useLog, type LogSource } from './state/useLog.js';
 import { loadHubConfig, type HubConnection } from './state/hubConfig.js';
 import { useMirror } from './state/useMirror.js';
-import { postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
+import { postCompose, postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
 import { dmId } from '../core/rooms.js';
 
 /**
@@ -154,6 +154,7 @@ export default function App({ connection: injected }: AppProps = {}) {
       onOpenSideRoom: connection.kind === 'live'
         ? (participantId: string) => setSelectedRoom(dmId(connection.config.self, participantId))
         : undefined,
+      onCompose: connection.kind === 'live' ? (job: string) => postCompose(job) : undefined,
       // Only against a live daemon. The fixture hub has no `/mirror` to poll,
       // and a card there would describe a mirror that does not exist.
       mirror,

@@ -22,6 +22,7 @@ import { HUMAN_ID } from '../contracts/room.js';
 import { dmId } from '../core/rooms.js';
 
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
+import { runCompose } from './compose.js';
 import { preflight, purgeWorkspaces, runInit } from './init.js';
 import { openBrowser } from './open.js';
 import { bold, dim, emit, eventLine, failureText, table } from './output.js';
@@ -29,11 +30,15 @@ import { bold, dim, emit, eventLine, failureText, table } from './output.js';
 const USAGE = `crosstalk — multi-agent development where a finding is a claim, not a command
 
   crosstalk init [--participant id:role:harness[:model[:effort]]]... [--force]
+  crosstalk compose --job '...' [--participant id:role:harness[:model[:effort]]]... [--force]
   crosstalk up   [--port N] [--host ADDR] [--no-open] [--force]
   crosstalk down [--as <id>] [--purge]
   crosstalk doctor
 
+  ct inbox    [--as <id>] [--timeout 50] [--no-wait]
   ct say      --as <id> --room '#floor' --body '...' [--to <id>]
+  ct act      --as <id> --kind ack|assign|done [--task T-01] [--restatement '...']
+              [--id T-01 --title '...' --brief '...' --assignee <id> --branch <branch>]
   ct dm       --as <id> --with <id> --body '...'      (a side room; @human is in it too)
   ct claim    --as <id> --against <id> --target <file:line> --assertion '...' --falsifier '...'
               [--severity blocker|defect|risk|nit] [--evidence-cmd '...'] [--evidence-sha <sha>]
@@ -166,6 +171,31 @@ async function cmdInit(argv: string[]): Promise<number> {
     ];
     return lines.join('\n');
   });
+  return EXIT.ok;
+}
+
+async function cmdCompose(argv: string[]): Promise<number> {
+  const { flags } = read(argv, {
+    job: { type: 'string' },
+    participant: { type: 'string', multiple: true },
+    force: { type: 'boolean', default: false },
+  });
+  const repo = str(flags, 'repo') ?? '.';
+  const result = await runCompose({
+    repo,
+    job: require_(flags, 'job'),
+    participants: (flags['participant'] as string[] | undefined) ?? [],
+    force: flags['force'] === true,
+  });
+  emit(result, flags['json'] === true, () =>
+    [
+      `${bold('Job posted')} on #floor as @human.`,
+      result.spawned.length === 0 ? 'No CLI harnesses spawned.' : `Spawned: ${result.spawned.join(', ')}`,
+      result.attached.length === 0 ? '' : `Attach: ${result.attached.join(', ')}`,
+    ]
+      .filter((line) => line !== '')
+      .join('\n'),
+  );
   return EXIT.ok;
 }
 
@@ -416,6 +446,77 @@ async function withClient<T>(argv: string[], extra: ParseArgsConfig['options'], 
   const repo = resolve(str(flags, 'repo') ?? '.');
   const client = await DaemonClient.open(repo, str(flags, 'as'));
   return fn(client, flags, rest);
+}
+
+async function cmdInbox(argv: string[]): Promise<number> {
+  return withClient(
+    argv,
+    { timeout: { type: 'string', default: '50' }, 'no-wait': { type: 'boolean', default: false } },
+    async (client, flags) => {
+      const timeout = Number(str(flags, 'timeout') ?? '50');
+      if (!Number.isInteger(timeout) || timeout < 0) {
+        throw new CliError('--timeout must be a non-negative integer', EXIT.usage);
+      }
+      const params = new URLSearchParams({ timeout_s: String(timeout) });
+      if (flags['no-wait'] === true) params.set('wait', '0');
+      const result = await client.get<Record<string, unknown>>(`/inbox?${params.toString()}`);
+      emit(result, flags['json'] === true, () => {
+        const next = typeof result['next'] === 'string' ? result['next'] : '';
+        const unread = Array.isArray(result['unread']) ? result['unread'].length : 0;
+        return next === 'idle' ? 'idle' : `${unread} unread${next === '' ? '' : ` — ${next}`}`;
+      });
+      return EXIT.ok;
+    },
+  );
+}
+
+async function cmdAct(argv: string[]): Promise<number> {
+  return withClient(
+    argv,
+    {
+      kind: { type: 'string' },
+      task: { type: 'string' },
+      restatement: { type: 'string' },
+      id: { type: 'string' },
+      title: { type: 'string' },
+      brief: { type: 'string' },
+      assignee: { type: 'string' },
+      branch: { type: 'string' },
+    },
+    async (client, flags) => {
+      const kind = require_(flags, 'kind');
+      if (kind === 'ack') {
+        const result = await client.post<WriteResult>(`/tasks/${encodeURIComponent(require_(flags, 'task'))}/ack`, {
+          restatement: require_(flags, 'restatement'),
+          ambiguities: [],
+        });
+        emit(result, flags['json'] === true, () => `acked ${require_(flags, 'task')}`);
+        return EXIT.ok;
+      }
+      if (kind === 'assign') {
+        const result = await client.post<WriteResult>('/tasks/assign', {
+          id: require_(flags, 'id'),
+          title: require_(flags, 'title'),
+          brief: require_(flags, 'brief'),
+          assignee: require_(flags, 'assignee'),
+          branch: require_(flags, 'branch'),
+        });
+        emit(result, flags['json'] === true, () => `assigned ${require_(flags, 'id')}`);
+        return EXIT.ok;
+      }
+      if (kind === 'done') {
+        const taskId = require_(flags, 'task');
+        const submit = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/submit`, {});
+        const submitted = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/state`, {
+          state: 'submitted',
+        });
+        const result = { events: [...submit.events, ...submitted.events] };
+        emit(result, flags['json'] === true, () => `${taskId} submitted`);
+        return EXIT.ok;
+      }
+      throw new CliError(`Unknown act kind "${kind}"`, EXIT.usage, 'Use ack, assign, or done.');
+    },
+  );
 }
 
 async function cmdSay(argv: string[]): Promise<number> {
@@ -680,10 +781,13 @@ async function cmdMine(argv: string[]): Promise<number> {
  */
 const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   init: cmdInit,
+  compose: cmdCompose,
   up: cmdUp,
   down: cmdDown,
   doctor: cmdDoctor,
+  inbox: cmdInbox,
   say: cmdSay,
+  act: cmdAct,
   claim: cmdClaim,
   respond: cmdRespond,
   events: cmdEvents,

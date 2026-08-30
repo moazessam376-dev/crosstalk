@@ -77,6 +77,13 @@ export async function postVote(
   return post(`/decisions/${encodeURIComponent(decisionId)}/vote`, { option, rationale }, fetchImpl);
 }
 
+export async function postCompose(
+  job: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PostResult> {
+  return post('/compose', { job }, fetchImpl);
+}
+
 async function post(path: string, payload: unknown, fetchImpl: typeof fetch): Promise<PostResult> {
   let response: Response;
   try {

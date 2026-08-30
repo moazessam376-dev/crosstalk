@@ -9,7 +9,7 @@ const VERSION_PLACEHOLDER = '<!-- crosstalk brief version: {{briefVersion}} -->'
 const VERSION_MARKER = /<!-- crosstalk brief version: ct-brief-[0-9a-f]{8} -->/g;
 const TOKEN = /\{\{([A-Za-z][A-Za-z0-9_]*)\}\}/g;
 
-function readTemplate(name: 'leader' | 'worker'): string {
+function readTemplate(name: 'leader' | 'worker' | 'spoc'): string {
   const candidates = [
     new URL(`./templates/${name}.md`, import.meta.url),
     new URL(`../../src/harness/templates/${name}.md`, import.meta.url),
@@ -41,19 +41,14 @@ function replaceTokens(template: string, tokens: Record<string, string>): string
 }
 
 function policySummary(policy: PolicyConfig): string {
-  const rungTimeouts = Object.keys(policy.dispute.rungTimeouts)
-    .sort()
-    .map((rung) => `${rung}: ${policy.dispute.rungTimeouts[rung as keyof typeof policy.dispute.rungTimeouts]}`)
-    .join(', ');
-
-  return [
-    `- Self-critique required: ${policy.selfCritique.required}; minimum rounds: ${policy.selfCritique.minRounds}`,
-    `- Leader critique maximum rounds: ${policy.leaderCritique.maxRounds}`,
-    `- Dispute maximum rounds: ${policy.dispute.maxRounds}`,
-    `- Dispute ladder: ${policy.dispute.ladder.join(' -> ')}`,
-    `- Rung timeouts: ${rungTimeouts || 'none'}`,
-    `- Task acceptance method: ${policy.taskAcceptance.method}`,
-  ].join('\n');
+  const method = policy.taskAcceptance.method;
+  if (method === 'spoc') {
+    return `Acceptance is the SPOC's (${policy.taskAcceptance.delegate ?? 'unnamed'}). @human can override.`;
+  }
+  if (method === 'human') {
+    return 'Acceptance is @human\'s.';
+  }
+  return '';
 }
 
 function transportInstructions(tier: Tier): string {
@@ -65,25 +60,19 @@ function transportInstructions(tier: Tier): string {
   // first thing every agent reads.
   if (tier === 'mcp') {
     return [
-      'Use the registered MCP tools against the Crosstalk daemon.',
-      '- `ack_task(task_id, restatement, ambiguities[])` is the gate before code.',
-      '- `raise_claim({...})` requires assertion, severity, falsifier, and evidence.',
-      '- `respond_to_claim(claim_id, verdict, ...)` records accept, contest, or clarify.',
-      '- `submit_task(task_id, critique, evidence[])` is the self-critique gate.',
+      'Call `inbox()` when idle. `say(room, body)` to speak.',
+      '`act({kind:"ack"|"assign"|"done"})` for tasks. `claim({kind})` only for contradictions.',
+      'Confirm `inbox()` says `you` is you before you write.',
     ].join('\n');
   }
 
   if (tier === 'shell') {
     return [
       'Use the Crosstalk shell CLI; validation failures are reported by exit code.',
+      '- `crosstalk inbox --as ID` waits for cards that address you.',
+      '- `crosstalk say --as ID --room \'#floor\' --body "..."`',
+      '- `crosstalk act --as ID --kind ack --task T-01 --restatement "..."`',
       '- `crosstalk claim --as ID --against leader --target src/file.ts:1 --assertion "..." --falsifier "..."`',
-      '- `crosstalk respond CLAIM_ID --as ID --verdict contest --rationale "..." --falsifier "..."`',
-      '- `crosstalk await --as ID --timeout 50` blocks until there is a turn for you.',
-      '- `crosstalk mine --as ID` lists the tasks you hold; `crosstalk board` shows all of them.',
-      '- `crosstalk task state ID --as ID --state in_progress` moves a task you hold.',
-      '- Leaders only: `crosstalk task create --as ID --id T-01 --title "..." --brief "..." --assignee ID --branch B`.',
-      'The task gates — acknowledging a brief and submitting a self-critique — are MCP tools only.',
-      'There is no CLI command for them yet; say so in `#floor` rather than inventing one.',
     ].join('\n');
   }
 
@@ -122,7 +111,7 @@ function workspaceRules(participant: Participant): string {
     '',
     `Every agent on this project shares this one directory, so your MCP server is`,
     `one of several registered here. Yours is \`crosstalk-${participant.id}\` — call`,
-    'its tools and no others. Confirm it before anything else: `roster()` returns',
+    'its tools and no others. Confirm it before anything else: `inbox()` returns',
     `\`you\`, and it must read \`${participant.id}\`. If it does not, stop and say so in`,
     '`#floor`; you are holding somebody else\'s token and everything you write will',
     'be attributed to them.',
@@ -170,7 +159,9 @@ export function renderBrief(
   tier: Tier,
   repo: string,
 ): string {
-  const template = readTemplate(participant.role === 'leader' ? 'leader' : 'worker');
+  const template = readTemplate(
+    participant.role === 'leader' ? 'leader' : participant.role === 'spoc' ? 'spoc' : 'worker',
+  );
   const draft = replaceTokens(template, {
     briefVersion: '{{briefVersion}}',
     participantId: participant.id,

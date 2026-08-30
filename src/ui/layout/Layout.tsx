@@ -27,6 +27,7 @@ export interface LayoutProps {
   onHumanAction?: (action: HumanAction) => void;
   /** Opens a side room with a participant and selects it. CT-18. */
   onOpenSideRoom?: (participantId: string) => void;
+  onCompose?: (job: string) => Promise<PostResult>;
   /** `GET /mirror`, not the log. Undefined until the first response. */
   mirror?: MirrorView;
 }
@@ -45,6 +46,7 @@ export function Layout({
   onSelectRoom,
   onHumanAction,
   onOpenSideRoom,
+  onCompose,
   mirror,
 }: LayoutProps) {
   return createElement(
@@ -75,6 +77,7 @@ export function Layout({
       activeRoom,
       self,
       onOpenSideRoom,
+      onCompose,
       mirror,
     }),
   );

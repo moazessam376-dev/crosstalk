@@ -48,7 +48,7 @@ function mcpToolsNamed(brief: string): string[] {
   return [...brief.matchAll(/`([a-z_][a-z0-9_]*)\(/g)].map((match) => match[1]!);
 }
 
-const ROLES: Participant['role'][] = ['leader', 'worker'];
+const ROLES: Participant['role'][] = ['leader', 'worker', 'spoc'];
 
 describe('a brief only names commands that exist', () => {
   it.each(ROLES)('shell tier, %s role', (role) => {
@@ -116,7 +116,7 @@ describe('a brief only names commands that exist', () => {
       '/repo',
     );
 
-    expect(brief).toMatch(/roster\(/);
+    expect(brief).toMatch(/inbox\(/);
   });
 
   it('does not tell a worktree agent it owns particular paths', () => {
@@ -136,7 +136,10 @@ describe('a brief only names commands that exist', () => {
   it('still names the gates that do exist, on the tier that has them', () => {
     const brief = renderBrief(participant(), descriptor(), policy, 'mcp', '/repo');
     // Losing the gates entirely would also pass "names nothing wrong".
-    expect(brief).toContain('ack_task(');
-    expect(brief).toContain('submit_task(');
+    expect(brief).toContain('inbox(');
+    expect(brief).toContain('act(');
+    expect(brief).toContain('claim(');
+    expect(brief).not.toContain('ack_task(');
+    expect(brief).not.toContain('submit_task(');
   });
 });

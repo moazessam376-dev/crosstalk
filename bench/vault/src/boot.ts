@@ -5,16 +5,16 @@
  * until it sees a real one. That is the trap the job warns about: a suite that
  * is green because this returned without throwing, over a page that is blank.
  */
-export interface Cinder {
+export interface Vault {
   canvas: HTMLCanvasElement;
-  /** Researchers off the island. */
-  evacuated: number;
-  /** Researchers lost. */
-  lost: number;
+  /** Dwellers living in the vault. */
+  dwellers: number;
+  /** Bottle caps on hand. */
+  caps: number;
 }
 
-export function startCinder(root: HTMLElement): Cinder {
+export function startVault(root: HTMLElement): Vault {
   const canvas = document.createElement('canvas');
   root.appendChild(canvas);
-  return { canvas, evacuated: 0, lost: 0 };
+  return { canvas, dwellers: 0, caps: 0 };
 }

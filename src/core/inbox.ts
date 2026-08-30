@@ -51,8 +51,9 @@ export function renderInbox(args: {
   const submitted = [...args.state.tasks.values()]
     .filter((task) => task.state === 'submitted')
     .map((task) => task.id);
+  const tasked = args.state.tasks.size > 0;
 
-  const next = nextLine(unread, mine, args.role, job, submitted);
+  const next = nextLine(unread, mine, args.role, job, submitted, tasked);
   return {
     you: args.who,
     role: displayRole(args.role),
@@ -79,20 +80,22 @@ function nextLine(
   role: Role,
   job: string | undefined,
   submitted: string[],
+  tasked: boolean,
 ): string | undefined {
   const assigned = unread.find((card) => card.kind === 'assigned');
   if (assigned !== undefined) return assigned.summary;
-  const claim = unread.find((card) => card.kind === 'claim');
-  if (claim !== undefined) return claim.summary;
   const held = mine.find((task) => task.state === 'assigned' || task.state === 'acknowledged');
   if (held !== undefined) return `${held.id} is assigned to you`;
   if ((role === 'leader' || role === 'spoc' || role === 'human') && submitted[0] !== undefined) {
     return `${submitted[0]} is submitted — accept`;
   }
-  if (job !== undefined) {
-    if (role === 'leader') return 'cut tasks from #floor';
-    if (role === 'worker') return 'job on #floor — start';
-  }
+  if (job !== undefined && role === 'leader' && !tasked) return 'cut tasks from #floor';
+  if (job !== undefined && role === 'worker' && mine.length === 0) return 'job on #floor — start';
+  // After the job is tasked and accepted, an open claim is not more work.
+  // Loop 3's leader stayed in court after act.accept because next was the claim.
+  if (role === 'leader' && tasked && submitted.length === 0) return 'idle';
+  const claim = unread.find((card) => card.kind === 'claim');
+  if (claim !== undefined) return claim.summary;
   if (unread.length === 0) return 'idle';
   return undefined;
 }

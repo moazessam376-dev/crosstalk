@@ -161,7 +161,60 @@ describe('renderInbox', () => {
     expect(lead.next).toBe('T-01 is submitted — accept');
 
     const builder = renderInbox({ who: 'codex', role: 'worker', unread: [], state });
-    expect(builder.next).toBe('job on #floor — start');
+    expect(builder.job).toBe(job);
+    expect(builder.next).toBe('idle');
+  });
+
+  it('does not tell the leader to cut more tasks after the job is tasked', () => {
+    const job = 'Build Quorum';
+    let state = project([]);
+    state = applyEvent(state, message({ seq: 1, from: '@human', body: job }));
+    state = applyEvent(state, {
+      kind: 'task_created',
+      seq: 2,
+      ts: '2026-08-30T00:00:00.000Z',
+      from: 'leader',
+      room: 'task:T-01',
+      task: {
+        id: 'T-01',
+        title: 'Wire seed',
+        brief: 'do it',
+        specRefs: [],
+        assignee: 'codex',
+        deps: [],
+        acceptance: [],
+        state: 'accepted',
+        branch: 'main',
+      },
+    });
+    const lead = renderInbox({
+      who: 'leader',
+      role: 'leader',
+      unread: [
+        {
+          kind: 'claim_raised',
+          seq: 3,
+          ts: '2026-08-30T00:00:00.000Z',
+          from: 'critic',
+          room: 'dispute:C-1',
+          claim: {
+            id: 'C-1',
+            raisedBy: 'critic',
+            against: 'leader',
+            target: 'JOB.md:19',
+            assertion: 'contradiction',
+            severity: 'defect',
+            falsifier: 'x',
+            evidence: [],
+            state: 'open',
+            rounds: 0,
+          },
+        },
+      ],
+      state,
+    });
+    expect(lead.job).toBe(job);
+    expect(lead.next).toBe('idle');
   });
 
   it('prefers an assigned task over the floor job for next', () => {

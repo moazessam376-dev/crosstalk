@@ -6,7 +6,7 @@
   "seedVisible": true,
   "contradictionNamed": true,
   "vacuousGreenWin": false,
-  "wallClockSeconds": 169,
+  "wallClockSeconds": 84,
   "blockedWaitSeconds": 0,
   "ceremonyTokensBeforeFirstEdit": 450,
   "operatorMinutes": 1,

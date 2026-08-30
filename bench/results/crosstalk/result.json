@@ -6,9 +6,9 @@
   "seedVisible": true,
   "contradictionNamed": true,
   "vacuousGreenWin": false,
-  "wallClockSeconds": 206,
+  "wallClockSeconds": 198,
   "blockedWaitSeconds": 0,
   "ceremonyTokensBeforeFirstEdit": 700,
   "operatorMinutes": 6,
-  "lookNote": "Same visible seed HTML. C-1 accepted on the board. Builder acked and submitted T-01 (loop-1 did not). Leader could not accept via act and reopened submitted tasks. Independent typecheck/test(7)/build pass."
+  "lookNote": "Same visible seed HTML. C-1 named. act.accept closed T-01 and T-02. Leader then stayed on an open claim because inbox still said cut tasks / claim after accept. Independent typecheck/test(4)/build pass."
 }

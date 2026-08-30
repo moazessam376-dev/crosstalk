@@ -21,6 +21,11 @@ participants:
     harness: codex-app
     lifecycle: attached
     workspace: .crosstalk/worktrees/codex
+  - id: "@human"
+    role: human
+    harness: human
+    lifecycle: attached
+    workspace: .
 `;
 
 async function withDaemon<T>(fn: (d: DaemonHandle) => Promise<T>): Promise<T> {
@@ -99,6 +104,17 @@ describe('GET /inbox', () => {
       expect(Date.now() - started).toBeLessThan(1000);
       expect(body.next).toBe('idle');
       expect(body.unread).toEqual([]);
+    });
+  });
+
+  it('does not wait 50s when a #floor job is already on the board', async () => {
+    await withDaemon(async (daemon) => {
+      await say(daemon, '@human', '# Quorum\n\nShip the seed list.');
+      const started = Date.now();
+      const { body } = await getInbox(daemon, 'codex');
+      expect(Date.now() - started).toBeLessThan(1000);
+      expect(body.job).toContain('Ship the seed list.');
+      expect(body.next).toBe('job on #floor — start');
     });
   });
 });

@@ -35,7 +35,7 @@ const USAGE = `crosstalk — multi-agent development where a finding is a claim,
   crosstalk down [--as <id>] [--purge]
   crosstalk doctor
 
-  ct inbox    [--as <id>] [--timeout 50] [--no-wait]
+  ct inbox    [--as <id>] [--timeout 0] [--no-wait]
   ct say      --as <id> --room '#floor' --body '...' [--to <id>]
   ct act      --as <id> --kind ack|assign|done [--task T-01] [--restatement '...']
               [--id T-01 --title '...' --brief '...' --assignee <id> --branch <branch>]
@@ -451,9 +451,9 @@ async function withClient<T>(argv: string[], extra: ParseArgsConfig['options'], 
 async function cmdInbox(argv: string[]): Promise<number> {
   return withClient(
     argv,
-    { timeout: { type: 'string', default: '50' }, 'no-wait': { type: 'boolean', default: false } },
+    { timeout: { type: 'string', default: '0' }, 'no-wait': { type: 'boolean', default: false } },
     async (client, flags) => {
-      const timeout = Number(str(flags, 'timeout') ?? '50');
+      const timeout = Number(str(flags, 'timeout') ?? '0');
       if (!Number.isInteger(timeout) || timeout < 0) {
         throw new CliError('--timeout must be a non-negative integer', EXIT.usage);
       }

@@ -534,6 +534,8 @@ export interface RosterEntry {
   model?: string;
   transport?: string;
   status: 'awaiting_turn' | 'active' | 'offline';
+  /** What the harness last reported doing. Absent when it reports nothing. */
+  activity?: { verb: string; path?: string; working: boolean };
 }
 
 /**
@@ -561,6 +563,14 @@ export function roster(
    * life of the daemon.
    */
   isPresent: (who: ParticipantId) => boolean = (who) => ctx.state.participants.has(who),
+  /**
+   * What each seat is doing, when its harness reports it.
+   *
+   * The row that would have stopped beacon-1's duplicated build: one seat read
+   * a true-but-stale finding, pinged twice, got no answer because the author
+   * was heads-down writing, and rebuilt the file from scratch.
+   */
+  activityOf: (who: ParticipantId) => { verb: string; path?: string; working: boolean } | undefined = () => undefined,
 ): { you: ParticipantId; participants: RosterEntry[] } {
   const participants = ctx.config.participants.map((participant) => ({
     id: participant.id,
@@ -575,6 +585,7 @@ export function roster(
       : isPresent(participant.id)
         ? ('active' as const)
         : ('offline' as const),
+      ...(activityOf(participant.id) === undefined ? {} : { activity: activityOf(participant.id) }),
   }));
   return { you: ctx.who, participants };
 }

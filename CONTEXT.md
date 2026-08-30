@@ -18,7 +18,7 @@ A change is wrong if it does not improve at least one of:
 
 1. **Blocked-wait** — wall-clock seconds a participant is idle waiting for a peer.
 2. **Ceremony tokens** — tokens of protocol overhead before the first code edit.
-3. **Benchmark** — same job, same fixture, three cells (solo / GitHub team / Crosstalk team); Crosstalk must win on the rubric, not on vibes. Solo is allowed to beat both teams. That result would be a real finding.
+3. **Benchmark** — same job, same fixture, **two cells** (solo / Crosstalk team); Crosstalk must win on the rubric, not on vibes. Solo is allowed to beat the team. That result would be a real finding — and on beacon-1 it was the finding. The GitHub arm is paused as of 2026-08-31, having done its job: it showed that an artefact-anchored channel is denser than a chat board.
 
 ## Audience
 
@@ -33,6 +33,12 @@ Two runtime dependencies. No native modules. Append-only log. Order by `seq`. Wi
 **Board-first.** Default verbs: say, assign, done. Court tools are not on the front of the list.
 
 **Happy-path ceremony.** One-line ack before code. Falsifier only in court. Self-critique is a short record, not an essay. The 5× flake ritual lives in docs, not in the brief.
+
+**Team Shape.** A team's way of working, as data: the seats, and per seat its verbs, what counts as its job, what its done requires, and its brief fragment. The inbox projection, the brief composer and the Launcher all read the same record. A new shape is a new record, not a code change across seven files.
+
+**Phase machine.** What *together* means, made checkable: Plan → Build → Verify → Repair. Each phase names who may write and what must exist to leave it. Gates are mechanical on the transitions only; inside a phase the seats are free. A prose rule agents can ignore is a no-op — beacon-1's peer brief told seats not to narrate and one posted 54 narrations.
+
+**Contract freeze.** The shared interface is authored in Plan and read-only in Build. Moving contracts put both beacon-1 team cells' bugs in the seams: one fix landed in the renderer because the sim's owner had gone quiet-done, and `laneBearing` ended up defined twice. A seat that needs the contract changed stops and raises it.
 
 ## Seats
 
@@ -56,15 +62,22 @@ Two runtime dependencies. No native modules. Append-only log. Order by `seq`. Wi
 
 **Coordination interface.** Four tools: `inbox` (compact unread + wake), `say` (board), `act` (ack / assign / done), `claim` (court).
 
+**Delivery.** What a seat learns, as one module: everything it has not seen, within a budget. Owns truncation policy, ordering and the wake, with pull and push as adapters behind one seam. Beacon-1 delivered `clip(body, 120)` and had no `read` verb, so 5% of the strongest seat's output reached its teammates. A message now carries its full body up to a 1,500-character cap, plus an optional artifact reference for depth.
+
+**Presence.** What a seat is doing, as overwriting state rather than appended history: one row per seat — status, current file, last verb, age. Fed by harness hooks first, by the supervised session stream later. Not an event: tool calls in the log would bury the board.
+
 **Compose.** Hub posts the job to `#floor`. The leader’s first inbox item is that message. The leader cuts tasks. Crosstalk does not invent the task graph.
 
 **SPOC stamps.** Accept `submitted` → `accepted`; reject to `in_progress` with a reason; ask for evidence; sit on the old human ladder rung with the operator as timeout override. SPOC does not close a court case they did not open. Operator still merges.
 
 ## Build order
 
-1. Collapse the agent-facing coordination module.
-2. Then the launcher.
-3. Benchmark last enough to score the above, early enough to keep us honest.
+1. Delivery — the one measured defect, and the smallest change.
+2. Collapse the agent-facing coordination module into Team Shape + the phase machine. Presence alongside it.
+3. Benchmark (`bench/cinder`), which needs 1 and 2 to be worth running.
+4. Then the launcher, downstream of Team Shape; it does not gate a run.
+
+Full plan: `docs/plans/2026-08-31-team-os-and-cinder-bench.md`.
 
 ## Benchmark (partial)
 

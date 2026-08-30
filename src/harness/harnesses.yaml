@@ -4,7 +4,10 @@ harnesses:
     mcp: stdio
     mcpConfigPath: .mcp.json
     supervisable: true
-    spawn: [claude, -p]
+    # No positional prompt: with stream-json input the job is the first turn
+    # written to stdin, which is also what lets later turns land in the queue.
+    spawn: [claude, -p, --input-format, stream-json, --output-format, stream-json, --verbose]
+    turnFormat: stream-json
   claude-code-app:
     briefFile: CLAUDE.md
     mcp: stdio

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 /**
@@ -69,6 +69,30 @@ async function main() {
 main().catch(() => {});
 `;
 
+/**
+ * The settings a generated Claude Code seat needs to run unattended.
+ *
+ * `enableAllProjectMcpServers` is not a convenience. On beacon-1 both Claude
+ * seats froze on the interactive MCP trust dialog — a background session cannot
+ * answer a prompt, so they sat there until the operator noticed and relaunched
+ * them. A seat Crosstalk generated is a seat Crosstalk configured; asking it to
+ * approve our own server by hand is asking a question with one answer.
+ */
+export function seatSettings(args: {
+  scriptPath: string;
+  stateDir: string;
+  seat: string;
+}): Record<string, unknown> {
+  return {
+    enableAllProjectMcpServers: true,
+    env: {
+      CROSSTALK_STATE_DIR: args.stateDir,
+      CROSSTALK_SEAT: args.seat,
+    },
+    ...hookSettings(args.scriptPath),
+  };
+}
+
 export function hookSettings(scriptPath: string): Record<string, unknown> {
   const run = (phase: string) => ({
     matcher: '*',
@@ -94,4 +118,36 @@ export async function writePresenceHook(repo: string): Promise<string> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, SCRIPT, { encoding: 'utf8', mode: 0o755 });
   return path;
+}
+
+/**
+ * Merges our keys into whatever settings the seat already has.
+ *
+ * Never a wholesale write: a seat workspace may carry an operator's own
+ * settings, and clobbering them to add a presence hook would be a poor trade.
+ */
+export async function writeSeatSettings(args: {
+  repo: string;
+  workspace: string;
+  seat: string;
+  scriptPath: string;
+}): Promise<void> {
+  const dir = join(resolve(args.repo), args.workspace, '.claude');
+  const path = join(dir, 'settings.json');
+
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+  } catch {
+    /* no settings yet, or unreadable — either way ours are the settings */
+  }
+
+  const ours = seatSettings({
+    scriptPath: args.scriptPath,
+    stateDir: join(resolve(args.repo), '.crosstalk'),
+    seat: args.seat,
+  });
+
+  await mkdir(dir, { recursive: true });
+  await writeFile(path, `${JSON.stringify({ ...existing, ...ours }, null, 2)}\n`, 'utf8');
 }

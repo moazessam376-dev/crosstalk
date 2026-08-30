@@ -14,6 +14,7 @@ import { tokenFilename } from '../daemon/server.js';
 import { localBriefFile, writeBrief } from '../harness/brief.js';
 import { checkPrerequisites, doctor, type Finding } from '../harness/doctor.js';
 import { loadRegistry, probeTier, resolveConfigPath, type HarnessDescriptor } from '../harness/registry.js';
+import { writePresenceHook, writeSeatSettings } from '../harness/hooks.js';
 import {
   branchSha,
   branchShaIfExists,
@@ -184,7 +185,7 @@ async function ensureWorkspaces(repo: string, participants: Participant[]): Prom
   await excludeFromEveryWorktree(root, await untrackedArtifacts());
 
   for (const participant of participants) {
-    if (participant.role !== 'worker') continue;
+    if (!needsWorktree(participant.role)) continue;
     // CT-20. A worker that shares the repository root has no worktree to build,
     // and building one anyway is not merely wasted: it puts a directory under
     // `.crosstalk/worktrees/<id>` and a `ct/<id>-base` branch in the project
@@ -245,7 +246,7 @@ async function ensureBaseBranches(
   const root = resolve(repo);
   if (!(await isRepo(root))) return;
 
-  const workers = participants.filter((participant) => participant.role === 'worker');
+  const workers = participants.filter((participant) => needsWorktree(participant.role));
   if (workers.length === 0) return;
 
   // Through `branchSha`, whose message already names the remedy. Reaching for
@@ -330,7 +331,7 @@ export async function purgeWorkspaces(repo: string): Promise<void> {
   }
 
   for (const participant of config.participants) {
-    if (participant.role !== 'worker') continue;
+    if (!needsWorktree(participant.role)) continue;
     const worktree = join(root, '.crosstalk', 'worktrees', participant.id);
     // The branch is deleted whether or not the worktree is still registered:
     // half a purge leaves exactly the CT-12 state this is here to prevent.
@@ -399,6 +400,20 @@ async function addWorktree(root: string, id: string, branch: string, worktree: s
  * per-worktree copy is silently ignored — which is convenient: one write
  * covers the primary checkout and every linked worktree at once.
  */
+/**
+ * Which seats get a checkout of their own.
+ *
+ * `peer` was missing, and the omission was invisible until three peer seats
+ * launched into directories that held nothing but their brief. They improvised
+ * — one wrote source into an ignored path and posted a stale environment note
+ * that misled the board for ten minutes — and the operator rebuilt real
+ * worktrees around the mess mid-run. A role that writes code needs somewhere to
+ * write it.
+ */
+function needsWorktree(role: string): boolean {
+  return role === 'worker' || role === 'peer';
+}
+
 async function excludeFromEveryWorktree(root: string, patterns: string[]): Promise<void> {
   let gitDir: string;
   try {
@@ -437,7 +452,14 @@ async function untrackedArtifacts(): Promise<string[]> {
   const registry = await loadRegistry().catch(() => undefined);
   if (registry === undefined) return ['.mcp.json'];
 
-  const patterns = new Set<string>(['.mcp.json']);
+  const patterns = new Set<string>([
+    '.mcp.json',
+    // The seat settings written for claude-code participants: the presence
+    // hook, the env it reads, and the MCP trust flag. Same reason as
+    // `.mcp.json` — Crosstalk wrote it into somebody's checkout, so Crosstalk
+    // has to keep it out of their next commit.
+    '.claude/settings.json',
+  ]);
   for (const descriptor of registry.values()) {
     patterns.add(basename(localBriefFile(descriptor.briefFile)));
     // CT-20. A shared-root participant's brief carries its id — `CLAUDE.md`
@@ -473,6 +495,7 @@ async function writeBriefs(
   policy: CrosstalkConfig['policy'],
   shape?: string,
 ): Promise<void> {
+  let hookPath: string | undefined;
   let registry: Map<string, HarnessDescriptor>;
   try {
     registry = await loadRegistry();
@@ -488,6 +511,18 @@ async function writeBriefs(
 
     const tier = participant.transport ?? (await probeTier(descriptor, resolve(repo, participant.workspace)));
     await writeBrief(participant, descriptor, policy, tier, repo, shape);
+
+    // Claude Code seats only: the hook config and the trust flag are its
+    // settings format, and writing them for a harness that ignores them would
+    // be clutter claiming to be configuration.
+    if (participant.harness.startsWith('claude-code')) {
+      await writeSeatSettings({
+        repo,
+        workspace: participant.workspace,
+        seat: participant.id,
+        scriptPath: hookPath ?? (hookPath = await writePresenceHook(repo)),
+      });
+    }
   }
 }
 

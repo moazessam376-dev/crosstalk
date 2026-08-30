@@ -98,6 +98,21 @@ describe('renderInbox', () => {
     expect(inbox.next).toBe('T-01 is assigned to you');
   });
 
+  it('stays idle for a builder who only has a #floor card and no task', () => {
+    const job = '# Quorum\n\nHide resolved rows.';
+    let state = project([]);
+    state = applyEvent(state, message({ seq: 1, from: '@human', body: job }));
+    const inbox = renderInbox({
+      who: 'codex',
+      role: 'worker',
+      unread: [message({ seq: 1, from: '@human', body: job })],
+      state,
+    });
+    expect(inbox.job).toBeUndefined();
+    expect(inbox.next).toBe('idle');
+    expect(inbox.unread[0]?.kind).toBe('said');
+  });
+
   it('says idle when nothing addresses the caller', () => {
     const inbox = renderInbox({
       who: 'codex',
@@ -110,20 +125,57 @@ describe('renderInbox', () => {
     expect(inbox.job).toBeUndefined();
   });
 
-  it('keeps the @human #floor job after the card is read, and does not say idle', () => {
+  it('keeps the @human #floor job on the leader after the card is read', () => {
     const job = '# Quorum\n\nHide resolved rows. The header shows a resolved count.';
     let state = project([]);
     state = applyEvent(state, message({ seq: 1, from: '@human', body: job }));
     state = applyEvent(state, message({ seq: 2, from: 'leader', body: 'cutting tasks' }));
 
-    const builder = renderInbox({ who: 'codex', role: 'worker', unread: [], state });
-    expect(builder.job).toBe(job);
-    expect(builder.next).toBe('job on #floor — start');
-    expect(builder.unread).toEqual([]);
-
     const lead = renderInbox({ who: 'leader', role: 'leader', unread: [], state });
     expect(lead.job).toBe(job);
     expect(lead.next).toBe('cut tasks from #floor');
+
+    // Neighbouring seat: a builder without a task must not receive the novel.
+    // First-edit ceremony is the builder's intake; dumping JOB.md here is why
+    // solo won loops 1–4 on tokens before first code edit.
+    const builder = renderInbox({ who: 'codex', role: 'worker', unread: [], state });
+    expect(builder.job).toBeUndefined();
+    expect(builder.next).toBe('idle');
+    expect(builder.unread).toEqual([]);
+  });
+
+  it('hands a builder the assigned task brief, not the floor job', () => {
+    const floor = '# Quorum\n\n' + 'Hide resolved. '.repeat(40);
+    const brief = 'App() loads API seed. Do not change the empty-props render() test.';
+    let state = project([]);
+    state = applyEvent(state, message({ seq: 1, from: '@human', body: floor }));
+    state = applyEvent(state, {
+      kind: 'task_created',
+      seq: 2,
+      ts: '2026-08-30T00:00:00.000Z',
+      from: 'leader',
+      room: 'task:T-01',
+      task: {
+        id: 'T-01',
+        title: 'Wire seed',
+        brief,
+        specRefs: [],
+        assignee: 'codex',
+        deps: [],
+        acceptance: [],
+        state: 'assigned',
+        branch: 'main',
+      },
+    });
+
+    const inbox = renderInbox({ who: 'codex', role: 'worker', unread: [], state });
+    expect(inbox.job).toContain('T-01');
+    expect(inbox.job).toContain(brief);
+    expect(inbox.job).not.toContain(floor);
+    expect(inbox.next).toBe('T-01 is assigned to you');
+
+    const lead = renderInbox({ who: 'leader', role: 'leader', unread: [], state });
+    expect(lead.job).toBe(floor);
   });
 
   it('does not treat a teammate #floor post as the job', () => {
@@ -161,7 +213,7 @@ describe('renderInbox', () => {
     expect(lead.next).toBe('T-01 is submitted — accept');
 
     const builder = renderInbox({ who: 'codex', role: 'worker', unread: [], state });
-    expect(builder.job).toBe(job);
+    expect(builder.job).toBeUndefined();
     expect(builder.next).toBe('idle');
   });
 
@@ -217,10 +269,9 @@ describe('renderInbox', () => {
     expect(lead.next).toBe('idle');
   });
 
-  it('prefers an assigned task over the floor job for next', () => {
-    const job = 'Build Quorum';
+  it('does not treat a teammate task as the builder job', () => {
     let state = project([]);
-    state = applyEvent(state, message({ seq: 1, from: '@human', body: job }));
+    state = applyEvent(state, message({ seq: 1, from: '@human', body: 'Build Quorum' }));
     state = applyEvent(state, {
       kind: 'task_created',
       seq: 2,
@@ -230,9 +281,9 @@ describe('renderInbox', () => {
       task: {
         id: 'T-01',
         title: 'Wire seed',
-        brief: 'do it',
+        brief: 'secret brief for the assignee only',
         specRefs: [],
-        assignee: 'codex',
+        assignee: 'cursor',
         deps: [],
         acceptance: [],
         state: 'assigned',
@@ -240,7 +291,8 @@ describe('renderInbox', () => {
       },
     });
     const inbox = renderInbox({ who: 'codex', role: 'worker', unread: [], state });
-    expect(inbox.job).toBe(job);
-    expect(inbox.next).toBe('T-01 is assigned to you');
+    expect(inbox.job).toBeUndefined();
+    expect(inbox.next).toBe('idle');
+    expect(inbox.mine).toEqual([]);
   });
 });

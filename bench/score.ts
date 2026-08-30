@@ -69,3 +69,23 @@ export async function scoreResults(root: string): Promise<Score> {
   );
   return scoreCells(cells);
 }
+
+/** chars/4. Handmade 450/700/900 constants are how loops 1–4 hid the real intake. */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+/**
+ * Tokens the first code editor must read.
+ * Solo and GitHub read `jobText`. Crosstalk's first editor is the builder:
+ * pass their brief + task job as `extraBeforeEdit`, not the floor novel.
+ */
+export function firstEditCeremonyTokens(args: {
+  cell: Cell;
+  jobText: string;
+  extraBeforeEdit?: string;
+}): number {
+  const extra = args.extraBeforeEdit ?? '';
+  if (args.cell === 'crosstalk') return estimateTokens(extra);
+  return estimateTokens(`${args.jobText}${extra}`);
+}

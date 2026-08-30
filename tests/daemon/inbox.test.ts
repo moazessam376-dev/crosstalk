@@ -107,14 +107,23 @@ describe('GET /inbox', () => {
     });
   });
 
-  it('does not wait 50s when a #floor job is already on the board', async () => {
+  it('does not wait 50s when the leader still has to cut tasks from #floor', async () => {
     await withDaemon(async (daemon) => {
       await say(daemon, '@human', '# Quorum\n\nShip the seed list.');
       const started = Date.now();
-      const { body } = await getInbox(daemon, 'codex');
+      const { body } = await getInbox(daemon, 'leader');
       expect(Date.now() - started).toBeLessThan(1000);
       expect(body.job).toContain('Ship the seed list.');
-      expect(body.next).toBe('job on #floor — start');
+      expect(body.next).toBe('cut tasks from #floor');
+    });
+  });
+
+  it('does not hand a builder the floor novel before they hold a task', async () => {
+    await withDaemon(async (daemon) => {
+      await say(daemon, '@human', '# Quorum\n\nShip the seed list.');
+      const { body } = await getInbox(daemon, 'codex', '?wait=0');
+      expect(body.job).toBeUndefined();
+      expect(body.next).toBe('idle');
     });
   });
 });

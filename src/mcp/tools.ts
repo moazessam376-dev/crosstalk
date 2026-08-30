@@ -39,7 +39,7 @@ const EVIDENCE_LIST = {
 export const TOOLS: ToolDefinition[] = [
   {
     name: 'inbox',
-    description: 'Cards, tasks, and job (full #floor brief from @human). Does not wait when next is not idle.',
+    description: 'Cards, unread, and job. Leader job is the #floor brief; builder job is the assigned task brief. Idle waits.',
     inputSchema: {
       type: 'object',
       properties: {

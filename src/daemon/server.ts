@@ -14,6 +14,9 @@ import type { ParticipantId } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { EventLog } from '../core/log.js';
 import { renderInbox, type Inbox } from '../core/inbox.js';
+import { phaseStatus, type PhaseStatus } from '../core/phase.js';
+import { shapeNamed } from '../core/shape.js';
+import { workspaceGates } from '../workspace/gates.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
 import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js';
 import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
@@ -613,10 +616,16 @@ class Daemon {
       send(response, 200, { harnesses: await probeCliHarnesses() });
       return;
     }
+    if (path === '/phase' && method === 'GET') {
+      const phase = await this.phase();
+      send(response, 200, phase ?? { shape: null });
+      return;
+    }
+
     if (path === '/roster' && method === 'GET') {
       const present = (id: ParticipantId): boolean => this.#presence.isPresent(id, Date.now());
       send(response, 200, {
-        ...roster(ctx, this.#pendingWaiters(), present),
+        ...roster(ctx, this.#pendingWaiters(), present, (id) => this.#presence.activityOf(id, Date.now())),
         ...(warnings.length > 0 ? { warnings } : {}),
       });
       return;
@@ -632,6 +641,22 @@ class Daemon {
     const roomParams = matchPath(path, '/rooms/:room/events');
     if (roomParams !== undefined && method === 'GET') {
       send(response, 200, await this.#readRoom(ctx, decodeURIComponent(roomParams[0]!), url));
+      return;
+    }
+
+    if (path === '/presence' && method === 'POST') {
+      // Not an event: it never reaches the log, so it never reaches the
+      // projection and never competes with what was decided. A harness hook
+      // calls this on every tool use, which is thousands of times a run.
+      const payload = (await readJsonBody(request)) as { verb?: unknown; path?: unknown; working?: unknown };
+      const verb = typeof payload.verb === 'string' ? payload.verb : 'working';
+      const file = typeof payload.path === 'string' ? payload.path : undefined;
+      this.#presence.note(
+        who,
+        { verb, working: payload.working !== false, ...(file === undefined ? {} : { path: file }) },
+        Date.now(),
+      );
+      send(response, 204, {});
       return;
     }
 
@@ -858,13 +883,54 @@ class Daemon {
     peek.searchParams.set('timeout_s', '0');
     const peeked = await this.#awaitTurn(who, peek);
     const unread = 'events' in peeked ? peeked.events : [];
-    const inbox = renderInbox({ who, role, unread, state: this.#state });
+    const phase = await this.phase();
+    const inbox = renderInbox({ who, role, unread, state: this.#state, ...(phase === undefined ? {} : { phase }) });
     // A #floor job or an assigned task is already work. Waiting 50s after that
     // is how the Quorum builder spent eight polls idle while the job sat on the board.
     if (unread.length > 0 || !wait || inbox.next !== 'idle') return inbox;
     const blocked = await this.#awaitTurn(who, url);
     const later = 'events' in blocked ? blocked.events : [];
-    return renderInbox({ who, role, unread: later, state: this.#state });
+    const after = await this.phase();
+    return renderInbox({ who, role, unread: later, state: this.#state, ...(after === undefined ? {} : { phase: after }) });
+  }
+
+  /**
+   * Where the team is, recomputed per turn rather than stored.
+   *
+   * The workspace gates shell out to git, so this is the one derived value that
+   * costs something. It is still per-turn and not cached: a cached phase that
+   * disagreed with the repository would be exactly the "belief written as a
+   * fact" that the whole delivery repair is about.
+   */
+  async phase(): Promise<PhaseStatus | undefined> {
+    const shape = shapeNamed(this.#config.shape);
+    if (shape === undefined) return undefined;
+
+    const seats = this.#config.participants.filter(
+      (participant) => participant.id !== HUMAN_ID && participant.role !== 'human',
+    );
+    const needed = shape.phases.flatMap((phase) => phase.exit.filter((gate) => gate.by === 'workspace').map((gate) => gate.id));
+
+    let workspace;
+    try {
+      workspace = await workspaceGates({
+        repo: this.#repo,
+        base: this.#config.project.mainBranch,
+        ...(this.#config.contractPath === undefined ? {} : { contractPath: this.#config.contractPath }),
+        branches: seats.map((seat) => ({ seat: seat.id, branch: `ct/${seat.id}` })),
+        needed,
+      });
+    } catch {
+      // A repository that cannot be read is not a reason to stop delivering
+      // turns. The gate reports unchecked and the seat sees why.
+      workspace = new Map();
+    }
+
+    return phaseStatus(shape, {
+      events: this.#state.messages,
+      participants: seats.map((seat) => seat.id),
+      workspace,
+    });
   }
 
   /**

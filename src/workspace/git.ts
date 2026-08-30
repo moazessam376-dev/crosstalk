@@ -289,3 +289,23 @@ export async function listWorktrees(repo: string): Promise<{ path: string; branc
   if (current !== undefined) worktrees.push(current);
   return worktrees;
 }
+
+/**
+ * Files a branch changed relative to where it left `base`.
+ *
+ * Three dots on purpose: `base...branch` is the branch's own work, so a branch
+ * that is merely behind `main` does not appear to have touched everything that
+ * landed on `main` while it was away. Two dots would report that, and the
+ * no-shared-files gate would fail every seat the moment anyone merged.
+ *
+ * An unknown branch is an empty change set rather than a throw: a seat that has
+ * not pushed yet has not collided with anyone.
+ */
+export async function changedFiles(cwd: string, base: string, branch: string): Promise<string[]> {
+  try {
+    const out = await runGit(cwd, ['diff', '--name-only', `${base}...${branch}`]);
+    return out === '' ? [] : out.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+  } catch {
+    return [];
+  }
+}

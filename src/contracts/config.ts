@@ -82,6 +82,14 @@ export interface CrosstalkConfig {
   project: ProjectConfig;
   participants: Participant[];
   policy: PolicyConfig;
+  /**
+   * How this team works, by name — see `core/shape.ts`. Absent means no phase
+   * machine: the roster still works exactly as it did, which is what keeps this
+   * additive for every project that already exists.
+   */
+  shape?: string;
+  /** The file the shape's contract gate looks for, relative to the repo. */
+  contractPath?: string;
   /** Absent means no mirror. v1 ships the protocol; the mirror follows. */
   mirror?: MirrorConfig;
 }

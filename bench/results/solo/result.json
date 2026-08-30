@@ -6,9 +6,9 @@
   "seedVisible": true,
   "contradictionNamed": true,
   "vacuousGreenWin": false,
-  "wallClockSeconds": 84,
+  "wallClockSeconds": 134,
   "blockedWaitSeconds": 0,
   "ceremonyTokensBeforeFirstEdit": 450,
   "operatorMinutes": 1,
-  "lookNote": "App() HTML: header 2 resolved, list D-2 D-3 D-5. Independent typecheck/test(12)/build pass."
+  "lookNote": "Independent App() HTML: header 2 resolved, list D-2 D-3 D-5. typecheck/test(9)/build pass. Contradiction named in CELL_DONE.md."
 }

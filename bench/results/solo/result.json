@@ -6,9 +6,9 @@
   "seedVisible": true,
   "contradictionNamed": true,
   "vacuousGreenWin": false,
-  "wallClockSeconds": 73,
+  "wallClockSeconds": 94,
   "blockedWaitSeconds": 0,
   "ceremonyTokensBeforeFirstEdit": 245,
   "operatorMinutes": 1,
-  "lookNote": "Independent App() HTML: header 2 resolved, list D-2 D-3 D-5. typecheck/test(10)/build pass. Ceremony is JOB.md (chars/4)."
+  "lookNote": "Independent App() HTML: header 2 resolved, list D-2 D-3 D-5. typecheck/test(10)/build pass."
 }

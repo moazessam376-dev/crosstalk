@@ -748,8 +748,8 @@ function parseParticipants(specs: string[]): Participant[] {
         'Use --participant id:role:harness[:model[:effort]], for example --participant codex:worker:codex-app:luna-5.6:high',
       );
     }
-    if (!['leader', 'worker', 'observer', 'human'].includes(role)) {
-      throw new CliError(`Unknown role "${role}" in "${spec}"`, EXIT.usage, 'Roles: leader, worker, observer, human.');
+    if (!['leader', 'worker', 'observer', 'human', 'spoc'].includes(role)) {
+      throw new CliError(`Unknown role "${role}" in "${spec}"`, EXIT.usage, 'Roles: leader, worker, observer, human, spoc.');
     }
     return {
       id,
@@ -762,7 +762,9 @@ function parseParticipants(specs: string[]): Participant[] {
       ...(effort === undefined ? {} : { effort }),
       lifecycle: 'attached' as const,
       // The primary checkout is the leader's and no worker may occupy it.
-      workspace: role === 'leader' ? '.' : join('.crosstalk', 'worktrees', id).replace(/\\/g, '/'),
+      workspace: role === 'leader' || role === 'spoc' || role === 'human' || role === 'observer'
+        ? '.'
+        : join('.crosstalk', 'worktrees', id).replace(/\\/g, '/'),
     };
   });
 

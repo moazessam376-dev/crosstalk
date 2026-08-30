@@ -145,6 +145,62 @@ function duplicateParticipantIds(participants: Participant[]): Set<string> {
   return duplicates;
 }
 
+function spocPolicyFindings(config: CrosstalkConfig): Finding[] {
+  const found: Finding[] = [];
+  const spocs = config.participants.filter((participant) => participant.role === 'spoc');
+  if (spocs.length > 1) {
+    found.push(finding(
+      'reject',
+      'SPOC_COUNT',
+      `Expected at most one SPOC participant, found ${spocs.length}.`,
+      'Keep a single participant with role: spoc. Acceptance is one seat.',
+    ));
+  }
+
+  const acceptance = config.policy.taskAcceptance;
+  if (acceptance.method !== 'spoc') return found;
+
+  const delegate = acceptance.delegate;
+  if (delegate === undefined || delegate === '') {
+    found.push(finding(
+      'reject',
+      'SPOC_DELEGATE_MISSING',
+      'policy.taskAcceptance.method is "spoc" but no delegate is named.',
+      'Set taskAcceptance.delegate to the SPOC participant id.',
+    ));
+    return found;
+  }
+
+  const named = config.participants.find((participant) => participant.id === delegate);
+  if (named === undefined) {
+    found.push(finding(
+      'reject',
+      'SPOC_DELEGATE_UNKNOWN',
+      `taskAcceptance.delegate "${delegate}" is not a participant.`,
+      'Name a participant that exists on the roster.',
+    ));
+    return found;
+  }
+
+  if (named.role === 'leader') {
+    found.push(finding(
+      'reject',
+      'SPOC_IS_LEADER',
+      `taskAcceptance.delegate "${delegate}" is the leader. SPOC and leader must not be the same seat.`,
+      'Give SPOC its own participant. The leader plans; SPOC accepts.',
+    ));
+  } else if (named.role !== 'spoc') {
+    found.push(finding(
+      'reject',
+      'SPOC_DELEGATE_WRONG_ROLE',
+      `taskAcceptance.delegate "${delegate}" has role ${named.role}, not spoc.`,
+      'Set that participant\'s role to spoc, or point delegate at the SPOC.',
+    ));
+  }
+
+  return found;
+}
+
 async function writableBriefPath(filePath: string, repoRoot: string): Promise<boolean> {
   try {
     await access(filePath, constants.F_OK | constants.W_OK);
@@ -540,6 +596,8 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
       'Use leader or human. A vote-based acceptance needs a decision route that does not exist yet.',
     ));
   }
+
+  findings.push(...spocPolicyFindings(config));
 
   findings.push(...await checkInstallSkew());
 

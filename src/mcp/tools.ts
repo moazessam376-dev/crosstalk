@@ -59,13 +59,21 @@ export const TOOLS: ToolDefinition[] = [
 
   {
     name: 'say',
-    description: 'Post to a room. Use to for a directed wake. Not a claim.',
+    description:
+      'Post to a room. Use to for a directed wake, ref to point at detail. Not a claim. Body is capped at 1500 characters.',
     inputSchema: {
       type: 'object',
       properties: {
-        room: { type: 'string', description: 'Room id, e.g. #floor or task:T-04.' },
-        body: { type: 'string', description: 'What you want to say.' },
+        room: { type: 'string', description: 'Room id, e.g. #floor, dm:a~b, or task:T-04.' },
+        body: {
+          type: 'string',
+          description: 'What you want to say, 1500 characters max. Lead with the finding.',
+        },
         to: { type: 'string', description: 'Optional participant id.' },
+        ref: {
+          type: 'string',
+          description: 'Optional artifact carrying the detail — a path, a SHA, a file you wrote.',
+        },
       },
       required: ['room', 'body'],
     },

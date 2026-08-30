@@ -20,6 +20,12 @@ export type DaemonErrorCode =
   /** `--host` naming an address no interface on this machine has. */
   | 'HOST_UNAVAILABLE'
   | 'PAYLOAD_TOO_LARGE'
+  /**
+   * The transport was fine and the message was too long. Distinct from
+   * PAYLOAD_TOO_LARGE, which is about bytes on the wire: this one an agent can
+   * act on by compressing and moving the detail into `ref`.
+   */
+  | 'MESSAGE_TOO_LONG'
   | 'EVENT_KIND_NOT_APPENDABLE';
 
 export class DaemonError extends Error {

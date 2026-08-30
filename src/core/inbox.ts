@@ -12,7 +12,21 @@ export interface InboxCard {
   kind: InboxCardKind;
   from: string;
   room?: string;
+  /** One scannable line, for choosing what to read. */
   summary: string;
+  /**
+   * What was actually said, whole, up to `DELIVERY_BUDGET`.
+   *
+   * Beacon-1 shipped without this field, so a card was a 120-character clip and
+   * nothing else — 5% of the strongest seat's output reached its teammates, and
+   * the two findings that would have prevented a 21-minute duplicated build
+   * were both cut mid-sentence. A summary is for scanning. This is the message.
+   */
+  body?: string;
+  /** Set only when `body` was cut. Never silently: a fragment that reads whole is worse than one that admits it. */
+  truncated?: true;
+  /** The artifact the author pointed at for depth. */
+  ref?: string;
 }
 
 export interface InboxTask {
@@ -36,6 +50,22 @@ export interface Inbox {
 }
 
 const SUMMARY_LIMIT = 120;
+
+/**
+ * How much of what was said a card carries.
+ *
+ * Wider than `SAY_LIMIT` on purpose: an agent-authored message is capped at
+ * 1500 and so always arrives whole, and only an operator brief can reach this
+ * ceiling. The budget exists so truncation is a policy with an owner rather
+ * than a constant nobody can see.
+ */
+export const DELIVERY_BUDGET = 4000;
+
+/** The body a card carries, and whether anything was cut. */
+function carry(text: string): { body: string; truncated?: true } {
+  if (text.length <= DELIVERY_BUDGET) return { body: text };
+  return { body: `${text.slice(0, DELIVERY_BUDGET)}…`, truncated: true };
+}
 
 export function displayRole(role: Role): InboxRole {
   return role === 'worker' ? 'builder' : role;
@@ -140,7 +170,13 @@ export function cardFor(event: CrosstalkEvent): InboxCard {
 
   switch (event.kind) {
     case 'message':
-      return { ...base, kind: 'said', summary: clip(event.body) };
+      return {
+        ...base,
+        kind: 'said',
+        summary: clip(event.body),
+        ...carry(event.body),
+        ...(event.ref === undefined ? {} : { ref: event.ref }),
+      };
     case 'task_created':
       return {
         ...base,
@@ -159,10 +195,13 @@ export function cardFor(event: CrosstalkEvent): InboxCard {
       }
       return { ...base, kind: 'system', summary: clip(`${event.kind} ${event.taskId} ${event.state}`) };
     case 'claim_raised':
+      // The assertion is the claim. Clipping it to 120 leaves the reader with
+      // an id and half a sentence to rule on.
       return {
         ...base,
         kind: 'claim',
         summary: clip(`${event.claim.id} raised: ${event.claim.assertion}`),
+        ...carry(event.claim.assertion),
       };
     case 'claim_response':
       return { ...base, kind: 'claim', summary: clip(`${event.claimId} ${event.verdict}`) };

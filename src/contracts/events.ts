@@ -42,7 +42,19 @@ export type CrosstalkEvent =
   // `codex-2` exists without knowing what it is.
   | (EventBase & { kind: 'participant_joined'; participant: Participant })
   | (EventBase & { kind: 'participant_left'; participantId: ParticipantId })
-  | (EventBase & { kind: 'message'; room: RoomId; body: string; to?: ParticipantId })
+  | (EventBase & {
+      kind: 'message';
+      room: RoomId;
+      body: string;
+      to?: ParticipantId;
+      /**
+       * An artifact carrying the depth this message points at — a path, a SHA,
+       * a file the author wrote. The board carries the finding; `ref` carries
+       * the evidence. Added so `SAY_LIMIT` compresses prose without costing
+       * detail.
+       */
+      ref?: string;
+    })
   | (EventBase & { kind: 'task_created'; task: Task })
   | (EventBase & { kind: 'task_state'; taskId: string; state: TaskState; reason?: string })
   | (EventBase & { kind: 'brief_ack'; taskId: string; ack: Acknowledgement })
@@ -148,3 +160,26 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 
 /** An event as authored, before the daemon stamps ordering. */
 export type DraftEvent = DistributiveOmit<CrosstalkEvent, 'seq' | 'ts'>;
+
+/**
+ * The longest body `say` accepts from an agent.
+ *
+ * Beacon-1 measured the opposite failure: bodies were unbounded and delivery
+ * was clipped to 120 characters, so the strongest seat had 95% of its output
+ * dropped on the way to its teammates. Capping the author instead of the
+ * reader keeps the whole message deliverable and puts the choice of what to cut
+ * with the only party who knows — and `ref` means nothing has to be cut at all.
+ *
+ * `@human` is exempt: the operator posts the job, and a job brief is not chat.
+ */
+export const SAY_LIMIT = 1500;
+
+/** null when the body is postable, otherwise the refusal an agent can act on. */
+export function refuseOversizeBody(body: string, from: string): string | null {
+  if (from === '@human') return null;
+  if (body.length <= SAY_LIMIT) return null;
+  return (
+    `message is ${body.length} characters, over the ${SAY_LIMIT} limit. ` +
+    'Post the finding and put the detail in an artifact, then name it with `ref`.'
+  );
+}

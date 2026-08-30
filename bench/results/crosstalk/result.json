@@ -6,9 +6,9 @@
   "seedVisible": true,
   "contradictionNamed": true,
   "vacuousGreenWin": false,
-  "wallClockSeconds": 107,
+  "wallClockSeconds": 124,
   "blockedWaitSeconds": 0,
   "ceremonyTokensBeforeFirstEdit": 237,
   "operatorMinutes": 6,
-  "lookNote": "Same visible seed HTML. C-1 raised (seq 15). Builder inbox.job was the T-01 brief, not the floor novel. act.accept closed T-01 and T-02; inbox went idle. Independent typecheck/test(4)/build pass. Ceremony is worker brief plus T-01 task job (chars/4)."
+  "lookNote": "Same visible seed HTML. C-1 raised (seq 14). Builder inbox.job was T-01 brief. act.accept closed T-01 and T-02. Independent typecheck/test(4)/build pass."
 }

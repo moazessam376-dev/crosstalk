@@ -107,6 +107,24 @@ export async function enterRung(
     }),
   ];
 
+  // SPOC sits on the human rung. @human still decides; timeout still
+  // escalates rather than auto-accepting. The wake is a directed board note
+  // so inbox surfaces it without a new event kind.
+  if (rung === 'human') {
+    const spoc = ctx.config.participants.find((participant) => participant.role === 'spoc');
+    if (spoc !== undefined) {
+      events.push(
+        await ctx.append({
+          kind: 'message',
+          from: SYSTEM_ID,
+          room,
+          to: spoc.id,
+          body: `Human ladder rung is live on ${decision.id}. Advise; ${HUMAN_ID} still decides.`,
+        }),
+      );
+    }
+  }
+
   // A rung nobody can answer is entered and then failed, never skipped in
   // silence: the log has to show it was tried. `planLadder` already removed
   // the rungs this project can never run; this is the one that could, today,

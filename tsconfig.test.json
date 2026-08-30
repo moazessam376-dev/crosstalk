@@ -7,6 +7,6 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["src/**/*", "tests/**/*", "vitest.config.ts"],
+  "include": ["src/**/*", "tests/**/*", "vitest.config.ts", "bench/score.ts", "bench/quorum/packages/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

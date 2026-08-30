@@ -6,6 +6,8 @@ import type { ChannelRoom, ParticipantStatus, ParticipantView } from '../state/d
 import { assignColours, identityFor } from '../state/identity.js';
 import { HUMAN_ID } from '../../contracts/room.js';
 import type { MirrorView } from '../state/useMirror.js';
+// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
+import { ComposeForm } from './ComposeForm.js';
 
 export interface DockProps {
   events: CrosstalkEvent[];
@@ -16,6 +18,7 @@ export interface DockProps {
   self?: string;
   /** Absent without a daemon, which is when no control should render at all. */
   onOpenSideRoom?: (participantId: string) => void;
+  onCompose?: (job: string) => Promise<{ ok: boolean; reason?: string }>;
   /**
    * The GitHub mirror, from `GET /mirror` rather than from the log — it has no
    * write path into the log and this hub does not give it one.
@@ -94,7 +97,7 @@ function mirrorState(mirror: MirrorView): string {
   return mirror.enabled ? 'running' : 'not running';
 }
 
-export function Dock({ events, participants, rooms, activeRoom, self, onOpenSideRoom, mirror }: DockProps) {
+export function Dock({ events, participants, rooms, activeRoom, self, onOpenSideRoom, onCompose, mirror }: DockProps) {
   const room = rooms.find((candidate) => candidate.id === activeRoom);
   const scoped = activeRoom === undefined ? [] : events.filter((event) => event.room === activeRoom);
   const lastSeq = scoped.at(-1)?.seq;
@@ -111,6 +114,9 @@ export function Dock({ events, participants, rooms, activeRoom, self, onOpenSide
   return createElement(
     'aside',
     { className: 'hub-region hub-dock', 'aria-label': 'inspector', 'data-testid': 'hub-region' },
+    onCompose === undefined
+      ? null
+      : section('Compose', undefined, createElement(ComposeForm, { onStart: onCompose }), 'dock-compose'),
     section(
       'Room',
       room?.kind,

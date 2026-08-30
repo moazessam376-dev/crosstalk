@@ -12,6 +12,7 @@ import { ProtocolError } from '../contracts/errors.js';
 import type { ParticipantId } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { EventLog } from '../core/log.js';
+import { renderInbox, type Inbox } from '../core/inbox.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
 import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js';
 import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
@@ -34,6 +35,7 @@ import {
   acknowledgeTask,
   addEvidence,
   addressesParticipant,
+  assignTask,
   board,
   castVote,
   proposeTest,
@@ -52,6 +54,7 @@ import { loadConfig } from './config.js';
 import { acquireLock, recordLockUrl, releaseLock } from './lock.js';
 import { isBlockedPort, NoUsablePortError, pickUsablePort } from './ports.js';
 import { DaemonError } from './errors.js';
+import { probeCliHarnesses } from '../harness/path.js';
 
 /**
  * The default interface. Never `localhost`: it resolves to `::1` first on
@@ -599,6 +602,14 @@ class Daemon {
       send(response, 200, await this.#awaitTurn(who, url));
       return;
     }
+    if (path === '/inbox' && method === 'GET') {
+      send(response, 200, await this.#inboxTurn(who, url));
+      return;
+    }
+    if (path === '/harnesses' && method === 'GET') {
+      send(response, 200, { harnesses: await probeCliHarnesses() });
+      return;
+    }
     if (path === '/roster' && method === 'GET') {
       const present = (id: ParticipantId): boolean => this.#presence.isPresent(id, Date.now());
       send(response, 200, {
@@ -649,6 +660,8 @@ class Daemon {
     if (path === '/events') return (ctx, body) => this.#appendMessage(ctx, body);
     if (path === '/claims') return raiseClaim;
     if (path === '/tasks') return createTask;
+    if (path === '/tasks/assign') return assignTask;
+    if (path === '/compose') return (ctx, body) => this.#composeJob(ctx, body);
     if (path === '/decisions') return openDecision;
 
     const claimResponse = matchPath(path, '/claims/:id/response');
@@ -812,6 +825,28 @@ class Daemon {
     });
 
     return events.length > 0 ? this.#deliver(who, events) : { idle: true };
+  }
+
+  async #composeJob(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
+    const role = this.#config.participants.find((participant) => participant.id === ctx.who)?.role;
+    if (ctx.who !== HUMAN_ID && role !== 'human') {
+      throw new DaemonError('ROLE_NOT_PERMITTED', 'POST /compose requires the human seat');
+    }
+    const job = body['job'];
+    if (typeof job !== 'string' || job.trim() === '') {
+      throw new DaemonError('MALFORMED_BODY', '`job` is required');
+    }
+    return this.#appendMessage(ctx, { kind: 'message', room: FLOOR, body: job.trim() });
+  }
+
+  async #inboxTurn(who: ParticipantId, url: URL): Promise<Inbox> {
+    const wait = url.searchParams.get('wait') !== '0';
+    const query = new URL(url.href);
+    if (!wait) query.searchParams.set('timeout_s', '0');
+    const awaited = await this.#awaitTurn(who, query);
+    const unread = 'events' in awaited ? awaited.events : [];
+    const role = this.#config.participants.find((participant) => participant.id === who)?.role ?? 'observer';
+    return renderInbox({ who, role, unread, state: this.#state });
   }
 
   /**

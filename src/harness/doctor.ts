@@ -333,14 +333,12 @@ export async function checkPrerequisites(
   const repositoryFinding = await repositoryPrerequisite(repoRoot);
   if (repositoryFinding !== undefined) return repositoryFinding;
 
-  if (configuredAgentCount(config) === 0) {
-    return finding(
-      'reject',
-      'NO_HARNESS',
-      'No agent harness is configured; Crosstalk has nobody to run.',
-      'Install and sign in to at least one supported agent harness, then add it as a non-human participant.',
-    );
-  }
+  // "No agent is seated" was a blocker here, and blockers are fatal to both
+  // callers. It is no longer one: an unstaffed repo is the ordinary starting
+  // state of `crosstalk up`, since the team is picked in the hub. It is
+  // reported as a warning from `doctor`'s main pass instead — see
+  // ROSTER_UNSTAFFED — because this function is only for things that must stop
+  // the daemon from starting at all.
 
   return undefined;
 }
@@ -520,7 +518,22 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
   // peers, no leader). The generator and the validator must agree or `init`
   // emits what `doctor` rejects.
   const flat = leaders.length === 0 && peers.length >= 2;
-  if (!flat && leaders.length !== 1) {
+  // A roster with nobody but the operator is not a broken roster, it is a repo
+  // nobody has staffed yet. `crosstalk up` writes one so the hub can open, and
+  // the team is chosen there — rejecting it would put the picker behind the
+  // command line it exists to replace. Everything below still applies the
+  // moment a builder is added.
+  const unstaffed = config.participants.every(
+    (participant) => participant.role === 'human' || participant.role === 'observer',
+  );
+  if (unstaffed || configuredAgentCount(config) === 0) {
+    findings.push(finding(
+      'warn',
+      'ROSTER_UNSTAFFED',
+      'No agent is seated yet, so nothing will run until the team is staffed.',
+      'Staff the team in the hub, or pass --participant to `crosstalk init`.',
+    ));
+  } else if (!flat && leaders.length !== 1) {
     findings.push(finding(
       'reject',
       'LEADER_COUNT',

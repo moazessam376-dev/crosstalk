@@ -149,6 +149,14 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
       cwd,
       first: job,
       turnFormat: descriptor.turnFormat,
+      // A seat that never got its job is indistinguishable, from the board,
+      // from a seat ignoring the room. Say which it is.
+      onStuck: (message) => {
+        void (async () => {
+          const human = await DaemonClient.open(repo, HUMAN_ID);
+          await human.post('/events', { kind: 'message', room: FLOOR, body: `${participant.id} ${message}` });
+        })().catch(() => {});
+      },
       ...(options.spawnProcess === undefined ? {} : { spawn: options.spawnProcess }),
       ...(options.spawnPty === undefined ? {} : { spawnPty: options.spawnPty }),
       // Only when somebody is there to look. Capture is a parse per chunk, and

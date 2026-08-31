@@ -83,6 +83,60 @@ export const SUBMIT_DELAY_MS = 250;
 
 const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
+/**
+ * Raised instead of pressing Return at something that is not a composer.
+ *
+ * Named rather than silent because the two ways this can go wrong are both
+ * things an operator has to be told: a seat that never gets its job, and a seat
+ * that gets killed by the attempt.
+ */
+export class NotAtAPromptError extends Error {
+  constructor(who: string) {
+    super(`${who} is not at a prompt: it did not echo what was typed, so Return would answer whatever is on screen`);
+    this.name = 'NotAtAPromptError';
+  }
+}
+
+/** How much of a turn has to be echoed back before Return is safe to press. */
+const ECHO_PROBE = 24;
+
+/**
+ * How long to keep offering the opening job to a seat that is not at a prompt.
+ *
+ * Generous on purpose: the thing in the way is usually a confirmation only the
+ * operator may answer, and they may be three tabs away. A seat that gets its
+ * job four minutes late is a seat that works; one that gave up after five
+ * seconds is a seat that has to be relaunched.
+ */
+const FIRST_TURN_TIMEOUT_MS = 10 * 60 * 1000;
+const FIRST_TURN_RETRY_MS = 4000;
+
+const flatten = (text: string): string => text.replace(/\s+/g, ' ').trim();
+
+/**
+ * Whether what was just typed is actually on the screen.
+ *
+ * The Return that submits a turn is the same keystroke that answers a modal,
+ * and a seat does not always come up at a composer: Claude Code opens on a
+ * bypass-permissions confirmation whose default option is **No, exit**. Typing
+ * a job at a fixed delay and pressing Return into that selects "No, exit", and
+ * the seat is gone before it has read a line of its brief — measured, three
+ * seats at once, all `exited 1`.
+ *
+ * So look first. If the text came back on the screen, there is a text field
+ * under the cursor and Return submits it. If it did not, this is a dialog, a
+ * pager, a splash — something where Return means something else — and the
+ * caller is told rather than guessing.
+ *
+ * A prefix, not the whole turn: a brief is longer than the screen is wide and
+ * wraps, and the composer scrolls once it is deeper than its box.
+ */
+export function showsTyped(screen: Screen, typed: string): boolean {
+  const needle = flatten(typed).slice(0, ECHO_PROBE);
+  if (needle === '') return true;
+  return flatten(screen.text()).includes(needle);
+}
+
 export type SpawnProcess = (
   file: string,
   args: string[],
@@ -118,6 +172,10 @@ export function openSession(args: {
   readyDelayMs?: number;
   /** Interactive only: the gap between typing a turn and pressing Return. */
   submitDelayMs?: number;
+  /** Interactive only: how long to keep offering the opening job. */
+  readyTimeoutMs?: number;
+  /** Told when the opening job could not be delivered, so nothing is silent. */
+  onStuck?: (message: string) => void;
   /**
    * Reconstruct the seat's terminal from its output, so the hub can mirror it.
    *
@@ -146,16 +204,44 @@ export function openSession(args: {
     }
     // A terminal takes typing, not envelopes — and the Return that submits it
     // has to arrive as its own keystroke. See SUBMIT_DELAY_MS.
-    transport.write(turn.replace(/\n/g, ' '));
+    const typed = turn.replace(/\n/g, ' ');
+    transport.write(typed);
     await pause(args.submitDelayMs ?? SUBMIT_DELAY_MS);
+    // Look before pressing Return. See `showsTyped`.
+    if (screen !== undefined && !showsTyped(screen, typed)) {
+      throw new NotAtAPromptError(args.argv[0] ?? 'the seat');
+    }
     transport.write(RETURN);
   };
 
-  // An interactive session has to finish drawing before it will accept input.
-  // Typing into the splash screen loses the job silently, which reads exactly
-  // like a seat that joined and then ignored the board.
+  // An interactive session has to finish drawing before it will accept input,
+  // and drawing is not the only thing it might be doing: Claude Code opens on a
+  // confirmation nobody but the operator may answer. So the opening job is
+  // offered until the seat is actually at a prompt, rather than fired once at a
+  // guess of a delay — which is how the job used to land in a dialog.
   if (interactive) {
-    setTimeout(() => void send(args.first), args.readyDelayMs ?? 4000);
+    void (async () => {
+      await pause(args.readyDelayMs ?? 4000);
+      const deadline = Date.now() + (args.readyTimeoutMs ?? FIRST_TURN_TIMEOUT_MS);
+      for (;;) {
+        try {
+          await send(args.first);
+          return;
+        } catch (error) {
+          if (!(error instanceof NotAtAPromptError)) throw error;
+          if (Date.now() >= deadline) {
+            // Never silent. A seat that never got its job looks exactly like a
+            // seat ignoring the room, and that ambiguity is the thing this
+            // project exists to remove.
+            args.onStuck?.(
+              'is waiting on something on its own screen — its job has not been delivered. Open its terminal in the hub and answer it.',
+            );
+            return;
+          }
+          await pause(FIRST_TURN_RETRY_MS);
+        }
+      }
+    })();
   } else if (push) {
     void send(args.first);
   }

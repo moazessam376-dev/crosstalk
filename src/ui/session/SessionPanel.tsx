@@ -121,16 +121,21 @@ export function SessionPanel({ seat, onClose }: SessionPanelProps) {
             { className: 'session-empty' },
             'Waiting for the first frame from this terminal.',
           )
-        : createElement(Terminal, { screen: mirror.screen, live: mirror.running }),
+        : createElement(Terminal, {
+            screen: mirror.screen,
+            live: mirror.running,
+            // Only while there is a process to receive them. A dead seat that
+            // still swallowed the keyboard would be a trap.
+            ...(mirror.running === true ? { onKey: (bytes: string) => void press(bytes, 'that key') } : {}),
+          }),
     notice === undefined
       ? null
       : createElement('p', { className: 'session-notice', role: 'alert', 'data-testid': 'session-notice' }, notice),
-    // A seat can stall on a dialog it drew itself — a trust prompt, a mode
-    // confirmation, an update notice — and none of those are answered by a
-    // turn: `send` appends Return to a *prompt*, and the thing on screen wants
-    // an arrow key. The mirror could watch a seat wait on a question forever
-    // and had no way to answer it, which made it a window rather than a
-    // terminal. These are the keys those dialogs are driven with.
+    // The terminal itself takes the keyboard, so this row is a fallback: touch,
+    // where there is no keyboard to focus, and a hint that the panel is
+    // driveable at all. Four buttons were briefly the *only* way in, which
+    // worked for exactly the four things guessed in advance — the first dialog
+    // with a text field would have been unanswerable again.
     //
     // Not gated on `canPush`: a keystroke goes to the pty as bytes, so it works
     // on a seat that reads its prompt once and cannot take another turn.

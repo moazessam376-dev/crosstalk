@@ -4,6 +4,9 @@ import type { Task } from '../../contracts/task.js';
 import { project } from '../../core/projection.js';
 import type { ChannelRoom, ParticipantStatus, ParticipantView } from '../state/derive.js';
 import { assignColours, identityFor } from '../state/identity.js';
+// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
+import { HarnessMark } from '../marks/HarnessMark.js';
+import { harnessKind } from '../marks/kind.js';
 import { HUMAN_ID } from '../../contracts/room.js';
 import type { MirrorView } from '../state/useMirror.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -19,6 +22,18 @@ export interface DockProps {
   /** Absent without a daemon, which is when no control should render at all. */
   onOpenSideRoom?: (participantId: string) => void;
   onCompose?: (job: string) => Promise<{ ok: boolean; reason?: string }>;
+  /**
+   * Open a seat's mirrored CLI.
+   *
+   * Absent when nothing can be mirrored — a fixture hub, or a daemon that
+   * started no sessions — and the row is then not a button. A control that
+   * cannot work is the defect CT-10 is about.
+   */
+  onOpenSession?: (participantId: string) => void;
+  /** Seats this daemon holds a terminal for, from `GET /sessions`. */
+  mirrored?: ReadonlySet<string>;
+  /** What to call the operator's own seat in the roster. */
+  operator?: string;
   /**
    * The GitHub mirror, from `GET /mirror` rather than from the log — it has no
    * write path into the log and this hub does not give it one.
@@ -97,7 +112,19 @@ function mirrorState(mirror: MirrorView): string {
   return mirror.enabled ? 'running' : 'not running';
 }
 
-export function Dock({ events, participants, rooms, activeRoom, self, onOpenSideRoom, onCompose, mirror }: DockProps) {
+export function Dock({
+  events,
+  participants,
+  rooms,
+  activeRoom,
+  self,
+  onOpenSideRoom,
+  onOpenSession,
+  onCompose,
+  mirror,
+  mirrored,
+  operator,
+}: DockProps) {
   const room = rooms.find((candidate) => candidate.id === activeRoom);
   const scoped = activeRoom === undefined ? [] : events.filter((event) => event.room === activeRoom);
   const lastSeq = scoped.at(-1)?.seq;
@@ -174,12 +201,8 @@ export function Dock({ events, participants, rooms, activeRoom, self, onOpenSide
                 },
                 createElement(
                   'span',
-                  { className: 'member-avatar-wrap' },
-                  createElement(
-                    'span',
-                    { className: 'avatar avatar-md', style: { background: identity.colour }, 'aria-hidden': 'true' },
-                    identity.initials,
-                  ),
+                  { className: 'member-avatar-wrap', 'data-harness': harnessKind(member.harness) },
+                  createElement(HarnessMark, { harness: member.harness, size: 15, fallback: identity.initials }),
                   createElement('span', {
                     className: 'status-dot',
                     'data-status': member.status,
@@ -189,13 +212,31 @@ export function Dock({ events, participants, rooms, activeRoom, self, onOpenSide
                     'data-testid': `member-dot-${member.id}`,
                   }),
                 ),
+                // Clicking a seat opens its terminal. The board says what the
+                // team decided; a seat spends minutes reading files between
+                // messages, and during those minutes the board shows an agent
+                // that has said nothing and looks stalled.
                 createElement(
-                  'span',
-                  { className: 'member-body' },
+                  onOpenSession !== undefined && mirrored?.has(member.id) === true ? 'button' : 'span',
+                  {
+                    className: 'member-body',
+                    ...(onOpenSession !== undefined && mirrored?.has(member.id) === true
+                      ? {
+                          type: 'button',
+                          'data-testid': `open-session-${member.id}`,
+                          title: `Open ${member.id}'s terminal`,
+                          onClick: () => onOpenSession(member.id),
+                        }
+                      : {}),
+                  },
                   createElement(
                     'span',
                     { className: 'member-line' },
-                    createElement('span', { className: 'member-id' }, member.id),
+                    createElement(
+                      'span',
+                      { className: 'member-id' },
+                      operator !== undefined && member.id === (self ?? HUMAN_ID) ? operator : member.id,
+                    ),
                     createElement('span', { className: 'member-role' }, member.role),
                   ),
                   // `harness · model effort · tier`, with whatever the log omits
@@ -235,24 +276,9 @@ export function Dock({ events, participants, rooms, activeRoom, self, onOpenSide
       ),
       'dock-participants',
     ),
-    mirror === undefined
-      ? null
-      : section(
-          'Mirror',
-          mirrorState(mirror),
-          rows([
-            ...(mirror.lastDrain === undefined
-              ? []
-              : ([
-                  ['synced', String(mirror.lastDrain.completed)],
-                  // Shown even at zero. A mirror retrying every item forever
-                  // publishes nothing and looks, from a `synced` count alone,
-                  // exactly like one with nothing to do.
-                  ['retrying', String(mirror.lastDrain.retrying)],
-                ] as [string, string][])),
-            ...(mirror.lastError === undefined ? [] : ([['error', mirror.lastError]] as [string, string][])),
-          ]),
-          'dock-mirror',
-        ),
+    // The mirror moved to the environment rail, which is where the facts that
+    // frame a whole run belong. Two surfaces reporting one status is two
+    // vocabularies for one fact, and the operator has to learn which is
+    // authoritative — so the dock stopped saying it.
   );
 }

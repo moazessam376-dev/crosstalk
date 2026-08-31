@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import type { Claim } from '../../contracts/claim.js';
 import type { CrosstalkEvent } from '../../contracts/events.js';
+import { HUMAN_ID } from '../../contracts/room.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { ClaimCard } from '../cards/ClaimCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -28,6 +29,8 @@ export interface StreamProps {
   maxRounds?: number;
   /** Who the daemon attributes this browser's posts to. */
   self?: string;
+  /** What to call the operator's own seat. Absent until they have named it. */
+  operator?: string;
   /** `live`, `connecting` or `reconnecting`. Fixture mode never renders a stream. */
   status?: string;
   onSend?: (body: string) => Promise<PostResult>;
@@ -66,6 +69,7 @@ export function Stream({
   participants,
   maxRounds,
   self,
+  operator,
   status = 'live',
   onSend,
   onVote,
@@ -102,6 +106,7 @@ export function Stream({
         harness: author?.harness,
         tier: author?.tier,
         colour: colours.get(event.from),
+        ...(operator !== undefined && event.from === (self ?? HUMAN_ID) ? { displayName: operator } : {}),
         mention: mentionIn(event.body, roster),
         testId: 'card-message-' + event.seq,
       });
@@ -179,7 +184,7 @@ export function Stream({
               { className: 'first-run-note' },
               self === undefined
                 ? 'Start an agent, or post the first message below.'
-                : `Connected as ${self}. Start an agent, or post the first message below.`,
+                : `Connected as ${operator ?? self}. Start an agent, or post the first message below.`,
             ),
           )
         : null,
@@ -202,6 +207,6 @@ export function Stream({
         )
       : null,
     // §10.3: a composer on every room, disputes included.
-    activeRoom && onSend ? createElement(Composer, { room: activeRoom, self, onSend }) : null,
+    activeRoom && onSend ? createElement(Composer, { room: activeRoom, self, operator, onSend }) : null,
   );
 }

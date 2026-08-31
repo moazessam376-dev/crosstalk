@@ -2307,6 +2307,16 @@ button:focus-visible {
   50% { opacity: 0; }
 }
 
+.terminal[tabindex] {
+  /* It takes the keyboard, so it has to show when it holds it. */
+  cursor: text;
+}
+
+.terminal[tabindex]:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .session-keys {
   /* Above the composer and quieter than it: keys answer a dialog the seat drew,
      which is a smaller act than typing a turn to an agent. */

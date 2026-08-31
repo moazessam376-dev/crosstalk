@@ -23,6 +23,14 @@ export async function driveSupervised(args: {
     await args.notify(`supervised child exited (${code ?? 'null'})`);
   });
 
+  // A seat can be alive and unable to take a turn: it is sitting on a
+  // confirmation it drew itself, and typing at it would answer that rather than
+  // submit anything. `write` refuses in that case, and refusing must not end
+  // the wake loop — the operator answers the dialog and the next board event
+  // has to still arrive. Reported on the transition only, so a seat stuck for
+  // an hour says so once rather than every fifty seconds.
+  let stuck = false;
+
   const loop = (async () => {
     while (running) {
       const inbox = await Promise.race([
@@ -31,7 +39,19 @@ export async function driveSupervised(args: {
       ]);
       if (!running || inbox === undefined) return;
       if (inbox.unread.length === 0 && inbox.next === 'idle') continue;
-      await args.write(format(inbox));
+      try {
+        await args.write(format(inbox));
+        if (stuck) {
+          stuck = false;
+          await args.notify('is taking turns again');
+        }
+      } catch (error) {
+        if (!stuck) {
+          stuck = true;
+          const why = error instanceof Error ? error.message : String(error);
+          await args.notify(`could not be given the board: ${why}`);
+        }
+      }
     }
   })();
 

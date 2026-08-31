@@ -1,5 +1,6 @@
 import { createElement } from 'react';
 import type { MirrorRun, MirrorScreen } from '../state/useSessionMirror.js';
+import { keyBytes, type KeyStroke } from './keys.js';
 
 /**
  * Fold any of xterm's 256 indices onto the sixteen the theme defines.
@@ -52,6 +53,12 @@ export interface TerminalProps {
   screen: MirrorScreen;
   /** Drawn only while the seat is alive: a dead terminal has no cursor. */
   live?: boolean;
+  /**
+   * Where a keystroke goes. Absent, the screen is a picture of a terminal
+   * rather than a terminal — which is what it was until an operator watched
+   * three seats stop on a dialog they could see and could not answer.
+   */
+  onKey?: (bytes: string) => void;
 }
 
 /**
@@ -68,14 +75,32 @@ export interface TerminalProps {
  * Row 4 stays row 4 when its text changes, and keying by text would make React
  * tear down and rebuild the row on every repaint.
  */
-export function Terminal({ screen, live = true }: TerminalProps) {
+export function Terminal({ screen, live = true, onKey }: TerminalProps) {
+  const takesKeys = onKey !== undefined;
   return createElement(
     'div',
     {
       className: 'terminal',
       'data-testid': 'terminal',
-      role: 'log',
-      'aria-label': 'agent terminal',
+      // Focusable, so it can take the keyboard the way a terminal does. A
+      // `log` is something you read; this is something you type into.
+      ...(takesKeys
+        ? {
+            tabIndex: 0,
+            role: 'application',
+            'aria-label': 'agent terminal — click to type into this seat',
+            onKeyDown: (event: KeyStroke & { preventDefault(): void; stopPropagation(): void }) => {
+              const bytes = keyBytes(event);
+              if (bytes === undefined) return;
+              // Only once we are actually sending it. Letting the browser keep
+              // the ones we do not handle is what leaves Cmd-R and Cmd-C alone,
+              // and stops the page scrolling under an arrow key we did send.
+              event.preventDefault();
+              event.stopPropagation();
+              onKey(bytes);
+            },
+          }
+        : { role: 'log', 'aria-label': 'agent terminal' }),
       // The grid is fixed-width by construction, so the panel scales the whole
       // screen rather than reflowing it — a mirror that rewrapped would stop
       // being a mirror.

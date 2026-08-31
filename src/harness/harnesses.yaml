@@ -34,3 +34,15 @@ harnesses:
     mcp: stdio
     mcpConfigPath: .cursor/mcp.json
     supervisable: false
+  claude-code-live:
+    briefFile: CLAUDE.md
+    mcp: stdio
+    mcpConfigPath: .mcp.json
+    supervisable: true
+    # An interactive seat the operator can watch and steer from a phone.
+    # `--remote-control` needs a terminal, so `openSession` wraps this in a pty;
+    # spawned without one, Claude Code falls back to print mode and exits.
+    # `bypassPermissions` because an interactive session that asks is a session
+    # that stalls, and nobody is at the keyboard at 4am.
+    spawn: [claude, --remote-control, --permission-mode, bypassPermissions]
+    turnFormat: interactive

@@ -29,8 +29,10 @@ export type GateId =
   | 'split-agreed'
   | 'no-shared-files'
   | 'tests-green'
+  | 'self-verified'
   | 'bug-list-posted'
-  | 'run-clean';
+  | 'run-clean'
+  | 'integration-verified';
 
 export interface Gate {
   id: GateId;
@@ -113,6 +115,14 @@ const CONTRACT_FIRST: Phase[] = [
         by: 'asserted',
         quorum: 'all',
       },
+      {
+        id: 'self-verified',
+        need:
+          'Each seat has *run* its own surface and looked at the result — not just a green suite — ' +
+          'and posted what it saw with `ref: gate:self-verified`. Name the sizes, states and inputs you covered.',
+        by: 'asserted',
+        quorum: 'all',
+      },
     ],
   },
   {
@@ -138,6 +148,14 @@ const CONTRACT_FIRST: Phase[] = [
       {
         id: 'run-clean',
         need: 'A full run is clean, posted with `ref: gate:run-clean`.',
+        by: 'asserted',
+        quorum: 'any',
+      },
+      {
+        id: 'integration-verified',
+        need:
+          'The integrating seat has re-run the same first-hand verification on the *assembled* build — ' +
+          'not on its own branch — and posted what it saw with `ref: gate:integration-verified`.',
         by: 'asserted',
         quorum: 'any',
       },
@@ -168,9 +186,18 @@ const TRIO_CONTRACT: TeamShape = {
         'Only the transitions are gated — inside a phase, work however you like.',
         '',
         '- **plan** — agree the shared contract file and a split where no two seats own the same file. Post your slice with `say({room:"#floor", body:"...", ref:"gate:split-agreed"})`. Write no source yet.',
-        '- **build** — your own files only. The contract is frozen: if it has to change, say so on the board instead of editing around it. Post your green run with `ref:"gate:tests-green"`.',
+        '- **build** — your own files only. The contract is frozen: if it has to change, say so on the board instead of editing around it. Post your green run with `ref:"gate:tests-green"`, and then verify your own surface first-hand and post that with `ref:"gate:self-verified"`.',
         '- **verify** — one of you merges every branch and plays the whole thing. Post what is broken with `ref:"gate:bug-list-posted"` *before* fixing anything, so the list is on the record.',
-        '- **repair** — that same seat fixes the list. Post the clean run with `ref:"gate:run-clean"`.',
+        '- **repair** — that same seat fixes the list, posts the clean run with `ref:"gate:run-clean"`, and then re-runs the first-hand verification on the assembled build with `ref:"gate:integration-verified"`.',
+        '',
+        '**Verifying your own work is a gate, not a courtesy.** Nobody may hand work to the team as done',
+        'without having run it and looked at the result. A green suite over a surface no one has watched is not',
+        'a delivery, and neither is a screenshot nobody opened.',
+        '',
+        '**Ask what your checks structurally cannot see, and go and look there.** A previous team passed 22 of 22',
+        'acceptance checks, a 10-shot screenshot tour and every keyboard shortcut it advertised — all at the one',
+        'window size its brief happened to name. More checks inside the frame you were handed will not find the',
+        'thing outside it. State plainly what you covered and what you did not.',
         '',
         'Ask a peer directly when you need one opinion rather than the room: `crosstalk dm --as <you> --with <them> --body "..."`. @human is in that room too, so it is a side room, not a back channel.',
       ].join('\n'),

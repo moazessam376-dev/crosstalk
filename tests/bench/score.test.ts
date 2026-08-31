@@ -68,4 +68,22 @@ describe('quorum scorer', () => {
     const dumped = firstEditCeremonyTokens({ cell: 'crosstalk', jobText: job, extraBeforeEdit: worker + job });
     expect(dumped).toBeGreaterThan(solo);
   });
+
+  it('keeps the declared roster on a cell result', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ct-roster-'));
+    const roster = [
+      { seat: 'solo', model: 'claude-opus-5-thinking-high', effort: 'high', note: 'closest Task slug to Opus 5 xhigh' },
+    ];
+    for (const name of ['solo', 'github', 'crosstalk'] as const) {
+      await mkdir(join(root, name), { recursive: true });
+      await writeFile(
+        join(root, name, 'result.json'),
+        JSON.stringify(cell({ cell: name, roster })),
+        'utf8',
+      );
+    }
+    const score = await scoreResults(root);
+    expect(score.cells[0]?.roster?.[0]?.model).toBe('claude-opus-5-thinking-high');
+    expect(score.cells[0]?.roster?.[0]?.effort).toBe('high');
+  });
 });

@@ -94,6 +94,90 @@ describe('a harness that takes streamed turns', () => {
   });
 });
 
+describe('an interactive seat, watchable over Remote Control', () => {
+  it('wraps the command in a pty, because without one Claude Code falls back to print', async () => {
+    const { spawn, calls } = harness();
+    openSession({
+      argv: ['claude', '--remote-control', 'opus', '--permission-mode', 'bypassPermissions'],
+      cwd: '/tmp',
+      first: 'the job',
+      turnFormat: 'interactive',
+      readyDelayMs: 0,
+      spawn,
+    });
+
+    // Verified against the real binary: spawned without a terminal it exits
+    // with "Input must be provided ... when using --print" and Remote Control
+    // has nothing to attach to.
+    expect(calls[0]!.file).toBe('script');
+    expect(calls[0]!.args.slice(0, 3)).toEqual(['-q', '/dev/null', 'claude']);
+    expect(calls[0]!.args).toContain('--remote-control');
+  });
+
+  it('types the job rather than putting a whole brief on the command line', async () => {
+    const { spawn, calls, last } = harness();
+    openSession({
+      argv: ['claude', '--remote-control', 'opus'],
+      cwd: '/tmp',
+      first: 'build the thing',
+      turnFormat: 'interactive',
+      readyDelayMs: 0,
+      spawn,
+    });
+    await new Promise((done) => setTimeout(done, 5));
+
+    expect(calls[0]!.args).not.toContain('build the thing');
+    expect(last().written()).toEqual(['build the thing']);
+  });
+
+  it('sends one line, so a multi-line brief cannot submit itself halfway', async () => {
+    const { spawn, last } = harness();
+    const session = openSession({
+      argv: ['claude'],
+      cwd: '/tmp',
+      first: 'x',
+      turnFormat: 'interactive',
+      readyDelayMs: 0,
+      spawn,
+    });
+    await new Promise((done) => setTimeout(done, 5));
+
+    // A newline in the middle of a brief is a Return: it would submit the first
+    // paragraph and leave the rest typing into a running turn.
+    await session.send('line one\nline two\nline three');
+    expect(last().written()).toEqual(['x', 'line one line two line three']);
+  });
+
+  it('waits for the TUI to draw before typing, or the job lands on a splash screen', async () => {
+    const { spawn, last } = harness();
+    openSession({
+      argv: ['claude'],
+      cwd: '/tmp',
+      first: 'the job',
+      turnFormat: 'interactive',
+      readyDelayMs: 30,
+      spawn,
+    });
+
+    expect(last().written()).toEqual([]);
+    await new Promise((done) => setTimeout(done, 45));
+    expect(last().written()).toEqual(['the job']);
+  });
+
+  it('can still be pushed a turn mid-run, which is what makes a peer feel live', async () => {
+    const { spawn } = harness();
+    const session = openSession({
+      argv: ['claude'],
+      cwd: '/tmp',
+      first: 'x',
+      turnFormat: 'interactive',
+      readyDelayMs: 0,
+      spawn,
+    });
+    expect(session.canPush).toBe(true);
+  });
+});
+
 describe('a harness that reads its prompt once', () => {
   it('takes the job on argv and refuses a later turn', async () => {
     const { spawn, calls } = harness();

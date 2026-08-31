@@ -3,13 +3,27 @@ import { join } from 'node:path';
 
 export type Cell = 'solo' | 'github' | 'crosstalk';
 
+export interface SeatRoster {
+  seat: string;
+  model: string;
+  /** Declared effort (high / xhigh / fast / medium). Unverified. */
+  effort: string;
+  note?: string;
+}
+
 export interface CellResult {
   cell: Cell;
   typecheck: 'pass' | 'fail';
   test: 'pass' | 'fail';
   build: 'pass' | 'fail';
-  /** Did a human look and see the seeded list? Vacuous-green is not this. */
+  /**
+   * Did a human look and see the shipped surface? For Quorum that is the
+   * seeded list. For Leeward that is water, a boat, and the school — not an
+   * empty canvas. Vacuous-green is not this.
+   */
   seedVisible: boolean;
+  /** Who ran which seat. Required on Leeward so the score names the models. */
+  roster?: SeatRoster[];
   contradictionNamed: boolean;
   /**
    * True when the cell claims a win because tests are green and the seed

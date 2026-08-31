@@ -1,7 +1,11 @@
-# Quorum bench — operator script
+# Bench — operator script
 
-Same `JOB.md`, same fixture SHA, two-hour box, same three models on both team
-cells. Solo is the strongest of those three, alone.
+Same `JOB.md`, same fixture SHA, two-hour box. Record the roster (model +
+effort) on every cell. Solo is the strongest of the team models, alone.
+
+Fixtures: `bench/quorum/` (decision list) and `bench/leeward/` (Three.js
+fishing game). Leeward look is a browser look: water, boat, school, wind.
+An empty canvas with a green `createScene()` test is not a ship.
 
 Do not skip a row. A missing look-note is a missing score.
 

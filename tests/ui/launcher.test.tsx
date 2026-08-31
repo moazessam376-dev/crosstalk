@@ -173,3 +173,37 @@ describe('the launcher', () => {
     expect(screen.getByText('2 watchable from your phone')).toBeTruthy();
   });
 });
+
+/**
+ * The launcher is a page and has to scroll like one.
+ *
+ * `.hub-root` is `height: 100dvh; overflow: hidden`, and the board's three
+ * regions each scroll inside themselves. The launcher is not one of them, so
+ * with only the centred column there was no scroll container anywhere: staff
+ * more than about three seats and the job box and the button that starts the
+ * run were clipped off the bottom of the window, unreachable.
+ *
+ * jsdom computes no layout, so what is pinned here is the structure the fix
+ * depends on rather than the scrolling itself — the scroller must be the
+ * outermost element, so the scrollbar lands at the window edge and not inside
+ * the 940px column.
+ */
+describe('the launcher as a page', () => {
+  it('wraps its centred column in a full-width scroller', () => {
+    const { container } = render(
+      createElement(Launcher, { shapes: [TRIO], onLaunch: async () => ({ ok: true as const }) }),
+    );
+
+    // The frozen test config omits the `dom` lib, so the element shape this
+    // assertion needs is named rather than inherited.
+    const outer = (container as unknown as {
+      firstElementChild: {
+        className: string;
+        firstElementChild: { getAttribute(name: string): string | null } | null;
+      } | null;
+    }).firstElementChild;
+
+    expect(outer?.className).toBe('launcher-scroll');
+    expect(outer?.firstElementChild?.getAttribute('data-testid')).toBe('launcher');
+  });
+});

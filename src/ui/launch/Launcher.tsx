@@ -249,7 +249,16 @@ export function Launcher({ shapes, launching, onLaunch, running = [] }: Launcher
     ),
   );
 
+  // Two elements, not one. The scroller has to be the full-width child of
+  // `.hub-root` — which is `height: 100dvh; overflow: hidden` — while the
+  // content stays a centred column. With only the centred element there was no
+  // scroll container at all: the board's regions each scroll internally and the
+  // launcher is not one of them, so a roster of more than about three seats was
+  // simply clipped at the bottom of the window with no way to reach it.
   return h(
+    'div',
+    { className: 'launcher-scroll' },
+    h(
     'div',
     { className: 'launcher', 'data-testid': 'launcher' },
     h(
@@ -363,6 +372,7 @@ export function Launcher({ shapes, launching, onLaunch, running = [] }: Launcher
         { className: 'launch-hint' },
         `${seats.length} ${seats.length === 1 ? 'seat' : 'seats'}${shapeName === undefined ? ' · no shape' : ` · ${shapeName}`}`,
       ),
+    ),
     ),
   );
 }

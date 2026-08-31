@@ -30,6 +30,7 @@ export async function driveSupervised(args: {
   // has to still arrive. Reported on the transition only, so a seat stuck for
   // an hour says so once rather than every fifty seconds.
   let stuck = false;
+  let lastTurn: string | undefined;
 
   const loop = (async () => {
     while (running) {
@@ -39,8 +40,17 @@ export async function driveSupervised(args: {
       ]);
       if (!running || inbox === undefined) return;
       if (inbox.unread.length === 0 && inbox.next === 'idle') continue;
+      const turn = format(inbox);
+      // Never say the same thing twice. With nothing unread, a turn carries
+      // only the standing status — an unmet gate, a task already assigned —
+      // and repeating it is not news, it is a seat being told the same
+      // sentence until its context is full of it. The server blocks on an
+      // unchanged status too; this is the layer that protects the seat even if
+      // something upstream starts answering immediately again.
+      if (inbox.unread.length === 0 && turn === lastTurn) continue;
+      lastTurn = turn;
       try {
-        await args.write(format(inbox));
+        await args.write(turn);
         if (stuck) {
           stuck = false;
           await args.notify('is taking turns again');

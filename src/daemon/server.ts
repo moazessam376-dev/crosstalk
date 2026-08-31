@@ -1141,6 +1141,14 @@ class Daemon {
     return this.#appendMessage(ctx, { kind: 'message', room: FLOOR, body: job.trim() });
   }
 
+  /**
+   * The last standing status each seat was told, so it is not told again.
+   *
+   * Keyed by participant because the status is per-role: what blocks a peer is
+   * not what blocks the human seat watching them.
+   */
+  readonly #lastStatus = new Map<ParticipantId, string>();
+
   async #inboxTurn(who: ParticipantId, url: URL): Promise<Inbox> {
     const wait = url.searchParams.get('wait') !== '0';
     const role = this.#config.participants.find((participant) => participant.id === who)?.role ?? 'observer';
@@ -1152,7 +1160,23 @@ class Daemon {
     const inbox = renderInbox({ who, role, unread, state: this.#state, ...(phase === undefined ? {} : { phase }) });
     // A #floor job or an assigned task is already work. Waiting 50s after that
     // is how the Quorum builder spent eight polls idle while the job sat on the board.
-    if (unread.length > 0 || !wait || inbox.next !== 'idle') return inbox;
+    //
+    // But "there is work" is a standing condition, not an event, and returning
+    // on it every time turns the wake loop into a hot spin: the seat is told
+    // the same unmet gate as fast as HTTP allows, forever. Measured once the
+    // shape started reaching the config — every seat's composer filling with
+    // dozens of identical board notices, which is where a run's context went
+    // before it had written a line of code.
+    //
+    // So a *changed* status returns immediately and an unchanged one blocks.
+    // The seat still learns about new work the moment it appears, and learns
+    // about it once.
+    if (unread.length > 0 || !wait) return inbox;
+    const status = inbox.next;
+    if (status !== undefined && status !== 'idle' && this.#lastStatus.get(who) !== status) {
+      this.#lastStatus.set(who, status);
+      return inbox;
+    }
     const blocked = await this.#awaitTurn(who, url);
     const later = 'events' in blocked ? blocked.events : [];
     const after = await this.phase();

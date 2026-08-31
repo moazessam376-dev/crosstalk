@@ -72,6 +72,8 @@ export const DAEMON_STATUS: Record<DaemonErrorCode, number> = {
   NOT_A_ROOM_MEMBER: 403,
   ROLE_NOT_PERMITTED: 403,
   UNKNOWN_ROUTE: 404,
+  NO_MIRRORED_SESSION: 404,
+  SESSION_CANNOT_TAKE_TURN: 409,
   DAEMON_ALREADY_RUNNING: 409,
   PORT_IN_USE: 409,
   // Startup only, like PORT_IN_USE — thrown by `startDaemon`, never reaching

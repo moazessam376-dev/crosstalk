@@ -9,6 +9,7 @@ import { loadRegistry, type HarnessDescriptor } from '../harness/registry.js';
 import { probeCliHarnesses, type PathProbe } from '../harness/path.js';
 import { boardTurn, driveSupervised, spawnSupervised, type ExecFile } from '../harness/runner.js';
 import { openSession, type SpawnProcess } from '../harness/session.js';
+import type { SessionRegistry } from '../harness/sessions.js';
 import { trustWorkspaces } from '../harness/trust.js';
 import type { Inbox } from '../core/inbox.js';
 import { CliError, DaemonClient, EXIT, type WriteResult } from './client.js';
@@ -29,6 +30,15 @@ export interface ComposeOptions {
   postJob?: (repo: string, job: string) => Promise<void>;
   /** Injected in tests, so supervision can be driven without a real binary. */
   spawnProcess?: SpawnProcess;
+  /**
+   * Where to publish each opened session, so something can mirror it.
+   *
+   * The daemon passes its own; the CLI passes nothing, because nobody is
+   * watching a `compose` run from a terminal through a browser. Absent, no
+   * screen is reconstructed and the seats cost exactly what they did before
+   * mirroring existed.
+   */
+  sessions?: SessionRegistry;
 }
 
 export interface ComposeResult {
@@ -137,7 +147,11 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
       first: job,
       turnFormat: descriptor.turnFormat,
       ...(options.spawnProcess === undefined ? {} : { spawn: options.spawnProcess }),
+      // Only when somebody is there to look. Capture is a parse per chunk, and
+      // a seat nobody is watching should not pay for a screen nobody reads.
+      ...(options.sessions === undefined ? {} : { capture: {} }),
     });
+    options.sessions?.register(participant.id, session);
     spawned.push(participant.id);
     supervised.push(participant.id);
 

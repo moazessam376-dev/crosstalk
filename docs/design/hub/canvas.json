@@ -1,0 +1,80 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "Start a run",
+      "is_interactive": true
+    },
+    {
+      "file": "Room.dc.html",
+      "x": 1560,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "The room, mid-run",
+      "is_interactive": true
+    },
+    {
+      "file": "Session.dc.html",
+      "x": 3120,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "One session, mirrored",
+      "is_interactive": true
+    },
+    {
+      "file": "Run.dc.html",
+      "x": 4680,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "Run overview & mirror",
+      "is_interactive": true
+    }
+  ],
+  "annotations": [
+    {
+      "id": "flow",
+      "x": 0,
+      "y": -190,
+      "w": 640,
+      "text": "Pick the shape, say how many sessions, set harness / model / effort, drop the prompt.\n\nYour name replaces @human \u2014 it signs every message you post, on the board and in the append-only log for good."
+    },
+    {
+      "id": "logos",
+      "x": 1560,
+      "y": -190,
+      "w": 640,
+      "text": "The capsules are gone. A pill was doing three unrelated jobs \u2014 state, category, count \u2014 and an outlined capsule in a status colour is the most generic thing a generated UI does.\n\nNow: a state is a 5px dot and a word. A gate is a filled ring or an empty one. A diff is coloured text. A tag is a low-contrast fill at 4px, never a capsule. Seats are identified by their harness \u2014 those marks are original placeholders, not the real Claude / OpenAI / Cursor logos."
+    },
+    {
+      "id": "mirror",
+      "x": 3120,
+      "y": -190,
+      "w": 640,
+      "text": "Click a session, land here: its live terminal and a composer that types into that one CLI.\n\nThe mirror opens on a BOUNDED TAIL and says so \u2014 \"showing the last 500 lines of 42,318\" with Load earlier \u2014 because session output is unbounded. \"Following\" is an explicit state, so a live stream never looks like a frozen one."
+    },
+    {
+      "id": "run",
+      "x": 4680,
+      "y": -190,
+      "w": 640,
+      "text": "Run overview: the GitHub mirror with per-seat PRs and drain health, the gate checklist, spend per session.\n\nThe board also carries an Environment rail now, so the mirror is readable without leaving the room."
+    },
+    {
+      "id": "perf",
+      "x": 2340,
+      "y": -370,
+      "w": 900,
+      "text": "PERFORMANCE \u2014 not settled yet, being researched now.\n\nMeasured from vault-1: each agent produced 850-900 model turns and a 9-17 MB transcript in 3-6 hours. Interactive pty output will be bigger and far chattier. So the mirror can never load a whole session, and the daemon can never hold every session in memory.\n\nWhat the design already commits to: a bounded tail on open, explicit follow state, paging backwards on demand. What the research settles: transport (SSE vs WebSocket at that rate), server-side ring-buffer size, whether xterm.js or a virtualised line list is cheaper for a read-only mirror, and where ANSI gets parsed. I will fold the answer back into this canvas."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

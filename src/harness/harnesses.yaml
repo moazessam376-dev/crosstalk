@@ -39,9 +39,13 @@ harnesses:
     mcp: stdio
     mcpConfigPath: .mcp.json
     supervisable: true
-    # An interactive seat the operator can watch and steer from a phone.
-    # `--remote-control` needs a terminal, so `openSession` wraps this in a pty;
-    # spawned without one, Claude Code falls back to print mode and exits.
+    # An interactive seat the operator can watch and steer from a phone, and
+    # mirror in the hub.
+    # `--remote-control` needs a terminal, so `openSession` runs this on a real
+    # pty; spawned without one, Claude Code falls back to print mode and exits.
+    # The pty is node-pty rather than `script`, which cannot be given a writable
+    # stdin from a daemon — measured: `tcgetattr/ioctl: Operation not supported
+    # on socket`. See src/harness/pty.ts.
     # `bypassPermissions` because an interactive session that asks is a session
     # that stalls, and nobody is at the keyboard at 4am.
     spawn: [claude, --remote-control, --permission-mode, bypassPermissions]

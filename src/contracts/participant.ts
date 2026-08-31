@@ -10,7 +10,7 @@ export type ParticipantId = string;
 /**
  * `peer` is a leaderless builder: it starts from the `#floor` job directly,
  * coordinates on the board, and no participant holds task authority over it.
- * A roster is either led (exactly one leader) or flat (two or more peers,
+ * A roster is either led (exactly one leader) or flat (one or more peers,
  * no leader) — `doctor` refuses the mixtures.
  */
 export type Role = 'leader' | 'worker' | 'observer' | 'human' | 'plan_reviewer' | 'spoc' | 'peer';

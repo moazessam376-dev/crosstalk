@@ -388,6 +388,23 @@ class Daemon {
   readonly #waiters = new Set<Waiter>();
   readonly #subscribers = new Set<Subscriber>();
   readonly #delivered = new Map<ParticipantId, number>();
+
+  /**
+   * Where a seat starts reading when nobody has told it anything yet.
+   *
+   * Not zero. `#delivered` lives in memory and starts empty, so a seat's first
+   * poll used to be answered with *the entire log* — every message from every
+   * previous run in that repository, handed over as "new since your last turn"
+   * and typed into its composer as one turn. The board is append-only and kept
+   * across runs by design (`down` says so), so this got worse every restart:
+   * thirty-eight events on the fourth launch of the night, none of them from a
+   * conversation that seat was in.
+   *
+   * A seat cannot have missed what was said before it existed. The floor of a
+   * fresh run is the head of the log, and `/launch` moves it there again for
+   * everyone, because a launch is a new run and nobody in it is behind.
+   */
+  #floorSeq = 0;
   #writeTail: Promise<unknown> = Promise.resolve();
   /** Serializes whole write handlers, not just appends — see the call site. */
   #handlerTail: Promise<unknown> = Promise.resolve();
@@ -466,6 +483,9 @@ class Daemon {
   async init(): Promise<void> {
     const log = await this.#log.read();
     this.#state = project(log);
+    // Everything already on the board happened before this daemon existed, so
+    // it is history, not a backlog. See `#floorSeq`.
+    this.#floorSeq = this.#log.lastSeq;
     // A daemon restarted mid-rung picks the clock back up from the last
     // `rung_entered`; one restarted past the deadline advances immediately
     // rather than losing the rung.
@@ -1011,7 +1031,7 @@ class Daemon {
     const timeoutMs = Math.min(requested, AWAIT_CAP_S) * 1000;
     const mark = readNonNegativeInt(
       url.searchParams.get('since'),
-      this.#delivered.get(who) ?? 0,
+      this.#delivered.get(who) ?? this.#floorSeq,
       'since',
     );
 
@@ -1079,6 +1099,12 @@ class Daemon {
     // and forcing it would have written seats whose tokens this daemon had
     // never minted, so they could not have called back — but the fix was to
     // mint and reload, not to refuse.
+    // A launch starts a run. Whatever is on the board belongs to runs before it,
+    // and handing that to a seat as "new since your last turn" is how a fresh
+    // team's first act became reading someone else's finished argument.
+    this.#floorSeq = this.#log.lastSeq;
+    this.#delivered.clear();
+
     const requested = (seats ?? []) as string[];
     // A shape change is grounds to re-staff on its own. The roster can be
     // identical and the team still be a different team: `trio-contract` and

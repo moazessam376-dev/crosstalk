@@ -1114,9 +1114,22 @@ class Daemon {
     // and forcing it would have written seats whose tokens this daemon had
     // never minted, so they could not have called back — but the fix was to
     // mint and reload, not to refuse.
-    // A launch starts a run. Whatever is on the board belongs to runs before it,
-    // and handing that to a seat as "new since your last turn" is how a fresh
-    // team's first act became reading someone else's finished argument.
+    // The job goes on the board first, and the floor is set *after* it.
+    //
+    // Order matters, and getting it wrong delivered the job twice. `runCompose`
+    // types the job into each seat as its opening turn — that is the path that
+    // survives a start-up dialog, because it keeps offering until the seat is
+    // at a prompt. Posting to #floor is for the operator and for anyone who
+    // joins later. With the floor set before the append, the job was also above
+    // it, so the wake loop handed the same text over a second time and every
+    // seat opened on its brief printed twice.
+    //
+    // Setting the floor after covers both at once: everything already on the
+    // board belongs to runs before this one — handing that to a fresh team as
+    // "new since your last turn" is how its first act became reading someone
+    // else's finished argument — and the job itself is delivered by exactly one
+    // path.
+    const posted = await this.#appendMessage(ctx, { kind: 'message', room: FLOOR, body: job.trim() });
     this.#floorSeq = this.#log.lastSeq;
     this.#delivered.clear();
 
@@ -1167,7 +1180,7 @@ class Daemon {
       await this.#log.append({ kind: 'message', room: FLOOR, from: HUMAN_ID, body: `launch failed: ${reason}` });
     });
 
-    return this.#appendMessage(ctx, { kind: 'message', room: FLOOR, body: job.trim() });
+    return posted;
   }
 
   async #composeJob(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {

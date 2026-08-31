@@ -115,16 +115,24 @@ describe('a harness that takes streamed turns', () => {
  * A pty stood up in memory, so the interactive path is exercised without a
  * terminal — and, more to the point, without a real CLI.
  */
-function fakePty(): { spawnPty: SpawnPty; spec: () => PtySpec; written: () => string; emit: (text: string) => void; exit: (code: number) => void } {
+function fakePty(): {
+  spawnPty: SpawnPty;
+  spec: () => PtySpec;
+  written: () => string;
+  /** Each write on its own. Whether Return arrives separately is the point. */
+  writes: () => string[];
+  emit: (text: string) => void;
+  exit: (code: number) => void;
+} {
   let captured: PtySpec | undefined;
   let data: ((chunk: string) => void) | undefined;
   let exit: ((code: number | null) => void) | undefined;
-  let written = '';
+  const writes: string[] = [];
   const spawnPty: SpawnPty = (spec) => {
     captured = spec;
     return {
       write: (chunk) => {
-        written += chunk;
+        writes.push(chunk);
       },
       onData: (handler) => {
         data = handler;
@@ -139,7 +147,8 @@ function fakePty(): { spawnPty: SpawnPty; spec: () => PtySpec; written: () => st
   return {
     spawnPty,
     spec: () => captured!,
-    written: () => written,
+    written: () => writes.join(''),
+    writes: () => [...writes],
     emit: (text) => data?.(text),
     exit: (code) => exit?.(code),
   };
@@ -198,12 +207,13 @@ describe('an interactive seat, watchable over Remote Control', () => {
       first: 'build the thing',
       turnFormat: 'interactive',
       readyDelayMs: 0,
+      submitDelayMs: 0,
       spawnPty: pty.spawnPty,
     });
     await new Promise((done) => setTimeout(done, 5));
 
     expect(pty.spec().args).not.toContain('build the thing');
-    expect(pty.written()).toBe('build the thing\n');
+    expect(pty.written()).toBe('build the thing\r');
   });
 
   it('sends one line, so a multi-line brief cannot submit itself halfway', async () => {
@@ -214,6 +224,7 @@ describe('an interactive seat, watchable over Remote Control', () => {
       first: 'x',
       turnFormat: 'interactive',
       readyDelayMs: 0,
+      submitDelayMs: 0,
       spawnPty: pty.spawnPty,
     });
     await new Promise((done) => setTimeout(done, 5));
@@ -221,7 +232,7 @@ describe('an interactive seat, watchable over Remote Control', () => {
     // A newline in the middle of a brief is a Return: it would submit the first
     // paragraph and leave the rest typing into a running turn.
     await session.send('line one\nline two\nline three');
-    expect(pty.written()).toBe('x\nline one line two line three\n');
+    expect(pty.written()).toBe('x\rline one line two line three\r');
   });
 
   it('waits for the TUI to draw before typing, or the job lands on a splash screen', async () => {
@@ -232,12 +243,13 @@ describe('an interactive seat, watchable over Remote Control', () => {
       first: 'the job',
       turnFormat: 'interactive',
       readyDelayMs: 30,
+      submitDelayMs: 0,
       spawnPty: pty.spawnPty,
     });
 
     expect(pty.written()).toBe('');
     await new Promise((done) => setTimeout(done, 45));
-    expect(pty.written()).toBe('the job\n');
+    expect(pty.written()).toBe('the job\r');
   });
 
   it('settles exited when the pty closes, so a supervisor cannot hang', async () => {
@@ -316,13 +328,14 @@ describe('mirroring a seat', () => {
       first: 'x',
       turnFormat: 'interactive',
       readyDelayMs: 0,
+      submitDelayMs: 0,
       spawnPty: pty.spawnPty,
     });
     await new Promise((done) => setTimeout(done, 5));
 
     await session.key('\u001b');
-    // `send` appends the Return that submits a turn; `key` must not, or an
+    // `send` presses the Return that submits a turn; `key` must not, or an
     // arrow key would submit whatever was half-typed in the composer.
-    expect(pty.written()).toBe('x\n\u001b');
+    expect(pty.written()).toBe('x\r\u001b');
   });
 });

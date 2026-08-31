@@ -16,7 +16,7 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
  * to pull for the seats that lack it — rather than every seat paying for the
  * weakest harness, which is what a single spawn path would have forced.
  */
-export type TurnFormat = 'stream-json';
+export type TurnFormat = 'stream-json' | 'interactive';
 
 export interface HarnessSession {
   /** Hand the harness one more turn. Rejects when this harness cannot take one. */
@@ -25,6 +25,24 @@ export interface HarnessSession {
   readonly canPush: boolean;
   readonly exited: Promise<number | null>;
   stop(): void;
+}
+
+/**
+ * A pty, because Claude Code decides it is non-interactive by looking at its
+ * own stdin.
+ *
+ * Spawned from an ordinary background process, `claude --remote-control` exits
+ * immediately with "Input must be provided either through stdin or as a prompt
+ * argument when using --print" — with no terminal it falls back to print mode,
+ * and Remote Control has nothing to attach to. `script` allocates a pty and
+ * hands it over, which is the whole trick. It is in every BSD and macOS base
+ * system, so it costs no dependency.
+ *
+ * `-q` suppresses the transcript header; `/dev/null` throws the typescript
+ * away, since the seat's own log is what anyone reads.
+ */
+export function underPty(argv: string[]): string[] {
+  return ['script', '-q', '/dev/null', ...argv];
 }
 
 export type SpawnProcess = (
@@ -56,11 +74,18 @@ export function openSession(args: {
   turnFormat?: TurnFormat;
   env?: NodeJS.ProcessEnv;
   spawn?: SpawnProcess;
+  /** Interactive only: how long to let the TUI draw before typing the job. */
+  readyDelayMs?: number;
 }): HarnessSession {
   const spawn = args.spawn ?? defaultSpawn;
-  const push = args.turnFormat === 'stream-json';
+  const interactive = args.turnFormat === 'interactive';
+  const push = args.turnFormat === 'stream-json' || interactive;
 
-  const [file, ...rest] = push ? args.argv : [...args.argv, args.first];
+  // An interactive seat is a terminal, so its argv is wrapped in a pty and the
+  // job is typed rather than appended. Appending it would put the whole brief
+  // on the command line of a session that is about to render a prompt box.
+  const base = interactive ? underPty(args.argv) : args.argv;
+  const [file, ...rest] = push ? base : [...base, args.first];
   if (file === undefined) throw new Error('session argv is empty');
 
   const child = spawn(file, rest, {
@@ -81,12 +106,23 @@ export function openSession(args: {
     }
     const stdin = child.stdin;
     if (stdin === null || stdin.destroyed) return;
+    // A terminal takes typing, not envelopes. The trailing newline is the
+    // Return that submits it; without it the text sits in the composer and the
+    // seat looks alive while doing nothing.
+    const payload = interactive ? `${turn.replace(/\n/g, ' ')}\n` : frame(turn);
     await new Promise<void>((done, fail) => {
-      stdin.write(frame(turn), (error) => (error ? fail(error) : done()));
+      stdin.write(payload, (error) => (error ? fail(error) : done()));
     });
   };
 
-  if (push) void send(args.first);
+  // An interactive session has to finish drawing before it will accept input.
+  // Typing into the splash screen loses the job silently, which reads exactly
+  // like a seat that joined and then ignored the board.
+  if (interactive) {
+    setTimeout(() => void send(args.first), args.readyDelayMs ?? 4000);
+  } else if (push) {
+    void send(args.first);
+  }
 
   return {
     send,

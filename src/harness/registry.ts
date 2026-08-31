@@ -54,7 +54,7 @@ function descriptorFrom(key: string, raw: unknown): HarnessDescriptor {
   }
 
   const turnFormat = raw.turnFormat;
-  if (turnFormat !== undefined && turnFormat !== 'stream-json') {
+  if (turnFormat !== undefined && turnFormat !== 'stream-json' && turnFormat !== 'interactive') {
     throw new Error(`Harness ${key} has an invalid turnFormat`);
   }
 

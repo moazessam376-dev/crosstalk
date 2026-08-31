@@ -59,4 +59,56 @@ describe('an event this build does not know', () => {
     expect(card).toHaveAttribute('data-card-kind', 'rebase_notice');
     expect(screen.queryByText(/unsupported event/i)).not.toBeInTheDocument();
   });
+
+  // Neighbouring case: task rooms are almost entirely these three kinds.
+  // If they stay on the default branch, a live T-01 looks like a broken
+  // protocol even though every event is in this build's union.
+  it('renders task_state, brief_ack, and self_review as protocol rows, not unsupported', () => {
+    const taskState: CrosstalkEvent = {
+      seq: 6,
+      ts: '2026-08-30T09:23:00Z',
+      from: 'leader',
+      room: 'task:T-01',
+      kind: 'task_state',
+      taskId: 'T-01',
+      state: 'assigned',
+    };
+    const briefAck: CrosstalkEvent = {
+      seq: 10,
+      ts: '2026-08-30T09:23:02Z',
+      from: 'builder',
+      room: 'task:T-01',
+      kind: 'brief_ack',
+      taskId: 'T-01',
+      ack: { restatement: 'App() loads DecisionLog(SEED) into render.', ambiguities: [] },
+    };
+    const selfReview: CrosstalkEvent = {
+      seq: 16,
+      ts: '2026-08-30T09:23:25Z',
+      from: 'builder',
+      room: 'task:T-01',
+      kind: 'self_review',
+      taskId: 'T-01',
+      critique: { rounds: 1, critic: 'self', findings: [] },
+    };
+
+    for (const event of [taskState, briefAck, selfReview]) {
+      const testId = `card-${event.kind}`;
+      const { unmount } = render(createElement(ProtocolCard, { event, testId }));
+      const card = screen.getByTestId(testId);
+      expect(card).not.toHaveAttribute('data-unsupported');
+      expect(card).toHaveAttribute('data-card-kind', event.kind);
+      expect(screen.queryByText(/unsupported event/i)).not.toBeInTheDocument();
+      unmount();
+    }
+
+    render(createElement(ProtocolCard, { event: taskState, testId: 'card-task-state-body' }));
+    expect(screen.getByTestId('card-task-state-body')).toHaveTextContent('assigned');
+    cleanup();
+    render(createElement(ProtocolCard, { event: briefAck, testId: 'card-brief-ack-body' }));
+    expect(screen.getByTestId('card-brief-ack-body')).toHaveTextContent('App() loads DecisionLog(SEED)');
+    cleanup();
+    render(createElement(ProtocolCard, { event: selfReview, testId: 'card-self-review-body' }));
+    expect(screen.getByTestId('card-self-review-body')).toHaveTextContent('0 finding');
+  });
 });

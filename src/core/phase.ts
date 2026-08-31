@@ -98,7 +98,13 @@ export function phaseStatus(
 
   for (const phase of shape.phases) {
     const gates = phase.exit.map((gate) => statusOf(gate, { asserted, seats, workspace }));
-    const blocking = gates.filter((gate) => !gate.met).map((gate) => gate.missing ?? gate.need);
+    // Name the gate, not just the reason. A phase can hold on two gates with
+    // the same quorum — `tests-green` and `self-verified` both wait on every
+    // seat — and "waiting on opus, sonnet, luna" twice over tells a seat
+    // nothing about which of the two it still owes.
+    const blocking = gates
+      .filter((gate) => !gate.met)
+      .map((gate) => `${gate.id} — ${gate.missing ?? gate.need}`);
     if (blocking.length > 0) {
       return { id: phase.id, intent: phase.intent, writes: phase.writes, gates, blocking, complete: false };
     }

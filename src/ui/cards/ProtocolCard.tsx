@@ -52,6 +52,39 @@ export function ProtocolCard({ event, testId = defaultTestId(event) }: ProtocolC
         createElement('p', null, `${event.taskId} now targets ${event.newBase}`),
       );
       break;
+    case 'task_state':
+      content = createElement(
+        'div',
+        null,
+        createElement('span', { className: 'fact-label' }, 'task state'),
+        createElement('p', null, `${event.taskId} → ${event.state}`),
+        event.reason ? createElement('p', { className: 'fact' }, event.reason) : null,
+      );
+      break;
+    case 'brief_ack':
+      content = createElement(
+        'div',
+        null,
+        createElement('span', { className: 'fact-label' }, 'brief ack'),
+        createElement('p', null, event.ack.restatement),
+        event.ack.ambiguities.length > 0
+          ? createElement('p', { className: 'fact' }, event.ack.ambiguities.join(' · '))
+          : null,
+      );
+      break;
+    case 'self_review':
+      content = createElement(
+        'div',
+        null,
+        createElement('span', { className: 'fact-label' }, 'self review'),
+        createElement(
+          'p',
+          null,
+          `${event.critique.findings.length} finding${event.critique.findings.length === 1 ? '' : 's'}`,
+        ),
+        createElement('p', { className: 'fact' }, event.critique.critic),
+      );
+      break;
     default:
       // An event this build does not know must look wrong, not plausible.
       // The plan said throw; throwing blanks the whole stream for one

@@ -6,6 +6,16 @@ import { Terminal } from './Terminal.js';
 import { postSessionInput, useSessionMirror } from '../state/useSessionMirror.js';
 import type { SeatSession } from '../state/useLaunch.js';
 
+const ESC = '\u001b';
+
+/** Label, the bytes a real keyboard sends, and the name for a screen reader. */
+const KEYS: readonly [string, string, string][] = [
+  ['\u2191', `${ESC}[A`, 'up'],
+  ['\u2193', `${ESC}[B`, 'down'],
+  ['\u21b5', '\r', 'return'],
+  ['esc', ESC, 'escape'],
+];
+
 export interface SessionPanelProps {
   seat: SeatSession;
   onClose: () => void;
@@ -31,6 +41,11 @@ export function SessionPanel({ seat, onClose }: SessionPanelProps) {
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
+
+  const press = async (bytes: string, label: string): Promise<void> => {
+    const result = await postSessionInput(seat.id, { keys: bytes });
+    setNotice(result.ok ? undefined : (result.reason ?? `the daemon refused ${label}`));
+  };
 
   const send = async (): Promise<void> => {
     const turn = draft.trim();
@@ -110,6 +125,35 @@ export function SessionPanel({ seat, onClose }: SessionPanelProps) {
     notice === undefined
       ? null
       : createElement('p', { className: 'session-notice', role: 'alert', 'data-testid': 'session-notice' }, notice),
+    // A seat can stall on a dialog it drew itself — a trust prompt, a mode
+    // confirmation, an update notice — and none of those are answered by a
+    // turn: `send` appends Return to a *prompt*, and the thing on screen wants
+    // an arrow key. The mirror could watch a seat wait on a question forever
+    // and had no way to answer it, which made it a window rather than a
+    // terminal. These are the keys those dialogs are driven with.
+    //
+    // Not gated on `canPush`: a keystroke goes to the pty as bytes, so it works
+    // on a seat that reads its prompt once and cannot take another turn.
+    mirror?.unavailable !== undefined || mirror?.running !== true
+      ? null
+      : createElement(
+          'div',
+          { className: 'session-keys', 'data-testid': 'session-keys' },
+          ...KEYS.map(([label, bytes, name]) =>
+            createElement(
+              'button',
+              {
+                type: 'button',
+                key: name,
+                className: 'session-key',
+                'data-key': name,
+                'aria-label': `Press ${name} in ${seat.id}`,
+                onClick: () => void press(bytes, name),
+              },
+              label,
+            ),
+          ),
+        ),
     // No composer once the process is gone: there is nothing on the other end,
     // and an input that silently does nothing is worse than no input.
     mirror?.unavailable !== undefined || mirror?.running !== true

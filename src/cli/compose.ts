@@ -9,6 +9,7 @@ import { loadRegistry, type HarnessDescriptor } from '../harness/registry.js';
 import { probeCliHarnesses, type PathProbe } from '../harness/path.js';
 import { boardTurn, driveSupervised, spawnSupervised, type ExecFile } from '../harness/runner.js';
 import { openSession, type SpawnProcess } from '../harness/session.js';
+import { trustWorkspaces } from '../harness/trust.js';
 import type { Inbox } from '../core/inbox.js';
 import { CliError, DaemonClient, EXIT, type WriteResult } from './client.js';
 import { runInit } from './init.js';
@@ -18,6 +19,10 @@ export interface ComposeOptions {
   job: string;
   participants: string[];
   force?: boolean;
+  /** The team shape to brief seats with, e.g. `trio-contract`. */
+  shape?: string;
+  /** Set false in tests: skips writing folder trust to the operator's config. */
+  trust?: boolean;
   /** Injected in tests. */
   spawn?: (argv: string[], cwd: string) => void;
   execFile?: ExecFile;
@@ -67,26 +72,31 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
   }
 
   if (options.participants.length > 0) {
-    const parsed = options.participants.map((spec) => spec.split(':'));
-    if (!parsed.some((parts) => parts[1] === 'leader')) {
-      throw new CliError('compose needs a leader', EXIT.usage, 'Pass --participant id:leader:harness.');
-    }
+    requireSomeoneToWork(options.participants.map((spec) => spec.split(':')[1]));
     await runInit({
       repo,
       participants: options.participants,
+      ...(options.shape === undefined ? {} : { shape: options.shape }),
       force: options.force === true,
     });
   }
 
   await markSupervised(repo);
   const config = await loadConfig(repo);
-  if (!config.participants.some((participant) => participant.role === 'leader')) {
-    throw new CliError('compose needs a leader', EXIT.usage, 'Add a leader participant first.');
-  }
+  requireSomeoneToWork(config.participants.map((participant) => participant.role));
 
   const registry = await loadRegistry();
   const { spawn, attach } = selectSpawnTargets(config.participants, registry);
   const harnesses = await probeCliHarnesses();
+
+  // Trust before spawn, never after. An interactive seat opening a worktree
+  // `init` made minutes ago stops on "Is this a project you trust?" and waits
+  // forever; by the time anyone notices, the run is hours old. A seat that has
+  // already stalled cannot be rescued by a later write to the config.
+  const interactive = spawn.filter((p) => registry.get(p.harness)?.turnFormat === 'interactive');
+  if (interactive.length > 0 && options.trust !== false) {
+    await trustWorkspaces(interactive.map((p) => resolve(repo, p.workspace)));
+  }
 
   if (options.postJob !== undefined) {
     await options.postJob(repo, job);
@@ -120,8 +130,9 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
       continue;
     }
 
+    const seatArgv = withSeatModel(nameRemoteControl(argv, participant.id), participant);
     const session = openSession({
-      argv,
+      argv: seatArgv,
       cwd,
       first: job,
       turnFormat: descriptor.turnFormat,
@@ -159,6 +170,51 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
       await Promise.all(loops.map((run) => run()));
     },
   };
+}
+
+/**
+ * A roster needs somebody who writes code — not specifically a leader.
+ *
+ * `compose` used to demand a `leader`, which predates flat peer shapes. The
+ * trio the bench runs has no leader by design: three peers, a frozen contract,
+ * and whoever picks up the integration. Requiring one rejected the shape that
+ * beat the control, so the check now asks the question it actually meant.
+ */
+function requireSomeoneToWork(roles: readonly (string | undefined)[]): void {
+  if (roles.some((role) => role === 'leader' || role === 'worker' || role === 'peer')) return;
+  throw new CliError(
+    'compose needs someone to do the work',
+    EXIT.usage,
+    'Add a leader, a worker, or a peer to the roster.',
+  );
+}
+
+/**
+ * Names the Remote Control session after the seat.
+ *
+ * `--remote-control` takes an optional name, and without one the session is
+ * named after the host — so three seats on one machine are three sessions with
+ * the same name, which is useless on a phone. The seat id is the name the
+ * operator already knows it by from the board.
+ */
+export function nameRemoteControl(argv: readonly string[], seat: string): string[] {
+  const at = argv.indexOf('--remote-control');
+  if (at === -1) return [...argv];
+  const next = argv[at + 1];
+  // Already named (a flag follows, or nothing does, means it is unnamed).
+  if (next !== undefined && !next.startsWith('-')) return [...argv];
+  return [...argv.slice(0, at + 1), seat, ...argv.slice(at + 1)];
+}
+
+/** Per-seat model and effort, which the roster carries and the spawn never did. */
+export function withSeatModel(
+  argv: readonly string[],
+  participant: { model?: string; effort?: string },
+): string[] {
+  const out = [...argv];
+  if (participant.model !== undefined && !out.includes('--model')) out.push('--model', participant.model);
+  if (participant.effort !== undefined && !out.includes('--effort')) out.push('--effort', participant.effort);
+  return out;
 }
 
 async function markSupervised(repo: string): Promise<void> {

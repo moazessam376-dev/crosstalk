@@ -15,7 +15,7 @@ import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { EventLog } from '../core/log.js';
 import { renderInbox, type Inbox } from '../core/inbox.js';
 import { phaseStatus, type PhaseStatus } from '../core/phase.js';
-import { shapeNamed } from '../core/shape.js';
+import { SHAPES, shapeNamed } from '../core/shape.js';
 import { workspaceGates } from '../workspace/gates.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
 import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js';
@@ -619,6 +619,53 @@ class Daemon {
     if (path === '/phase' && method === 'GET') {
       const phase = await this.phase();
       send(response, 200, phase ?? { shape: null });
+      return;
+    }
+
+    if (path === '/shapes' && method === 'GET') {
+      // The launcher's picker. Seats and phases come out with it so the hub can
+      // show what a shape will actually do before anyone commits tokens to it.
+      send(response, 200, {
+        shapes: [...SHAPES.values()].map((shape) => ({
+          name: shape.name,
+          summary: shape.summary,
+          seats: shape.seats.map((seat) => ({ role: seat.role, count: seat.count })),
+          phases: shape.phases.map((phase) => ({
+            id: phase.id,
+            intent: phase.intent,
+            writes: phase.writes,
+            gates: phase.exit.map((gate) => ({ id: gate.id, by: gate.by, quorum: gate.quorum ?? 'any' })),
+          })),
+        })),
+      });
+      return;
+    }
+
+    if (path === '/sessions' && method === 'GET') {
+      // What each CLI is doing *now* — the hub's mirror. Presence comes from
+      // the seat's own tool hooks, so it reports what the seat is doing rather
+      // than what it last said, which is the difference between a live view and
+      // a transcript.
+      const now = Date.now();
+      const phase = await this.phase();
+      send(response, 200, {
+        phase: phase ?? null,
+        seats: this.#config.participants
+          .filter((participant) => participant.role !== 'human')
+          .map((participant) => ({
+            id: participant.id,
+            role: participant.role,
+            harness: participant.harness,
+            model: participant.model ?? null,
+            effort: participant.effort ?? null,
+            workspace: participant.workspace,
+            present: this.#presence.isPresent(participant.id, now),
+            activity: this.#presence.activityOf(participant.id, now) ?? null,
+            // Seats launched interactive are named after themselves, so this is
+            // the handle to attach to from a phone.
+            remoteControl: participant.harness.endsWith('-live') ? participant.id : null,
+          })),
+      });
       return;
     }
 

@@ -104,6 +104,14 @@ export interface DaemonHandle {
    * can register them. `/launch` registers into this same one.
    */
   sessions: SessionRegistry;
+  /**
+   * Re-read the roster and its tokens after something has rewritten them.
+   *
+   * `/launch` calls this itself; it is on the handle so an embedder that
+   * staffs a team its own way can too, and so a test can prove a seat added
+   * after startup can actually authenticate.
+   */
+  reload(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -229,7 +237,7 @@ function buildHandle(parts: {
   process.on('SIGTERM', onSignal);
   daemon.onShutdownRequest = close;
 
-  return { url, host, tokens, sessions: daemon.sessions, close };
+  return { url, host, tokens, sessions: daemon.sessions, reload: () => daemon.reload(), close };
 }
 
 function bindOnce(server: Server, host: string, port: number): Promise<number> {
@@ -361,8 +369,17 @@ interface Waiter {
 class Daemon {
   onShutdownRequest: (() => Promise<void>) | undefined;
 
-  readonly #config: CrosstalkConfig;
-  readonly #byToken: Map<string, ParticipantId>;
+  /**
+   * Not `readonly`: the hub can staff a team after the daemon is up.
+   *
+   * A roster used to be fixed at startup, which made the launcher's picker
+   * decorative — you could choose seats in the browser and the only thing that
+   * could happen was a refusal, because tokens are minted from this. `reload`
+   * replaces both together, so a roster written by `/launch` is a roster this
+   * daemon can actually authenticate.
+   */
+  #config: CrosstalkConfig;
+  #byToken: Map<string, ParticipantId>;
   readonly #log: EventLog;
   readonly #hubDist: string;
   #state: HubState;
@@ -424,6 +441,26 @@ class Daemon {
     this.#mirrorStatus = mirrorStatus;
     this.#byToken = new Map([...tokens].map(([id, token]) => [token, id]));
     this.#state = project([]);
+  }
+
+  /**
+   * Re-read the roster and its tokens from disk.
+   *
+   * Called after `/launch` writes a new one. Deliberately narrow: the log, the
+   * projection, presence and every open subscriber are untouched, because none
+   * of them depend on who is seated — the projection is derived from events and
+   * presence is keyed by id. What changes is who may authenticate and who the
+   * roster reports, which is exactly what staffing a team changes.
+   *
+   * Token minting is additive (`runInit` keeps any file that already exists),
+   * so a seat that was already here keeps the token it has been using and its
+   * open connections stay valid.
+   */
+  async reload(): Promise<void> {
+    const config = await loadConfig(this.#repo);
+    const tokens = await loadOrMintTokens(config, join(resolve(this.#repo), '.crosstalk'));
+    this.#config = config;
+    this.#byToken = new Map([...tokens].map(([id, token]) => [token, id]));
   }
 
   async init(): Promise<void> {
@@ -1032,44 +1069,51 @@ class Daemon {
       throw new DaemonError('MALFORMED_BODY', `no shape named ${shape}`);
     }
 
-    // A roster the daemon is not already running cannot be launched from here.
+    // Staffing the team is the hub's job, not a thing you have to have done at
+    // the command line first.
     //
-    // `runInit` refuses to overwrite an existing `crosstalk.yaml`, which is why
-    // every launch into a configured repo failed with "already exists". Forcing
-    // it would be worse than the error: this daemon read its participants and
-    // minted their tokens at startup, so seats written now would have no
-    // credentials, no rooms, and no way to call back — a team that starts and
-    // cannot speak. Restarting the daemon is the honest fix, and saying so
-    // beats writing a roster that cannot work.
+    // This used to refuse any roster the daemon was not already running, and
+    // that made the launcher's picker decorative: you could choose seats in the
+    // browser and the only outcome was an error telling you to edit a YAML file
+    // and restart. The reason was real — `runInit` will not overwrite a roster,
+    // and forcing it would have written seats whose tokens this daemon had
+    // never minted, so they could not have called back — but the fix was to
+    // mint and reload, not to refuse.
     const requested = (seats ?? []) as string[];
-    const mismatch = rosterMismatch(this.#config.participants, requested);
-    if (mismatch !== undefined) {
-      throw new DaemonError('MALFORMED_BODY', mismatch);
-    }
+    const restaffing = rosterDiffers(this.#config.participants, requested);
 
     const { runCompose } = await import('../cli/compose.js');
-    void runCompose({
-      repo: this.#repo,
-      job: job.trim(),
-      // Empty on purpose: the roster is already this daemon's, so `runCompose`
-      // spawns it rather than writing it again.
-      participants: [],
-      ...(typeof shape === 'string' ? { shape } : {}),
-      // What makes the mirror possible: the seats this daemon starts publish
-      // their sessions here, so `/sessions/:id/screen` has something to read and
-      // `/sessions/:id/input` has somewhere to write.
-      sessions: this.#sessions,
-      // The job reaches the board through this handler's own append below, so
-      // compose must not post it a second time.
-      postJob: async () => {},
-    })
-      .then((result) => result.supervise())
-      .catch(async (error: unknown) => {
-        // A launch that dies silently looks exactly like a team that joined and
-        // said nothing, which is the failure this whole project exists to stop.
-        const reason = error instanceof Error ? error.message : String(error);
-        await this.#log.append({ kind: 'message', room: FLOOR, from: HUMAN_ID, body: `launch failed: ${reason}` });
+    void (async () => {
+      if (restaffing) {
+        // `runInit` writes the roster, builds each seat's worktree and brief,
+        // and mints tokens for the new ones while keeping every token that
+        // already exists. Then this daemon picks all of it up in place.
+        const { runInit } = await import('../cli/init.js');
+        await runInit({ repo: this.#repo, participants: requested, force: true });
+        await this.reload();
+      }
+      const result = await runCompose({
+        repo: this.#repo,
+        job: job.trim(),
+        // Already written and reloaded above, so `runCompose` spawns the roster
+        // rather than writing it a second time.
+        participants: [],
+        ...(typeof shape === 'string' ? { shape } : {}),
+        // What makes the mirror possible: the seats this daemon starts publish
+        // their sessions here, so `/sessions/:id/screen` has something to read
+        // and `/sessions/:id/input` has somewhere to write.
+        sessions: this.#sessions,
+        // The job reaches the board through this handler's own append below, so
+        // compose must not post it a second time.
+        postJob: async () => {},
       });
+      await result.supervise();
+    })().catch(async (error: unknown) => {
+      // A launch that dies silently looks exactly like a team that joined and
+      // said nothing, which is the failure this whole project exists to stop.
+      const reason = error instanceof Error ? error.message : String(error);
+      await this.#log.append({ kind: 'message', room: FLOOR, from: HUMAN_ID, body: `launch failed: ${reason}` });
+    });
 
     return this.#appendMessage(ctx, { kind: 'message', room: FLOOR, body: job.trim() });
   }
@@ -1373,39 +1417,36 @@ function requireShutdownAuthority(config: CrosstalkConfig, who: ParticipantId): 
 }
 
 /**
- * Whether a requested roster is the one this daemon is running.
+ * Whether a requested roster is different from the one already seated.
  *
- * Compared on id, role and harness — the three the spec's first fields carry
+ * Compared on id, role and harness — the three the spec's first fields carry,
  * and the three that decide who can talk to the daemon. Model and effort are
- * per-seat argv and may differ freely; changing them does not invalidate a
- * token.
+ * per-seat argv: changing them re-spawns a seat differently but does not change
+ * who it is, so they are not grounds for rewriting the roster.
  *
- * Returns the operator-facing reason when it cannot be launched, and
- * `undefined` when it can.
+ * Used to decide whether `/launch` has to re-staff before it spawns. It is a
+ * question, not a gate — an earlier version returned a refusal message here,
+ * which turned every roster chosen in the hub into an error telling the
+ * operator to go and edit YAML.
  */
-export function rosterMismatch(
+export function rosterDiffers(
   running: readonly { id: string; role: string; harness: string }[],
   requested: readonly string[],
-): string | undefined {
-  if (requested.length === 0) return undefined;
+): boolean {
+  if (requested.length === 0) return false;
   const seated = new Map(
     running
       .filter((participant) => participant.role !== 'human')
       .map((participant) => [participant.id, participant] as const),
   );
+  if (seated.size !== requested.length) return true;
 
-  for (const spec of requested) {
+  return requested.some((spec) => {
     const [id, role, harness] = spec.split(':');
-    if (id === undefined) continue;
+    if (id === undefined) return true;
     const participant = seated.get(id);
-    if (participant === undefined) {
-      return `this daemon is not running a seat called ${id}. It is running ${[...seated.keys()].join(', ') || 'nobody'}. Change the roster in crosstalk.yaml and restart the daemon, or launch the seats it already has.`;
-    }
-    if (participant.role !== role || participant.harness !== harness) {
-      return `${id} is running as ${participant.role} on ${participant.harness}, not ${role} on ${harness}. A seat's role and harness are fixed when the daemon starts, because that is when its token is minted — change crosstalk.yaml and restart.`;
-    }
-  }
-  return undefined;
+    return participant === undefined || participant.role !== role || participant.harness !== harness;
+  });
 }
 
 /** Matches `/tasks/:id/ack` shapes, returning the captured segments. */

@@ -95,14 +95,22 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   // no leader). A flat roster has no task authority on purpose — peers
   // coordinate on the board and no assign/accept machinery operates.
   const flat = leaders.length === 0 && peers.length >= 2;
-  if (!flat && leaders.length !== 1) {
+  // A roster of nobody but the operator is the "not staffed yet" state that
+  // `crosstalk up` writes so the hub can open on an unconfigured repo. The team
+  // is chosen in the launcher, which calls back here with the real roster and
+  // the rule below applies to it in full. `doctor` warns about it rather than
+  // rejecting, for the same reason.
+  const unstaffed = participants.every(
+    (participant) => participant.role === 'human' || participant.role === 'observer',
+  );
+  if (!unstaffed && !flat && leaders.length !== 1) {
     throw new CliError(
       `LEADER_COUNT: Expected exactly one leader participant (or a flat roster of two or more peers), found ${leaders.length} leader(s) and ${peers.length} peer(s).`,
       EXIT.protocol,
       'Configure exactly one participant with role: leader, or an all-peer roster with no leader.',
     );
   }
-  if (flat === false && peers.length > 0) {
+  if (!unstaffed && flat === false && peers.length > 0) {
     throw new CliError(
       `LEADER_COUNT: A roster is led or flat, not both — found ${leaders.length} leader(s) alongside ${peers.length} peer(s).`,
       EXIT.protocol,

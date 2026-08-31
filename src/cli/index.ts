@@ -2,7 +2,7 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import type { CrosstalkEvent } from '../contracts/events.js';
@@ -206,6 +206,20 @@ async function cmdCompose(argv: string[]): Promise<number> {
   return EXIT.ok;
 }
 
+/**
+ * Write a roster with nobody but the operator in it, when there is none.
+ *
+ * Enough for the daemon to start, mint the human token and serve the hub; the
+ * agents are staffed from the launcher, which writes the real roster and tells
+ * the daemon to re-read it. An existing `crosstalk.yaml` is never touched.
+ */
+async function bootstrapRoster(repo: string): Promise<void> {
+  const path = join(repo, 'crosstalk.yaml');
+  if (existsSync(path)) return;
+  await runInit({ repo, participants: [`${HUMAN_ID}:human:human`], force: false });
+  process.stdout.write('  No roster here yet — staff the team in the hub.\n\n');
+}
+
 async function cmdUp(argv: string[]): Promise<number> {
   const { flags } = read(argv, {
     port: { type: 'string' },
@@ -221,6 +235,11 @@ async function cmdUp(argv: string[]): Promise<number> {
     throw new CliError('--port must be an integer', EXIT.usage);
   }
 
+  // A repo with no roster is not an error, it is a repo nobody has staffed
+  // yet. `up` writes an empty one so the hub opens, and the team is chosen
+  // there — that is the whole point of the launcher, and requiring
+  // `crosstalk init --participant ...` first made its picker decorative.
+  await bootstrapRoster(repo);
   const config = await loadConfig(repo);
 
   // Before anything binds. A rejected configuration that started anyway is

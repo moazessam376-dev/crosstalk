@@ -1,9 +1,13 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { promisify } from 'node:util';
+import { execFile as execFileCb } from 'node:child_process';
 
-import { rosterMismatch, startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
+const execFile = promisify(execFileCb);
+
+import { rosterDiffers, startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
 import { openSession, type HarnessSession } from '../../src/harness/session.js';
 
 /**
@@ -231,38 +235,76 @@ describe('mirroring a seat over HTTP', () => {
 });
 
 /**
- * Launching from the hub, and the one thing it cannot do.
+ * Staffing a team from the hub.
  *
- * Every launch into a repo that already had a `crosstalk.yaml` used to fail
- * with "already exists", because the launcher always asked to write a roster.
- * Forcing that would be worse than the error: the daemon reads its participants
- * and mints their tokens at startup, so seats written afterwards have no
- * credentials and no way to call back — a team that starts and cannot speak.
+ * The launcher's roster picker was decorative until this worked: `runInit`
+ * refuses to overwrite a roster, so every launch into a configured repo failed
+ * with "already exists", and forcing it would have written seats whose tokens
+ * this daemon never minted — a team that starts and cannot call back. The fix
+ * is to write, mint and reload, so what is checked here is only *whether* a
+ * re-staff is needed.
  */
-describe('launching a roster', () => {
-  it('accepts the roster the daemon is running', () => {
-    const running = [
-      { id: '@human', role: 'human', harness: 'human' },
-      { id: 'opus', role: 'peer', harness: 'claude-code-live' },
-    ];
-    expect(rosterMismatch(running, ['opus:peer:claude-code-live:claude-opus-5:high'])).toBeUndefined();
-    // Model and effort are per-seat argv and change nothing about a token.
-    expect(rosterMismatch(running, ['opus:peer:claude-code-live:claude-sonnet-5:low'])).toBeUndefined();
-    // No seats named at all means "use the roster you have".
-    expect(rosterMismatch(running, [])).toBeUndefined();
+describe('deciding whether to re-staff', () => {
+  const running = [
+    { id: '@human', role: 'human', harness: 'human' },
+    { id: 'opus', role: 'peer', harness: 'claude-code-live' },
+  ];
+
+  it('leaves the roster alone when it is already the one seated', () => {
+    expect(rosterDiffers(running, ['opus:peer:claude-code-live'])).toBe(false);
+    // Model and effort re-spawn a seat differently; they do not change who it
+    // is, so they are not grounds for rewriting the roster and re-minting.
+    expect(rosterDiffers(running, ['opus:peer:claude-code-live:claude-sonnet-5:low'])).toBe(false);
+    // No seats named means "use the roster you have".
+    expect(rosterDiffers(running, [])).toBe(false);
   });
 
-  it('refuses a seat the daemon never seated, and says what it is running', () => {
-    const running = [{ id: 'opus', role: 'peer', harness: 'claude-code-live' }];
-    const reason = rosterMismatch(running, ['peer-1:peer:claude-code-live']);
-    expect(reason).toContain('peer-1');
-    expect(reason).toContain('opus');
-    expect(reason).toMatch(/restart/i);
+  it('re-staffs for a seat that is not seated', () => {
+    expect(rosterDiffers(running, ['peer-1:peer:claude-code-live'])).toBe(true);
   });
 
-  it('refuses a seat whose role or harness was changed', () => {
-    const running = [{ id: 'opus', role: 'peer', harness: 'claude-code-live' }];
-    expect(rosterMismatch(running, ['opus:leader:claude-code-live'])).toMatch(/role and harness/);
-    expect(rosterMismatch(running, ['opus:peer:codex-cli'])).toMatch(/codex-cli/);
+  it('re-staffs when a seat changes role or harness', () => {
+    expect(rosterDiffers(running, ['opus:leader:claude-code-live'])).toBe(true);
+    expect(rosterDiffers(running, ['opus:peer:codex-cli'])).toBe(true);
   });
+
+  it('re-staffs when the team changes size', () => {
+    expect(rosterDiffers(running, ['opus:peer:claude-code-live', 'codex:peer:codex-cli'])).toBe(true);
+  });
+
+  /**
+   * The reload is what makes a re-staffed seat able to speak. A roster written
+   * without it authenticates nobody.
+   */
+  it('authenticates a seat added after the daemon started', async () => {
+    const dir = await tempRepo();
+    // `runInit` builds a worktree per seat, so this one needs a real repository
+    // rather than just a config file.
+    await execFile('git', ['init', '-q'], { cwd: dir });
+    await execFile('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir });
+    const daemon = await startDaemon({ repo: dir });
+    try {
+      const before = await fetch(`${daemon.url}/roster`, {
+        headers: { authorization: `Bearer ${daemon.tokens.get('@human')!}` },
+      });
+      expect(before.ok).toBe(true);
+
+      const { runInit } = await import('../../src/cli/init.js');
+      await runInit({
+        repo: dir,
+        participants: ['opus:peer:claude-code-live', 'codex:peer:codex-cli', 'newcomer:peer:codex-cli'],
+        force: true,
+      });
+      await daemon.reload();
+
+      const minted = (await readFile(join(dir, '.crosstalk', 'tokens', 'newcomer'), 'utf8')).trim();
+      const answered = await fetch(`${daemon.url}/roster`, {
+        headers: { authorization: `Bearer ${minted}` },
+      });
+      expect(answered.status).toBe(200);
+      expect(answered.headers.get('x-crosstalk-you')).toBe('newcomer');
+    } finally {
+      await daemon.close();
+    }
+  }, 30_000);
 });

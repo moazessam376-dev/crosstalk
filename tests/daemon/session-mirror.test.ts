@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
+import { rosterMismatch, startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
 import { openSession, type HarnessSession } from '../../src/harness/session.js';
 
 /**
@@ -227,5 +227,42 @@ describe('mirroring a seat over HTTP', () => {
     } finally {
       await daemon.close();
     }
+  });
+});
+
+/**
+ * Launching from the hub, and the one thing it cannot do.
+ *
+ * Every launch into a repo that already had a `crosstalk.yaml` used to fail
+ * with "already exists", because the launcher always asked to write a roster.
+ * Forcing that would be worse than the error: the daemon reads its participants
+ * and mints their tokens at startup, so seats written afterwards have no
+ * credentials and no way to call back — a team that starts and cannot speak.
+ */
+describe('launching a roster', () => {
+  it('accepts the roster the daemon is running', () => {
+    const running = [
+      { id: '@human', role: 'human', harness: 'human' },
+      { id: 'opus', role: 'peer', harness: 'claude-code-live' },
+    ];
+    expect(rosterMismatch(running, ['opus:peer:claude-code-live:claude-opus-5:high'])).toBeUndefined();
+    // Model and effort are per-seat argv and change nothing about a token.
+    expect(rosterMismatch(running, ['opus:peer:claude-code-live:claude-sonnet-5:low'])).toBeUndefined();
+    // No seats named at all means "use the roster you have".
+    expect(rosterMismatch(running, [])).toBeUndefined();
+  });
+
+  it('refuses a seat the daemon never seated, and says what it is running', () => {
+    const running = [{ id: 'opus', role: 'peer', harness: 'claude-code-live' }];
+    const reason = rosterMismatch(running, ['peer-1:peer:claude-code-live']);
+    expect(reason).toContain('peer-1');
+    expect(reason).toContain('opus');
+    expect(reason).toMatch(/restart/i);
+  });
+
+  it('refuses a seat whose role or harness was changed', () => {
+    const running = [{ id: 'opus', role: 'peer', harness: 'claude-code-live' }];
+    expect(rosterMismatch(running, ['opus:leader:claude-code-live'])).toMatch(/role and harness/);
+    expect(rosterMismatch(running, ['opus:peer:codex-cli'])).toMatch(/codex-cli/);
   });
 });

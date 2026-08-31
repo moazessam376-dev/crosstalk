@@ -1032,11 +1032,28 @@ class Daemon {
       throw new DaemonError('MALFORMED_BODY', `no shape named ${shape}`);
     }
 
+    // A roster the daemon is not already running cannot be launched from here.
+    //
+    // `runInit` refuses to overwrite an existing `crosstalk.yaml`, which is why
+    // every launch into a configured repo failed with "already exists". Forcing
+    // it would be worse than the error: this daemon read its participants and
+    // minted their tokens at startup, so seats written now would have no
+    // credentials, no rooms, and no way to call back — a team that starts and
+    // cannot speak. Restarting the daemon is the honest fix, and saying so
+    // beats writing a roster that cannot work.
+    const requested = (seats ?? []) as string[];
+    const mismatch = rosterMismatch(this.#config.participants, requested);
+    if (mismatch !== undefined) {
+      throw new DaemonError('MALFORMED_BODY', mismatch);
+    }
+
     const { runCompose } = await import('../cli/compose.js');
     void runCompose({
       repo: this.#repo,
       job: job.trim(),
-      participants: (seats ?? []) as string[],
+      // Empty on purpose: the roster is already this daemon's, so `runCompose`
+      // spawns it rather than writing it again.
+      participants: [],
       ...(typeof shape === 'string' ? { shape } : {}),
       // What makes the mirror possible: the seats this daemon starts publish
       // their sessions here, so `/sessions/:id/screen` has something to read and
@@ -1353,6 +1370,42 @@ function requireShutdownAuthority(config: CrosstalkConfig, who: ParticipantId): 
   if (who !== HUMAN_ID && role !== 'leader' && role !== 'human') {
     throw new DaemonError('ROLE_NOT_PERMITTED', 'POST /shutdown requires the leader or @human');
   }
+}
+
+/**
+ * Whether a requested roster is the one this daemon is running.
+ *
+ * Compared on id, role and harness — the three the spec's first fields carry
+ * and the three that decide who can talk to the daemon. Model and effort are
+ * per-seat argv and may differ freely; changing them does not invalidate a
+ * token.
+ *
+ * Returns the operator-facing reason when it cannot be launched, and
+ * `undefined` when it can.
+ */
+export function rosterMismatch(
+  running: readonly { id: string; role: string; harness: string }[],
+  requested: readonly string[],
+): string | undefined {
+  if (requested.length === 0) return undefined;
+  const seated = new Map(
+    running
+      .filter((participant) => participant.role !== 'human')
+      .map((participant) => [participant.id, participant] as const),
+  );
+
+  for (const spec of requested) {
+    const [id, role, harness] = spec.split(':');
+    if (id === undefined) continue;
+    const participant = seated.get(id);
+    if (participant === undefined) {
+      return `this daemon is not running a seat called ${id}. It is running ${[...seated.keys()].join(', ') || 'nobody'}. Change the roster in crosstalk.yaml and restart the daemon, or launch the seats it already has.`;
+    }
+    if (participant.role !== role || participant.harness !== harness) {
+      return `${id} is running as ${participant.role} on ${participant.harness}, not ${role} on ${harness}. A seat's role and harness are fixed when the daemon starts, because that is when its token is minted — change crosstalk.yaml and restart.`;
+    }
+  }
+  return undefined;
 }
 
 /** Matches `/tasks/:id/ack` shapes, returning the captured segments. */

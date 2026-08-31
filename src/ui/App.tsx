@@ -176,6 +176,11 @@ export default function App({ connection: injected }: AppProps = {}) {
       ? createElement(Launcher, {
           shapes,
           launching,
+          // The roster this daemon is running. A seat's role and harness are
+          // fixed when its token is minted, so this is the roster a launch can
+          // actually name — arriving with anything else means the default
+          // action on the screen fails.
+          running: sessions?.seats ?? [],
           // A launch that leaves you on an emptied form gives no sign anything
           // happened. The job lands on the floor and the seats start joining
           // there, so that is where to be — the operator asked to drop a

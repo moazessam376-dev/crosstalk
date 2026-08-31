@@ -1,5 +1,5 @@
 import { createElement as h, useMemo, useState } from 'react';
-import type { ShapeSummary } from '../state/useLaunch.js';
+import type { SeatSession, ShapeSummary } from '../state/useLaunch.js';
 import type { PostResult } from '../state/humanAction.js';
 
 /** One row of the roster the operator is assembling. */
@@ -12,6 +12,14 @@ export interface SeatDraft {
 }
 
 export interface LauncherProps {
+  /**
+   * The seats this daemon is running, from `GET /sessions`.
+   *
+   * Not decoration: a seat's id, role and harness are fixed when the daemon
+   * starts, so a launch naming any other roster is refused. This is what the
+   * form arrives filled with.
+   */
+  running?: readonly SeatSession[];
   shapes: ShapeSummary[];
   launching?: boolean;
   onLaunch: (request: { job: string; shape?: string; seats: string[] }) => Promise<PostResult>;
@@ -27,8 +35,32 @@ const HARNESSES = [
 const MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'];
 const EFFORTS = ['high', 'medium', 'low'];
 
-/** Names seats after the shape, so the roster is never empty on arrival. */
-export function seatsFor(shape: ShapeSummary | undefined): SeatDraft[] {
+/**
+ * The roster to arrive with.
+ *
+ * Prefers the seats this daemon is **actually running** over the shape's
+ * abstract ones, and that is load-bearing rather than a nicety. A seat's id,
+ * role and harness are fixed when the daemon starts, because that is when its
+ * token is minted — so a launch naming seats the daemon never seated is
+ * refused. Filling the form with `peer-1, peer-2, peer-3` against a repo
+ * seated with `opus, codex, rigit` meant the default action on this screen
+ * always failed.
+ *
+ * The shape's own seats are the fallback, for a hub whose daemon has not
+ * reported a roster yet.
+ */
+export function seatsFor(shape: ShapeSummary | undefined, running: readonly SeatSession[] = []): SeatDraft[] {
+  const seated = running.filter((seat) => seat.role !== 'human');
+  if (seated.length > 0) {
+    return seated.map((seat) => ({
+      id: seat.id,
+      role: seat.role,
+      harness: seat.harness,
+      model: seat.model ?? '',
+      effort: seat.effort ?? '',
+    }));
+  }
+
   if (shape === undefined) return [];
   const drafts: SeatDraft[] = [];
   for (const spec of shape.seats) {
@@ -73,7 +105,7 @@ function field(
   );
 }
 
-export function Launcher({ shapes, launching, onLaunch }: LauncherProps) {
+export function Launcher({ shapes, launching, onLaunch, running = [] }: LauncherProps) {
   const [shapeName, setShapeName] = useState<string | undefined>();
   const [job, setJob] = useState('');
   const [seats, setSeats] = useState<SeatDraft[]>([]);
@@ -87,7 +119,7 @@ export function Launcher({ shapes, launching, onLaunch }: LauncherProps) {
     setShapeName(name);
     // Only replace a roster the operator has not edited. Losing hand-picked
     // models because a shape was re-clicked would be its own small betrayal.
-    if (!touched) setSeats(seatsFor(shapes.find((entry) => entry.name === name)));
+    if (!touched) setSeats(seatsFor(shapes.find((entry) => entry.name === name), running));
   };
 
   const editSeat = (index: number, patch: Partial<SeatDraft>): void => {

@@ -79,21 +79,34 @@ describe('waking a seat', () => {
   });
 
   /**
-   * The thing the de-duplication must never swallow: something a teammate
-   * actually said. An unread card is news even when the status around it is
-   * word for word what it was.
+   * The half of this that cost the most. A card handed back as unread over and
+   * over produces the same turn every time, and the seat gets the same message
+   * typed into its composer again and again — which is what the operator was
+   * watching happen to a terminal they had focused.
    */
-  it('always delivers unread cards, even under an unchanged status', async () => {
+  it('does not re-deliver a card it has already handed over', async () => {
     const card = { seq: 7, from: 'peer-2', room: '#floor', kind: 'said', body: 'I will take the sim' };
     const { turns } = await run([
-      inbox(),
+      inbox({ unread: [card] as unknown as Inbox['unread'] }),
       inbox({ unread: [card] as unknown as Inbox['unread'] }),
       inbox({ unread: [card] as unknown as Inbox['unread'] }),
     ]);
 
-    expect(turns).toHaveLength(3);
-    expect(turns[1]).toContain('I will take the sim');
-    expect(turns[2]).toContain('I will take the sim');
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toContain('I will take the sim');
+  });
+
+  /** But a different card is news, and has to arrive. */
+  it('delivers the next thing a teammate says', async () => {
+    const first = { seq: 7, from: 'peer-2', room: '#floor', kind: 'said', body: 'I will take the sim' };
+    const second = { seq: 8, from: 'peer-3', room: '#floor', kind: 'said', body: 'I will take the renderer' };
+    const { turns } = await run([
+      inbox({ unread: [first] as unknown as Inbox['unread'] }),
+      inbox({ unread: [second] as unknown as Inbox['unread'] }),
+    ]);
+
+    expect(turns).toHaveLength(2);
+    expect(turns[1]).toContain('renderer');
   });
 
   it('still says nothing at all when the seat is idle', async () => {

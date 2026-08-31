@@ -746,6 +746,7 @@ class Daemon {
     if (path === '/tasks') return createTask;
     if (path === '/tasks/assign') return assignTask;
     if (path === '/compose') return (ctx, body) => this.#composeJob(ctx, body);
+    if (path === '/launch') return (ctx, body) => this.#launch(ctx, body);
     if (path === '/decisions') return openDecision;
 
     const claimResponse = matchPath(path, '/claims/:id/response');
@@ -909,6 +910,57 @@ class Daemon {
     });
 
     return events.length > 0 ? this.#deliver(who, events) : { idle: true };
+  }
+
+  /**
+   * Start a run from the hub: pick a shape, name the seats, type the prompt.
+   *
+   * The spawning itself is `runCompose`, unchanged — the daemon is only the
+   * thing with a port on it. Deliberately fire-and-forget: `runCompose` returns
+   * a `supervise()` that runs until every seat exits, and a launch request that
+   * waited for that would hold a socket open for hours and time out long before
+   * the team finished.
+   */
+  async #launch(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
+    const role = this.#config.participants.find((participant) => participant.id === ctx.who)?.role;
+    if (ctx.who !== HUMAN_ID && role !== 'human') {
+      throw new DaemonError('ROLE_NOT_PERMITTED', 'POST /launch requires the human seat');
+    }
+    const job = body['job'];
+    if (typeof job !== 'string' || job.trim() === '') {
+      throw new DaemonError('MALFORMED_BODY', '`job` is required');
+    }
+    const seats = body['seats'];
+    if (seats !== undefined && !Array.isArray(seats)) {
+      throw new DaemonError('MALFORMED_BODY', '`seats` must be a list of id:role:harness strings');
+    }
+    const shape = body['shape'];
+    if (shape !== undefined && typeof shape !== 'string') {
+      throw new DaemonError('MALFORMED_BODY', '`shape` must be a string');
+    }
+    if (typeof shape === 'string' && !SHAPES.has(shape)) {
+      throw new DaemonError('MALFORMED_BODY', `no shape named ${shape}`);
+    }
+
+    const { runCompose } = await import('../cli/compose.js');
+    void runCompose({
+      repo: this.#repo,
+      job: job.trim(),
+      participants: (seats ?? []) as string[],
+      ...(typeof shape === 'string' ? { shape } : {}),
+      // The job reaches the board through this handler's own append below, so
+      // compose must not post it a second time.
+      postJob: async () => {},
+    })
+      .then((result) => result.supervise())
+      .catch(async (error: unknown) => {
+        // A launch that dies silently looks exactly like a team that joined and
+        // said nothing, which is the failure this whole project exists to stop.
+        const reason = error instanceof Error ? error.message : String(error);
+        await this.#log.append({ kind: 'message', room: FLOOR, from: HUMAN_ID, body: `launch failed: ${reason}` });
+      });
+
+    return this.#appendMessage(ctx, { kind: 'message', room: FLOOR, body: job.trim() });
   }
 
   async #composeJob(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {

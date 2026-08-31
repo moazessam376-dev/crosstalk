@@ -795,9 +795,68 @@ button:focus-visible {
 
 .hub-layout {
   display: grid;
+  /* Sidebar · stream · dock, at the design's widths. */
+  grid-template-columns: 252px minmax(0, 1fr) 316px;
   flex: 1;
   min-height: 0;
   background: var(--surface-base);
+}
+
+/*
+ * A phone.
+ *
+ * The three-region grid does not narrow — it just squeezed the stream to
+ * nothing between a full-width rail and a dock hanging off the right edge, so
+ * the one screen a phone is for was the one screen you could not read. Watching
+ * a run from a phone is why interactive seats exist, so the layout collapses to
+ * a single column: the conversation (or the open terminal) first, the roster
+ * under it, and the room list last, since on a phone you are far more often
+ * checking on a run than switching rooms.
+ */
+@media (max-width: 860px) {
+  .hub-layout {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .hub-region,
+  .hub-stream,
+  .session-panel {
+    overflow: visible;
+  }
+
+  /* Source order is sidebar · stream · dock; reading order is the reverse of
+     the first two, and the terminal outranks both. */
+  .hub-sidebar { order: 3; }
+  .hub-stream,
+  .session-panel { order: 1; }
+  .hub-dock { order: 2; }
+
+  .hub-stream,
+  .session-panel {
+    min-height: 70vh;
+    border-bottom: 1px solid var(--border-hairline);
+  }
+
+  .hub-dock,
+  .hub-sidebar {
+    border-top: 1px solid var(--border-hairline);
+  }
+
+  .sidebar-scroll { overflow-y: visible; }
+
+  /* More specific than `.hub-region`, so it needs saying: a region with its own
+     scrollbar inside a page that already scrolls clips its own cards. */
+  .hub-dock { overflow-y: visible; }
+
+  /* The rail scrolls sideways rather than wrapping: it is a strip of facts,
+     and a wrapped strip stops being one. */
+  .env-rail { gap: 18px; }
+
+  /* A mirrored terminal is a fixed grid by construction — reflowing it would
+     stop it being a mirror — so on a narrow screen it pans instead. */
+  .terminal { overflow: auto; }
 }
 
 /* `min-height: 0` is redundant beside `overflow: hidden` — either one zeroes a
@@ -1061,17 +1120,11 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-.stream-status::before {
-  content: "";
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.stream-status[data-status="live"]::before { background: var(--status-fresh); }
-.stream-status[data-status="connecting"]::before,
-.stream-status[data-status="reconnecting"]::before { background: var(--status-open); }
+/* The dot is in the markup already — a `::before` here drew a second one. */
+.stream-status .status-dot { background: var(--text-tertiary); }
+.stream-status[data-status="live"] .status-dot { background: var(--status-fresh); }
+.stream-status[data-status="connecting"] .status-dot,
+.stream-status[data-status="reconnecting"] .status-dot { background: var(--status-open); }
 
 .stream-scroll {
   min-height: 0;

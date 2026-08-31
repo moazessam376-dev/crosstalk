@@ -12,7 +12,7 @@ import { dmId } from '../core/rooms.js';
 import { FLOOR } from '../contracts/room.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Launcher } from './launch/Launcher.js';
-import { useLaunch, useSessions, useShapes } from './state/useLaunch.js';
+import { useHarnessCatalog, useLaunch, useSessions, useShapes } from './state/useLaunch.js';
 import { useOperatorName } from './state/operator.js';
 
 /**
@@ -54,6 +54,7 @@ export default function App({ connection: injected }: AppProps = {}) {
   const [view, setView] = useState<'board' | 'launch'>('board');
   const mirror = useMirror(connection.kind === 'live');
   const shapes = useShapes(connection.kind === 'live');
+  const catalog = useHarnessCatalog(connection.kind === 'live');
   const sessions = useSessions(connection.kind === 'live');
   const { launch, launching } = useLaunch();
   const { name: operator, setName: setOperator } = useOperatorName();
@@ -175,6 +176,7 @@ export default function App({ connection: injected }: AppProps = {}) {
     view === 'launch' && connection.kind === 'live'
       ? createElement(Launcher, {
           shapes,
+          catalog,
           launching,
           // The roster this daemon is running. A seat's role and harness are
           // fixed when its token is minted, so this is the roster a launch can

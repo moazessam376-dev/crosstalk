@@ -46,9 +46,6 @@ export interface LayoutProps {
   onCloseSession?: () => void;
 }
 
-/** Sidebar · stream · dock, at the design's widths. */
-const GRID_TEMPLATE = '252px minmax(0, 1fr) 316px';
-
 export function Layout({
   state,
   activeRoom,
@@ -84,7 +81,10 @@ export function Layout({
       className: 'hub-layout',
       'data-testid': 'hub-layout',
       'data-layout': 'three-region',
-      style: { gridTemplateColumns: GRID_TEMPLATE },
+      // The column widths live in `theme.css`, not here. An inline style beats
+      // every media query, so a hub with the track sizes set in JS cannot
+      // collapse for a narrow screen — and watching a run from a phone is the
+      // reason the interactive seats exist.
     },
     createElement(Sidebar, { rooms: state.rooms, activeRoom, self, operator, onSetOperator, onSelectRoom }),
     // The seat's terminal takes the centre column rather than opening beside

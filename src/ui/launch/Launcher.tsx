@@ -104,7 +104,19 @@ export function Launcher({ shapes, launching, onLaunch }: LauncherProps) {
     const result = await onLaunch({
       job: job.trim(),
       ...(shapeName === undefined ? {} : { shape: shapeName }),
-      seats: seats.map((seat) => `${seat.id}:${seat.role}:${seat.harness}`),
+      // `id:role:harness[:model[:effort]]` — the same spec `--participant`
+      // takes. Sending only the first three made the model and effort pickers
+      // decorative: the seats launched on whatever the roster defaulted to,
+      // and the operator had no way to tell from the hub.
+      //
+      // Effort is positional and last, so a seat with an effort and no model
+      // has to send an empty model field rather than drop it.
+      seats: seats.map((seat) => {
+        const parts = [seat.id, seat.role, seat.harness];
+        if (seat.model !== '' || seat.effort !== '') parts.push(seat.model);
+        if (seat.effort !== '') parts.push(seat.effort);
+        return parts.join(':');
+      }),
     });
     if (!result.ok) setError(result.reason);
     else setJob('');

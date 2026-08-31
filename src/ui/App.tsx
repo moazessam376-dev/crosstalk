@@ -9,6 +9,7 @@ import { loadHubConfig, type HubConnection } from './state/hubConfig.js';
 import { useMirror } from './state/useMirror.js';
 import { postCompose, postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
 import { dmId } from '../core/rooms.js';
+import { FLOOR } from '../contracts/room.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Launcher } from './launch/Launcher.js';
 import { useLaunch, useSessions, useShapes } from './state/useLaunch.js';
@@ -172,7 +173,22 @@ export default function App({ connection: injected }: AppProps = {}) {
         )
       : null,
     view === 'launch' && connection.kind === 'live'
-      ? createElement(Launcher, { shapes, launching, onLaunch: launch })
+      ? createElement(Launcher, {
+          shapes,
+          launching,
+          // A launch that leaves you on an emptied form gives no sign anything
+          // happened. The job lands on the floor and the seats start joining
+          // there, so that is where to be — the operator asked to drop a
+          // prompt and be taken to the room.
+          onLaunch: async (request: { job: string; shape?: string; seats: string[] }) => {
+            const result = await launch(request);
+            if (result.ok) {
+              setView('board');
+              setSelectedRoom(FLOOR);
+            }
+            return result;
+          },
+        })
       : createElement(Layout, {
       state,
       activeRoom,

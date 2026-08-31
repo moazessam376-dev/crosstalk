@@ -2307,6 +2307,39 @@ button:focus-visible {
   50% { opacity: 0; }
 }
 
+.session-keys {
+  /* Above the composer and quieter than it: keys answer a dialog the seat drew,
+     which is a smaller act than typing a turn to an agent. */
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px 0;
+  flex: none;
+}
+
+.session-key {
+  min-width: 30px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.session-key:hover {
+  color: var(--text-primary);
+  border-color: var(--text-tertiary);
+}
+
+.session-key:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .session-composer {
   display: flex;
   gap: 8px;

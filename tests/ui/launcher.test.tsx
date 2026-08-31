@@ -207,3 +207,70 @@ describe('the launcher as a page', () => {
     expect(outer?.firstElementChild?.getAttribute('data-testid')).toBe('launcher');
   });
 });
+
+/**
+ * Every model this account can actually run has to be pickable.
+ *
+ * The list is hand-written in the launcher, and `claude-fable-5` was missed
+ * when it was — so a seat could not be put on it from the hub at all, and the
+ * operator found out by opening the dropdown and not seeing it.
+ */
+const CATALOG = [
+  { id: 'claude-code-live', label: 'Claude Code · interactive', models: ['claude-opus-5', 'claude-fable-5'] },
+  { id: 'codex-cli', label: 'Codex', models: ['gpt-5.3-codex', 'o4-mini'] },
+];
+
+function optionsOf(label: string): (string | null)[] {
+  const picker = screen.getByLabelText(label) as unknown as {
+    querySelectorAll(selector: string): { getAttribute(name: string): string | null }[];
+  };
+  return [...picker.querySelectorAll('option')].map((option) => option.getAttribute('value'));
+}
+
+/**
+ * Which harnesses exist and what each can run are properties of the binaries,
+ * not of the hub. Both were hard-coded here, so a Codex seat was offered Claude
+ * models and `claude-fable-5` could not be chosen at all — nobody had added it
+ * to an array in a React file. They now come from the harness registry.
+ */
+describe('the model picker', () => {
+  it('offers the models of the harness the seat is on', () => {
+    render(createElement(Launcher, { shapes: [TRIO], catalog: CATALOG, onLaunch: async () => ({ ok: true as const }) }));
+    fireEvent.click(screen.getByText('trio-contract'));
+
+    expect(optionsOf('seat 1 model')).toContain('claude-fable-5');
+    expect(optionsOf('seat 1 model')).not.toContain('gpt-5.3-codex');
+  });
+
+  it('offers a different harness a different set', () => {
+    render(createElement(Launcher, { shapes: [TRIO], catalog: CATALOG, onLaunch: async () => ({ ok: true as const }) }));
+    fireEvent.click(screen.getByText('trio-contract'));
+
+    fireEvent.change(screen.getByLabelText('seat 1 CLI'), { target: { value: 'codex-cli' } });
+
+    expect(optionsOf('seat 1 model')).toContain('gpt-5.3-codex');
+    expect(optionsOf('seat 1 model')).not.toContain('claude-opus-5');
+  });
+
+  /** A model the new harness cannot run must not survive the switch. */
+  it('drops a model the new harness cannot run', async () => {
+    const onLaunch = vi.fn(async (_r: { job: string; shape?: string; seats: string[] }) => ({ ok: true as const }));
+    render(createElement(Launcher, { shapes: [TRIO], catalog: CATALOG, onLaunch }));
+    fireEvent.click(screen.getByText('trio-contract'));
+
+    fireEvent.change(screen.getByLabelText('seat 1 CLI'), { target: { value: 'codex-cli' } });
+    fireEvent.change(screen.getByLabelText('the job'), { target: { value: 'build a vault' } });
+    fireEvent.click(screen.getByText('Start the run'));
+
+    await waitFor(() => expect(onLaunch).toHaveBeenCalled());
+    expect(onLaunch.mock.calls[0]![0].seats[0]).not.toContain('claude-opus-5');
+  });
+
+  it('names the CLIs from the registry too', () => {
+    render(createElement(Launcher, { shapes: [TRIO], catalog: CATALOG, onLaunch: async () => ({ ok: true as const }) }));
+    fireEvent.click(screen.getByText('trio-contract'));
+
+    expect(optionsOf('seat 1 CLI')).toEqual(['claude-code-live', 'codex-cli']);
+  });
+});
+

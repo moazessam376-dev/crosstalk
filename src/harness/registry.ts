@@ -20,6 +20,18 @@ export interface HarnessDescriptor {
    * not of Crosstalk.
    */
   turnFormat?: TurnFormat;
+  /** How this harness is named in the hub. Falls back to its key. */
+  label?: string;
+  /**
+   * The models a seat on this harness can be put on.
+   *
+   * Declared here rather than in the hub because it is a property of the
+   * binary: Codex does not run Claude models and the launcher has no business
+   * knowing which does. The picker was a single hard-coded list, so a Codex
+   * seat was offered Claude models and `claude-fable-5` could not be chosen at
+   * all — nobody had added it to an array in a React file.
+   */
+  models?: string[];
 }
 
 const MCP_KINDS = new Set<HarnessDescriptor['mcp']>(['stdio', 'http', 'unverified', 'none']);
@@ -58,6 +70,16 @@ function descriptorFrom(key: string, raw: unknown): HarnessDescriptor {
     throw new Error(`Harness ${key} has an invalid turnFormat`);
   }
 
+  const label = raw.label;
+  if (label !== undefined && typeof label !== 'string') {
+    throw new Error(`Harness ${key} has an invalid label`);
+  }
+
+  const models = raw.models;
+  if (models !== undefined && (!Array.isArray(models) || !models.every((m) => typeof m === 'string'))) {
+    throw new Error(`Harness ${key} has an invalid models list`);
+  }
+
   return {
     key,
     briefFile: requiredString(raw.briefFile, 'briefFile', key),
@@ -66,6 +88,8 @@ function descriptorFrom(key: string, raw: unknown): HarnessDescriptor {
     supervisable: raw.supervisable === true,
     ...(spawn === undefined ? {} : { spawn: [...spawn] as string[] }),
     ...(turnFormat === undefined ? {} : { turnFormat }),
+    ...(label === undefined ? {} : { label }),
+    ...(models === undefined ? {} : { models: [...models] as string[] }),
   };
 }
 

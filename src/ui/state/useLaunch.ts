@@ -61,6 +61,34 @@ async function getJson<T>(path: string, fetchImpl: typeof fetch): Promise<T | un
   }
 }
 
+export interface HarnessOption {
+  id: string;
+  label: string;
+  models: string[];
+}
+
+/**
+ * What each harness is called and what it can be put on, from the registry.
+ *
+ * Fetched rather than hard-coded because both are properties of the binaries:
+ * Codex does not run Claude models, and a model missing from an array in a
+ * React file was a model no seat could be put on.
+ */
+export function useHarnessCatalog(live: boolean, fetchImpl: typeof fetch = fetch): HarnessOption[] {
+  const [catalog, setCatalog] = useState<HarnessOption[]>([]);
+  useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    void getJson<{ catalog?: HarnessOption[] }>('/harnesses', fetchImpl).then((body) => {
+      if (!cancelled && body?.catalog !== undefined) setCatalog(body.catalog);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [live, fetchImpl]);
+  return catalog;
+}
+
 /** The shape registry. Fetched once: shapes do not change while the hub is open. */
 export function useShapes(live: boolean, fetchImpl: typeof fetch = fetch): ShapeSummary[] {
   const [shapes, setShapes] = useState<ShapeSummary[]>([]);

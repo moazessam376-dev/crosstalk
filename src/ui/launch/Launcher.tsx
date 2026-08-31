@@ -21,18 +21,22 @@ export interface LauncherProps {
    */
   running?: readonly SeatSession[];
   shapes: ShapeSummary[];
+  /** From `GET /harnesses`: what exists, and what each one runs. */
+  catalog?: readonly { id: string; label: string; models: string[] }[];
   launching?: boolean;
   onLaunch: (request: { job: string; shape?: string; seats: string[] }) => Promise<PostResult>;
 }
 
-const HARNESSES = [
-  { id: 'claude-code-live', label: 'Claude Code · interactive' },
-  { id: 'claude-code-cli', label: 'Claude Code · headless' },
-  { id: 'codex-cli', label: 'Codex' },
-  { id: 'cursor-cli', label: 'Cursor' },
-];
-
-const MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'];
+/**
+ * What to show before `GET /harnesses` answers, and if it never does.
+ *
+ * The real list comes from the harness registry — which harnesses exist and
+ * what each can be put on are properties of the binaries, not of this file.
+ * Hard-coding them here meant a Codex seat was offered Claude models, and a
+ * model nobody had added to this array could not be chosen at all: that is how
+ * `claude-fable-5` went missing.
+ */
+const FALLBACK_HARNESSES = [{ id: 'claude-code-live', label: 'Claude Code · interactive', models: [] as string[] }];
 const EFFORTS = ['high', 'medium', 'low'];
 
 /**
@@ -105,7 +109,11 @@ function field(
   );
 }
 
-export function Launcher({ shapes, launching, onLaunch, running = [] }: LauncherProps) {
+export function Launcher({ shapes, launching, onLaunch, running = [], catalog }: LauncherProps) {
+  const harnesses = catalog !== undefined && catalog.length > 0 ? catalog : FALLBACK_HARNESSES;
+  /** The models the harness this seat is on can actually run. */
+  const modelsFor = (harness: string): string[] =>
+    harnesses.find((entry) => entry.id === harness)?.models ?? [];
   const [shapeName, setShapeName] = useState<string | undefined>();
   const [job, setJob] = useState('');
   const [seats, setSeats] = useState<SeatDraft[]>([]);
@@ -211,9 +219,16 @@ export function Launcher({ shapes, launching, onLaunch, running = [] }: Launcher
         {
           'aria-label': `seat ${index + 1} CLI`,
           value: seat.harness,
-          onChange: (event: { target: { value: string } }) => editSeat(index, { harness: event.target.value }),
+          onChange: (event: { target: { value: string } }) => {
+            const harness = event.target.value;
+            // A model belongs to the harness it runs on, so switching CLI drops
+            // a model the new one cannot run rather than sending a Codex seat
+            // to claude-opus-5.
+            const keep = modelsFor(harness).includes(seat.model) ? seat.model : '';
+            editSeat(index, { harness, model: keep });
+          },
         },
-        HARNESSES,
+        harnesses,
       ),
       field(
         'select',
@@ -222,7 +237,7 @@ export function Launcher({ shapes, launching, onLaunch, running = [] }: Launcher
           value: seat.model,
           onChange: (event: { target: { value: string } }) => editSeat(index, { model: event.target.value }),
         },
-        MODELS,
+        modelsFor(seat.harness),
       ),
       field(
         'select',

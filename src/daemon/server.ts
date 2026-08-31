@@ -60,6 +60,7 @@ import { acquireLock, recordLockUrl, releaseLock } from './lock.js';
 import { isBlockedPort, NoUsablePortError, pickUsablePort } from './ports.js';
 import { DaemonError } from './errors.js';
 import { probeCliHarnesses } from '../harness/path.js';
+import { loadRegistry } from '../harness/registry.js';
 
 /**
  * The default interface. Never `localhost`: it resolves to `::1` first on
@@ -693,7 +694,21 @@ class Daemon {
       return;
     }
     if (path === '/harnesses' && method === 'GET') {
-      send(response, 200, { harnesses: await probeCliHarnesses() });
+      // Availability *and* what each harness can be put on. The launcher used
+      // to carry its own hard-coded copy of both, so a Codex seat was offered
+      // Claude models and a model nobody had added to a React array could not
+      // be chosen at all.
+      const registry = await loadRegistry();
+      send(response, 200, {
+        harnesses: await probeCliHarnesses(),
+        catalog: [...registry.values()]
+          .filter((descriptor) => descriptor.spawn !== undefined)
+          .map((descriptor) => ({
+            id: descriptor.key,
+            label: descriptor.label ?? descriptor.key,
+            models: descriptor.models ?? [],
+          })),
+      });
       return;
     }
     if (path === '/phase' && method === 'GET') {

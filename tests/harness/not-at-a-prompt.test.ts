@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { NotAtAPromptError, openSession, showsTyped } from '../../src/harness/session.js';
+import { awaitingConfirmation, NotAtAPromptError, openSession, showsTyped } from '../../src/harness/session.js';
 import { Screen } from '../../src/harness/screen.js';
 import type { PtyProcess, PtySpec, SpawnPty } from '../../src/harness/pty.js';
 
@@ -161,5 +161,76 @@ describe('reading the echo off the screen', () => {
 
   it('treats an empty turn as nothing to check', () => {
     expect(showsTyped(screenWith(BYPASS_DIALOG), '')).toBe(true);
+  });
+});
+
+/**
+ * The race that actually killed the run, and the reason an echo check is not
+ * enough on its own.
+ *
+ * The launch posts the job to #floor, which makes every seat's inbox non-empty
+ * at once, so the wake loop delivers a turn about two seconds in — long before
+ * the first-turn timer anyone was reasoning about. At two seconds the seat is
+ * still starting: the composer takes the text and echoes it, the confirmation
+ * paints over it, and Return lands on "No, exit". The text *is* on screen, so
+ * "did it echo?" answers yes and presses Return into the dialog.
+ *
+ * Measured three times, three seats each, every seat `exited 1` at 2.1s.
+ */
+describe('a dialog that appears while a turn is being typed', () => {
+  it('does not press Return when the confirmation drew itself after the echo', async () => {
+    const pty = fakePty();
+    const session = openSession({
+      argv: ['claude'],
+      cwd: '/tmp',
+      first: '',
+      turnFormat: 'interactive',
+      readyDelayMs: 10 ** 6,
+      submitDelayMs: 30,
+      capture: {},
+      spawnPty: pty.spawnPty,
+    });
+
+    const sending = session.send('read JOB.md and work it');
+    // The composer took it and echoed it...
+    pty.draw('> read JOB.md and work it');
+    // ...and then the confirmation painted over the top, which is the race.
+    pty.draw(`\r\n${BYPASS_DIALOG}`);
+
+    await expect(sending).rejects.toBeInstanceOf(NotAtAPromptError);
+    expect(pty.writes()).not.toContain('\r');
+  });
+
+  it('will not even type at a seat that is already waiting on one', async () => {
+    const pty = fakePty();
+    const session = openSession({
+      argv: ['claude'],
+      cwd: '/tmp',
+      first: '',
+      turnFormat: 'interactive',
+      readyDelayMs: 10 ** 6,
+      submitDelayMs: 1,
+      capture: {},
+      spawnPty: pty.spawnPty,
+    });
+
+    pty.draw(BYPASS_DIALOG);
+    await expect(session.send('read JOB.md')).rejects.toBeInstanceOf(NotAtAPromptError);
+    // Letters at a menu are keystrokes, not text: it must not have typed either.
+    expect(pty.writes()).toEqual([]);
+  });
+});
+
+describe('recognising a screen that is asking a question', () => {
+  it('knows the confirmations the harnesses actually draw', () => {
+    expect(awaitingConfirmation(BYPASS_DIALOG)).toBe(true);
+    expect(awaitingConfirmation('Do you trust the files in this folder?')).toBe(true);
+    expect(awaitingConfirmation('Overwrite? (y/n)')).toBe(true);
+    expect(awaitingConfirmation('Press Enter to continue')).toBe(true);
+  });
+
+  it('leaves an ordinary working screen alone', () => {
+    expect(awaitingConfirmation('Reading src/world/rock.ts')).toBe(false);
+    expect(awaitingConfirmation('> read JOB.md and work it')).toBe(false);
   });
 });

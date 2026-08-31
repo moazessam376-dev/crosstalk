@@ -97,6 +97,32 @@ export class NotAtAPromptError extends Error {
   }
 }
 
+/**
+ * Screens where Return means something other than "submit this turn".
+ *
+ * Heuristic, and deliberately so: there is no protocol for "the TUI is asking
+ * you something", so the only signal is what it drew. These are the lines the
+ * harnesses actually put on screen when they are waiting on a person — a
+ * confirmation with a default, a trust prompt, a y/n. Matching one is treated
+ * as "not at a prompt", which is the safe direction: the cost of a false match
+ * is a turn delivered a few seconds late, and the cost of a miss is a seat
+ * answering "No, exit" and dying before it has read its brief.
+ */
+const CONFIRMATION_SIGNATURES = [
+  'enter to confirm',
+  'esc to cancel',
+  'do you trust',
+  'yes, i accept',
+  'no, exit',
+  '(y/n)',
+  'press enter to continue',
+];
+
+export function awaitingConfirmation(screenText: string): boolean {
+  const flat = screenText.toLowerCase();
+  return CONFIRMATION_SIGNATURES.some((signature) => flat.includes(signature));
+}
+
 /** How much of a turn has to be echoed back before Return is safe to press. */
 const ECHO_PROBE = 24;
 
@@ -204,12 +230,22 @@ export function openSession(args: {
     }
     // A terminal takes typing, not envelopes — and the Return that submits it
     // has to arrive as its own keystroke. See SUBMIT_DELAY_MS.
+    const who = args.argv[0] ?? 'the seat';
+    // Look before typing. A seat that is waiting on a confirmation is not a
+    // seat that is waiting for a turn, and letters at a menu are keystrokes.
+    if (screen !== undefined && awaitingConfirmation(screen.text())) {
+      throw new NotAtAPromptError(who);
+    }
     const typed = turn.replace(/\n/g, ' ');
     transport.write(typed);
     await pause(args.submitDelayMs ?? SUBMIT_DELAY_MS);
-    // Look before pressing Return. See `showsTyped`.
-    if (screen !== undefined && !showsTyped(screen, typed)) {
-      throw new NotAtAPromptError(args.argv[0] ?? 'the seat');
+    // And look again before pressing Return, because a dialog can draw itself
+    // in between: at start-up the composer accepts the text, the confirmation
+    // paints over it, and Return then answers *that*. Checking only that the
+    // text was echoed passes in exactly that case — measured, three seats,
+    // every launch, all `exited 1` two seconds in.
+    if (screen !== undefined && (awaitingConfirmation(screen.text()) || !showsTyped(screen, typed))) {
+      throw new NotAtAPromptError(who);
     }
     transport.write(RETURN);
   };

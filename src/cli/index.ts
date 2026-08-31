@@ -402,7 +402,12 @@ async function cmdDown(argv: string[]): Promise<number> {
 
   let stopped = false;
   try {
-    const client = await DaemonClient.open(repo, str(flags, 'as') ?? 'leader');
+    // Stopping the daemon is an operator act, not a leader act. The default
+    // used to be `leader`, which predates flat peer rosters: a leaderless team
+    // — the shape the bench actually runs — could not be stopped at all
+    // without knowing to pass `--as @human`, and failed with "No token for
+    // leader" on a seat that was never meant to exist.
+    const client = await DaemonClient.open(repo, str(flags, 'as') ?? HUMAN_ID);
     await client.post('/shutdown', {});
     stopped = true;
   } catch (error) {

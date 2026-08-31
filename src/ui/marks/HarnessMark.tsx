@@ -1,4 +1,5 @@
 import { createElement as h } from 'react';
+import { harnessKind } from './kind.js';
 
 
 /**
@@ -19,16 +20,7 @@ import { createElement as h } from 'react';
  * one file and lets a mark inherit the muted tone of whatever row it sits in
  * without this component knowing anything about rows.
  */
-export type HarnessKind = 'claude' | 'codex' | 'cursor' | 'unknown';
-
-/** Maps a registry id (`claude-code-live`, `codex-cli`, …) to its vendor. */
-export function harnessKind(harness: string | undefined): HarnessKind {
-  if (harness === undefined) return 'unknown';
-  if (harness.startsWith('claude')) return 'claude';
-  if (harness.startsWith('codex')) return 'codex';
-  if (harness.startsWith('cursor')) return 'cursor';
-  return 'unknown';
-}
+export { harnessKind, type HarnessKind } from './kind.js';
 
 /** Twelve tapered spokes from a dense centre. Lengths vary, as the mark does. */
 function claudeSpokes(): string[] {
@@ -87,6 +79,7 @@ export function HarnessMark({ harness, size = 14, fallback }: HarnessMarkProps) 
         viewBox: '0 0 24 24',
         fill: 'none',
         'aria-hidden': 'true',
+        className: 'harness-mark',
         'data-harness': kind,
       },
       ...children,
@@ -129,6 +122,21 @@ export function HarnessMark({ harness, size = 14, fallback }: HarnessMarkProps) 
         d: 'M13.4 14.4h2.9',
         stroke: 'currentColor',
         strokeWidth: 1.6,
+        strokeLinecap: 'round',
+      }),
+    ]);
+  }
+
+  if (kind === 'human') {
+    // A person, not a product. Deliberately the plainest mark here: it must
+    // read instantly as "this one is you" beside three vendor logos.
+    return svg([
+      h('circle', { key: 'head', cx: 12, cy: 9, r: 3.6, stroke: 'currentColor', strokeWidth: 1.7 }),
+      h('path', {
+        key: 'shoulders',
+        d: 'M5.4 19.4a6.6 6.6 0 0 1 13.2 0',
+        stroke: 'currentColor',
+        strokeWidth: 1.7,
         strokeLinecap: 'round',
       }),
     ]);

@@ -11,7 +11,8 @@ import { postCompose, postHumanAction, postMessage, postVote, type HumanAction }
 import { dmId } from '../core/rooms.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Launcher } from './launch/Launcher.js';
-import { useLaunch, useShapes } from './state/useLaunch.js';
+import { useLaunch, useSessions, useShapes } from './state/useLaunch.js';
+import { useOperatorName } from './state/operator.js';
 
 /**
  * Used when no daemon answers `/config.json` — `vite dev`, or a static build
@@ -52,7 +53,13 @@ export default function App({ connection: injected }: AppProps = {}) {
   const [view, setView] = useState<'board' | 'launch'>('board');
   const mirror = useMirror(connection.kind === 'live');
   const shapes = useShapes(connection.kind === 'live');
+  const sessions = useSessions(connection.kind === 'live');
   const { launch, launching } = useLaunch();
+  const { name: operator, setName: setOperator } = useOperatorName();
+  // Which seat's terminal is open. Held here rather than in `Layout` so the
+  // launcher can close it: starting a new run and staring at the last run's
+  // dead terminal was the first thing that went wrong when this was local.
+  const [openSeat, setOpenSeat] = useState<string | undefined>();
 
   useEffect(() => {
     if (injected !== undefined) return;
@@ -154,7 +161,10 @@ export default function App({ connection: injected }: AppProps = {}) {
                 type: 'button',
                 className: `hub-view${view === name ? ' is-current' : ''}`,
                 'aria-current': view === name ? 'page' : undefined,
-                onClick: () => setView(name),
+                onClick: () => {
+                  setView(name);
+                  setOpenSeat(undefined);
+                },
               },
               name === 'board' ? 'Board' : 'Start a run',
             ),
@@ -185,6 +195,12 @@ export default function App({ connection: injected }: AppProps = {}) {
         ? (participantId: string) => setSelectedRoom(dmId(connection.config.self, participantId))
         : undefined,
       onCompose: connection.kind === 'live' ? (job: string) => postCompose(job) : undefined,
+      ...(operator === undefined ? {} : { operator }),
+      onSetOperator: setOperator,
+      sessions,
+      ...(openSeat === undefined ? {} : { openSeat }),
+      onOpenSession: connection.kind === 'live' ? (seat: string) => setOpenSeat(seat) : undefined,
+      onCloseSession: () => setOpenSeat(undefined),
       // Only against a live daemon. The fixture hub has no `/mirror` to poll,
       // and a card there would describe a mirror that does not exist.
       mirror,

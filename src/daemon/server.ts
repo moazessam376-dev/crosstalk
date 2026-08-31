@@ -96,6 +96,14 @@ export interface DaemonHandle {
   host: string;
   /** One per participant — spec §6.1. A single shared token makes `from` self-asserted. */
   tokens: ReadonlyMap<ParticipantId, string>;
+  /**
+   * The CLI sessions this daemon is mirroring.
+   *
+   * Exposed so a test can put a real process behind `/sessions/:id/screen`
+   * without launching a team, and so an embedder that spawns seats its own way
+   * can register them. `/launch` registers into this same one.
+   */
+  sessions: SessionRegistry;
   close(): Promise<void>;
 }
 
@@ -221,7 +229,7 @@ function buildHandle(parts: {
   process.on('SIGTERM', onSignal);
   daemon.onShutdownRequest = close;
 
-  return { url, host, tokens, close };
+  return { url, host, tokens, sessions: daemon.sessions, close };
 }
 
 function bindOnce(server: Server, host: string, port: number): Promise<number> {
@@ -389,6 +397,11 @@ class Daemon {
    * says which is which.
    */
   readonly #sessions = new SessionRegistry();
+
+  /** The mirror registry, so `startDaemon` can hand it to whoever spawns seats. */
+  get sessions(): SessionRegistry {
+    return this.#sessions;
+  }
 
   /** Absolute path to the clone. `config.project.repo` is relative to the config file. */
   readonly #repo: string;

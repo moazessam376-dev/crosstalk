@@ -1,6 +1,9 @@
 import { createElement, useState } from 'react';
 import type { Role, Tier } from '../../contracts/participant.js';
 import { identityFor } from '../state/identity.js';
+// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
+import { HarnessMark } from '../marks/HarnessMark.js';
+import { harnessKind } from '../marks/kind.js';
 
 /**
  * How long a body may be before the stream previews it instead of pouring it out.
@@ -40,18 +43,34 @@ export interface MessageCardProps {
   tier?: Tier;
   /** Assigned from the roster so two participants never share one. */
   colour?: string;
+  /**
+   * What to call this author on screen.
+   *
+   * Only ever different for the operator's own seat: the log records it as
+   * `@human` and always will, and `@human` on screen reads as a placeholder
+   * nobody filled in. An agent's id is its id — the team addresses it by that
+   * on the floor, so renaming one here would make the screen disagree with the
+   * conversation on it.
+   */
+  displayName?: string;
   /** A handle this message addresses, when the roster knows it. */
   mention?: string;
   testId?: string;
 }
 
 /**
- * A message as the design draws it: a 30px avatar beside a header of
- * author · role · model · handle · time · seq, with the body beneath.
+ * A message: the mark of the CLI that wrote it beside a header of
+ * author · role · model · time · seq, with the body beneath.
+ *
+ * The avatar used to be two initials on a colour from a rotating palette. The
+ * colour carried nothing — it said "a different participant", which the name
+ * beside it already said — and in a run mixing Claude Code, Codex and Cursor
+ * the fact worth reading at a glance is which tool is answering, because that
+ * is what explains a seat's behaviour when it surprises you.
  *
  * Everything after the author is read from `participant_joined`. A participant
- * the log has not introduced gets the avatar and handle and nothing else,
- * rather than a blank chip where a model should be.
+ * the log has not introduced gets the mark and the name and nothing else,
+ * rather than a blank space where a model should be.
  */
 export function MessageCard({
   from,
@@ -64,6 +83,7 @@ export function MessageCard({
   tier,
   colour,
   mention,
+  displayName,
   testId = 'message-card',
 }: MessageCardProps) {
   const [expanded, setExpanded] = useState(false);
@@ -90,8 +110,8 @@ export function MessageCard({
     },
     createElement(
       'span',
-      { className: 'avatar avatar-lg', style: { background: identity.colour }, 'aria-hidden': 'true' },
-      identity.initials,
+      { className: 'message-mark', 'data-harness': harnessKind(harness) },
+      createElement(HarnessMark, { harness, size: 15, fallback: identity.initials }),
     ),
     createElement(
       'div',
@@ -99,10 +119,9 @@ export function MessageCard({
       createElement(
         'header',
         { className: 'message-card-header' },
-        createElement('strong', { className: 'message-author', style: { color: identity.colour } }, from),
+        createElement('strong', { className: 'message-author' }, displayName ?? from),
         role === undefined ? null : createElement('span', { className: 'message-role' }, role),
         model === undefined ? null : createElement('span', { className: 'message-model fact' }, model),
-        harness === undefined ? null : createElement('span', { className: 'message-handle fact' }, harness),
         ts ? createElement('time', { className: 'message-time fact', dateTime: ts }, ts.slice(11, 16)) : null,
         seq !== undefined ? createElement('span', { className: 'message-seq fact' }, `#${seq}`) : null,
       ),

@@ -188,7 +188,11 @@ button:focus-visible {
 .card-stream {
   display: grid;
   gap: 8px;
-  padding: 0 12px 12px;
+  /* The stream's content column, matched to `.stream-head`'s 14px. The header,
+     the cards and the composer each had their own inset and landed within two
+     pixels of one another — near-alignment reads worse than either aligning or
+     visibly not, because the eye registers the wobble without finding a rule. */
+  padding: 0 14px 12px;
 }
 
 .message-card,
@@ -245,13 +249,29 @@ button:focus-visible {
   font-weight: 600;
 }
 
+/* A state is a dot and a word.
+ *
+ * These were 1px-outlined capsules, and a claim card carries two of them side
+ * by side — so the first thing the eye found on a card full of argument was a
+ * pair of empty lozenges. The colour was already carrying the meaning; the
+ * outline only added a shape competing with it. */
 .state-chip,
 .severity-chip {
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-family: var(--font-mono);
   font-size: 11px;
+}
+
+.state-chip::before,
+.severity-chip::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: currentColor;
 }
 
 .state-chip {
@@ -612,7 +632,9 @@ button:focus-visible {
 }
 
 .composer {
-  margin: 0 12px 12px;
+  /* Its border sits on the stream's column, so the box edge lines up with the
+     message marks above it and its own text insets from there. */
+  margin: 0 14px 12px;
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius);
   background: var(--surface-panel);
@@ -814,11 +836,18 @@ button:focus-visible {
   letter-spacing: -0.01em;
 }
 
+/* The rail's content column.
+ *
+ * The wordmark, the group labels, the channel rows and the foot each carried
+ * their own inset — 12, 16, 16 and 12 — so the left edge stepped in and out
+ * four times down a 250px rail. The scroller now supplies only the difference
+ * between its children's inner padding (8px) and the column (12px), so every
+ * one of them lands on the same line. */
 .sidebar-scroll {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 0 8px 8px;
+  padding: 0 4px 8px;
 }
 
 .channel-group {
@@ -906,13 +935,21 @@ button:focus-visible {
 
 .human-badge {
   margin-left: auto;
-  border: 1px solid var(--status-open);
-  border-radius: 999px;
-  background: transparent;
-  padding: 1px 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--status-open);
   font-family: var(--font-mono);
   font-size: 10px;
+}
+
+.human-badge::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--status-open);
 }
 
 .human-badge ~ .round-counter {
@@ -1008,20 +1045,33 @@ button:focus-visible {
   color: var(--text-tertiary);
 }
 
+/* A dot and a word, not a capsule.
+ *
+ * "live" is the state of a healthy connection — the thing that is true nearly
+ * all the time. A pinned green pill gives the most ordinary fact on the screen
+ * the loudest shape on it, and the colour was already saying it. The dot keeps
+ * the colour; the capsule went. */
 .stream-status {
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--border-hairline);
-  border-radius: 999px;
-  padding: 3px 9px;
+  padding: 3px 0;
   font-size: 11.5px;
+  color: var(--text-secondary);
 }
 
-.stream-status[data-status="live"] { color: var(--status-fresh); }
-.stream-status[data-status="connecting"],
-.stream-status[data-status="reconnecting"] { color: var(--status-open); }
+.stream-status::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.stream-status[data-status="live"]::before { background: var(--status-fresh); }
+.stream-status[data-status="connecting"]::before,
+.stream-status[data-status="reconnecting"]::before { background: var(--status-open); }
 
 .stream-scroll {
   min-height: 0;
@@ -1064,7 +1114,8 @@ button:focus-visible {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
   gap: 10px;
-  padding: 7px 2px;
+  /* No horizontal padding: the column is `.card-stream`'s. */
+  padding: 7px 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1254,7 +1305,10 @@ button:focus-visible {
 
 .member-row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  /* Three children, not two: mark, body, and the side-room control. Declared
+     with two columns the button wrapped onto its own line and rendered as a
+     stray `@` under every seat. */
+  grid-template-columns: 28px minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   padding: 4px 5px;
@@ -1282,7 +1336,7 @@ button:focus-visible {
 
 /* Offline is stated by the dot; dimming the avatar says the same thing a
    second time, which is what makes a roster scannable. */
-.member-row[data-status="offline"] .avatar { opacity: 0.45; }
+.member-row[data-status="offline"] .harness-mark { opacity: 0.45; }
 .member-row[data-status="offline"] .member-id { color: var(--text-tertiary); }
 
 .member-body { min-width: 0; }
@@ -1447,12 +1501,10 @@ button:focus-visible {
   background-clip: content-box;
 }
 
-/* 2.8 — the human pill is an outline, not a fill. */
+/* 2.8 called for an outline rather than a fill, which was the right instinct
+   applied to the wrong shape: the reason a filled pill was too loud is that the
+   pill was too loud. It is a dot and a word now — see `.human-badge` above. */
 .human-badge {
-  border: 1px solid var(--status-open);
-  border-radius: 999px;
-  background: transparent;
-  padding: 1px 5px;
   font-size: 10px;
 }
 
@@ -1466,12 +1518,11 @@ button:focus-visible {
 .claim-card[data-claim-state='clarify'] { border-left-color: var(--accent); }
 .claim-card[data-claim-state='resolved'] { border-left-color: var(--status-fresh); }
 
-/* 4.14 — chips are 10.5px mono on a 1px/6px pill. */
-.state-chip,
-.severity-chip {
-  border-radius: 999px;
-  padding: 1px 6px;
-  font-family: var(--font-mono);
+/* 4.14 — chips are 10.5px mono. The pill they used to sit on is gone; see the
+   `.state-chip` rule above for why. Kept as a second declaration only because
+   the design specifies a smaller size inside a claim card than elsewhere. */
+.claim-card .state-chip,
+.claim-card .severity-chip {
   font-size: 10.5px;
 }
 
@@ -1539,6 +1590,11 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* A flex item defaults to `min-width: auto`, which refuses to shrink below
+     its content — so a long protocol line pushed the whole stream into
+     horizontal scroll instead of ellipsising, taking every message with it.
+     The body already opts into clipping; this is what lets it. */
+  min-width: 0;
   padding: 4px 2px 4px 0;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
@@ -1562,6 +1618,9 @@ button:focus-visible {
 
 .protocol-kind {
   letter-spacing: 0.04em;
+  /* The kind names the row. Shrinking it wraps two words onto two lines and
+     doubles the height of what is meant to be one quiet line. */
+  flex: none;
 }
 
 .protocol-body {
@@ -1730,17 +1789,36 @@ button:focus-visible {
 .gate-phase { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
 .gate-intent { font-size: 12.5px; color: var(--text-secondary); line-height: 1.45; }
 .gate-ids { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+/* A gate is a ring and a name.
+ *
+ * Eight outlined boxes down the right of the phase table read as eight objects
+ * before they read as eight conditions, and a shape with four phases showed
+ * them all at once. The ring carries the same distinction the outline colour
+ * did, in a shape that says "condition" rather than "chip". */
 .gate-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-family: var(--font-mono); font-size: 10.5px;
-  padding: 2px 7px; border-radius: 3px;
-  border: 1px solid var(--border-hairline);
   color: var(--text-tertiary);
   white-space: nowrap;
 }
+
+.gate-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
 /* A workspace gate is checked against the repo; an asserted one is a claim a
-   seat makes. Showing which is which stops a self-report reading as a check. */
-.gate-chip.is-workspace { color: var(--status-fresh); border-color: color-mix(in srgb, var(--status-fresh) 40%, transparent); }
-.gate-chip.is-asserted { color: var(--status-open); border-color: color-mix(in srgb, var(--status-open) 40%, transparent); }
+   seat makes. Showing which is which stops a self-report reading as a check —
+   so the checked one is filled and the claimed one is hollow. */
+.gate-chip.is-workspace { color: var(--status-fresh); }
+.gate-chip.is-workspace::before { background: currentColor; box-shadow: none; }
+.gate-chip.is-asserted { color: var(--status-open); }
 
 /* --- roster --- */
 .seat-table {
@@ -2197,4 +2275,298 @@ button:focus-visible {
   background: var(--surface-raised);
   color: var(--text-tertiary);
   cursor: default;
+}
+
+/* ---------------------------------------------------------------------------
+ * The environment rail
+ *
+ * `.hub-shell` is the new box between `.hub-root` and `.hub-layout`: the rail
+ * is fixed height, the layout takes what is left. The height clamp on
+ * `.hub-root` only reaches the scrolling log if every box between them refuses
+ * to be sized by its content, so this one carries `min-height: 0` for the same
+ * reason `.hub-region` does.
+ * ------------------------------------------------------------------------- */
+
+.hub-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.env-rail {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  flex: none;
+  height: 46px;
+  padding: 0 16px;
+  overflow-x: auto;
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--border-hairline);
+  scrollbar-width: none;
+}
+
+.env-rail::-webkit-scrollbar { display: none; }
+
+.env-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.env-label {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  color: var(--text-tertiary);
+}
+
+.env-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 550;
+  color: var(--text-primary);
+}
+
+.env-note {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.env-error {
+  font-size: 11.5px;
+  color: var(--status-blocker);
+  max-width: 30ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.env-seat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/*
+ * A seat is a row of facts, not a capsule. The only shape is the hairline that
+ * appears when it is the one open — a border rather than a fill, so a rail of
+ * six seats does not read as six coloured objects.
+ */
+.env-seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1;
+}
+
+button.env-seat:hover {
+  border-color: var(--border-hairline);
+  color: var(--text-primary);
+}
+
+.env-seat.is-open {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.env-seat[data-present="false"] { opacity: 0.55; }
+
+.env-seat-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Marks in place of avatars
+ * ------------------------------------------------------------------------- */
+
+.message-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  flex: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Whose hub this is
+ * ------------------------------------------------------------------------- */
+
+.sidebar-foot.is-editing {
+  gap: 6px;
+}
+
+.operator-name {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  margin-left: -4px;
+  border-radius: 5px;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+
+.operator-name:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.operator-name:disabled {
+  cursor: default;
+}
+
+.operator-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.operator-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* The protocol id, kept beside the name so the display name never hides what
+   the log actually attributes a message to. */
+.sidebar-foot .sidebar-self-id {
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* A seat you can open reads as a control on hover and nowhere else — the
+   roster is mostly for reading, and six always-buttoned rows is noise. */
+button.member-body {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  min-width: 0;
+}
+
+button.member-body:hover .member-id {
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------------------
+ * The dock's compose card
+ *
+ * This shipped with no stylesheet at all: the label sat on top of the textarea,
+ * and the textarea rendered as the browser's default grey box in the middle of
+ * a dark panel. It worked and looked like a mistake.
+ * ------------------------------------------------------------------------- */
+
+.compose-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* `.dock-card` carries no padding — each card's body supplies its own, and
+     every other one uses this. Without it the form sat 11px outside the card's
+     content column, so the label and textarea ran under the card border while
+     the "Compose" title above them did not. */
+  padding: 10px 11px 12px;
+}
+
+.compose-label {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  color: var(--text-tertiary);
+}
+
+.compose-job {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.compose-job:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/*
+ * Which CLIs are on this machine. A list, not a row of capsules: three of them
+ * tinted green would read as three things that need attention, when the whole
+ * message is "these are available".
+ */
+.compose-harnesses {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.compose-harnesses li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.compose-harnesses li::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-tertiary);
+}
+
+.compose-harnesses li[data-available="true"]::before {
+  background: var(--status-fresh);
+}
+
+.compose-form button[type="submit"] {
+  align-self: flex-start;
+  height: 30px;
+  padding: 0 14px;
+  border-color: transparent;
+  background: var(--text-primary);
+  color: var(--surface-base);
+  font-weight: 550;
+}
+
+.compose-form button[type="submit"]:disabled {
+  background: var(--surface-raised);
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+/* The operator's own mark takes the amber the rest of the hub already uses for
+   "a person is needed" — the one identity that must be findable at a glance. */
+.harness-mark[data-harness="human"],
+[data-harness="human"] > .harness-mark {
+  color: var(--status-open);
 }

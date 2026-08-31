@@ -3,7 +3,8 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 
-import { openSession, type SpawnProcess } from '../../src/harness/session.js';
+import { openSession, PTY_SIZE, type SpawnProcess } from '../../src/harness/session.js';
+import type { PtySpec, SpawnPty } from '../../src/harness/pty.js';
 
 /**
  * A child that records what was written to its stdin.
@@ -13,24 +14,40 @@ import { openSession, type SpawnProcess } from '../../src/harness/session.js';
  * written. What is worth pinning here is the framing and the fallback, because
  * those are ours to get wrong.
  */
-function fakeChild(): { child: ChildProcess; written: () => string[]; close: (code: number) => void } {
+function fakeChild(): {
+  child: ChildProcess;
+  written: () => string[];
+  raw: () => string;
+  emit: (text: string) => void;
+  close: (code: number) => void;
+} {
   const emitter = new EventEmitter() as unknown as ChildProcess;
   const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
   const chunks: string[] = [];
   stdin.on('data', (chunk: Buffer) => chunks.push(chunk.toString()));
-  Object.assign(emitter, { stdin, kill: () => true });
+  Object.assign(emitter, { stdin, stdout, stderr, kill: () => true });
   return {
     child: emitter,
     written: () => chunks.join('').split('\n').filter((line) => line !== ''),
+    raw: () => chunks.join(''),
+    emit: (text) => stdout.write(text),
     close: (code) => emitter.emit('close', code),
   };
 }
 
-function harness(): { spawn: SpawnProcess; calls: Array<{ file: string; args: string[] }>; last: () => ReturnType<typeof fakeChild> } {
-  const calls: Array<{ file: string; args: string[] }> = [];
+interface SpawnCall {
+  file: string;
+  args: string[];
+  options: { cwd: string; env?: NodeJS.ProcessEnv };
+}
+
+function harness(): { spawn: SpawnProcess; calls: SpawnCall[]; last: () => ReturnType<typeof fakeChild> } {
+  const calls: SpawnCall[] = [];
   let made: ReturnType<typeof fakeChild> | undefined;
-  const spawn: SpawnProcess = (file, args) => {
-    calls.push({ file, args });
+  const spawn: SpawnProcess = (file, args, options) => {
+    calls.push({ file, args, options });
     made = fakeChild();
     return made.child;
   };
@@ -94,98 +111,218 @@ describe('a harness that takes streamed turns', () => {
   });
 });
 
+/**
+ * A pty stood up in memory, so the interactive path is exercised without a
+ * terminal — and, more to the point, without a real CLI.
+ */
+function fakePty(): { spawnPty: SpawnPty; spec: () => PtySpec; written: () => string; emit: (text: string) => void; exit: (code: number) => void } {
+  let captured: PtySpec | undefined;
+  let data: ((chunk: string) => void) | undefined;
+  let exit: ((code: number | null) => void) | undefined;
+  let written = '';
+  const spawnPty: SpawnPty = (spec) => {
+    captured = spec;
+    return {
+      write: (chunk) => {
+        written += chunk;
+      },
+      onData: (handler) => {
+        data = handler;
+      },
+      onExit: (handler) => {
+        exit = handler;
+      },
+      resize: () => {},
+      kill: () => exit?.(0),
+    };
+  };
+  return {
+    spawnPty,
+    spec: () => captured!,
+    written: () => written,
+    emit: (text) => data?.(text),
+    exit: (code) => exit?.(code),
+  };
+}
+
 describe('an interactive seat, watchable over Remote Control', () => {
-  it('wraps the command in a pty, because without one Claude Code falls back to print', async () => {
-    const { spawn, calls } = harness();
+  /**
+   * The reason this is a pty and not `script`. Measured on macOS: spawning
+   * `script -q /dev/null …` with a piped stdin dies immediately with
+   * `script: tcgetattr/ioctl: Operation not supported on socket`, because
+   * `script` calls `tcgetattr` on its own stdin and a daemon has only a pipe to
+   * give it. It looked fine every time it was tried by hand, since a hand test
+   * runs from a terminal where stdin is a tty — so it worked in every check
+   * made and in none of the conditions it would run under.
+   */
+  it('runs the harness on a pty rather than wrapping it in a shell', async () => {
+    const pty = fakePty();
     openSession({
       argv: ['claude', '--remote-control', 'opus', '--permission-mode', 'bypassPermissions'],
       cwd: '/tmp',
       first: 'the job',
       turnFormat: 'interactive',
       readyDelayMs: 0,
-      spawn,
+      spawnPty: pty.spawnPty,
     });
 
-    // Verified against the real binary: spawned without a terminal it exits
-    // with "Input must be provided ... when using --print" and Remote Control
-    // has nothing to attach to.
-    expect(calls[0]!.file).toBe('script');
-    expect(calls[0]!.args.slice(0, 3)).toEqual(['-q', '/dev/null', 'claude']);
-    expect(calls[0]!.args).toContain('--remote-control');
+    expect(pty.spec().file).toBe('claude');
+    expect(pty.spec().args).toEqual(['--remote-control', 'opus', '--permission-mode', 'bypassPermissions']);
+  });
+
+  /**
+   * A pty opened without a size is 0x0, and a TUI asked to lay out in zero
+   * columns cannot. The same numbers size the reconstructed screen, so a mirror
+   * cannot wrap text where the real terminal did not.
+   */
+  it('sizes the pty from the constant the mirror is reconstructed at', async () => {
+    const pty = fakePty();
+    openSession({
+      argv: ['claude'],
+      cwd: '/tmp',
+      first: 'the job',
+      turnFormat: 'interactive',
+      readyDelayMs: 0,
+      spawnPty: pty.spawnPty,
+    });
+
+    expect(pty.spec().cols).toBe(PTY_SIZE.cols);
+    expect(pty.spec().rows).toBe(PTY_SIZE.rows);
   });
 
   it('types the job rather than putting a whole brief on the command line', async () => {
-    const { spawn, calls, last } = harness();
+    const pty = fakePty();
     openSession({
       argv: ['claude', '--remote-control', 'opus'],
       cwd: '/tmp',
       first: 'build the thing',
       turnFormat: 'interactive',
       readyDelayMs: 0,
-      spawn,
+      spawnPty: pty.spawnPty,
     });
     await new Promise((done) => setTimeout(done, 5));
 
-    expect(calls[0]!.args).not.toContain('build the thing');
-    expect(last().written()).toEqual(['build the thing']);
+    expect(pty.spec().args).not.toContain('build the thing');
+    expect(pty.written()).toBe('build the thing\n');
   });
 
   it('sends one line, so a multi-line brief cannot submit itself halfway', async () => {
-    const { spawn, last } = harness();
+    const pty = fakePty();
     const session = openSession({
       argv: ['claude'],
       cwd: '/tmp',
       first: 'x',
       turnFormat: 'interactive',
       readyDelayMs: 0,
-      spawn,
+      spawnPty: pty.spawnPty,
     });
     await new Promise((done) => setTimeout(done, 5));
 
     // A newline in the middle of a brief is a Return: it would submit the first
     // paragraph and leave the rest typing into a running turn.
     await session.send('line one\nline two\nline three');
-    expect(last().written()).toEqual(['x', 'line one line two line three']);
+    expect(pty.written()).toBe('x\nline one line two line three\n');
   });
 
   it('waits for the TUI to draw before typing, or the job lands on a splash screen', async () => {
-    const { spawn, last } = harness();
+    const pty = fakePty();
     openSession({
       argv: ['claude'],
       cwd: '/tmp',
       first: 'the job',
       turnFormat: 'interactive',
       readyDelayMs: 30,
-      spawn,
+      spawnPty: pty.spawnPty,
     });
 
-    expect(last().written()).toEqual([]);
+    expect(pty.written()).toBe('');
     await new Promise((done) => setTimeout(done, 45));
-    expect(last().written()).toEqual(['the job']);
+    expect(pty.written()).toBe('the job\n');
   });
 
-  it('can still be pushed a turn mid-run, which is what makes a peer feel live', async () => {
-    const { spawn } = harness();
+  it('settles exited when the pty closes, so a supervisor cannot hang', async () => {
+    const pty = fakePty();
     const session = openSession({
       argv: ['claude'],
       cwd: '/tmp',
       first: 'x',
       turnFormat: 'interactive',
       readyDelayMs: 0,
-      spawn,
+      spawnPty: pty.spawnPty,
     });
-    expect(session.canPush).toBe(true);
+
+    pty.exit(3);
+    await expect(session.exited).resolves.toBe(3);
   });
 });
 
-describe('a harness that reads its prompt once', () => {
-  it('takes the job on argv and refuses a later turn', async () => {
-    const { spawn, calls } = harness();
-    const session = openSession({ argv: ['codex', 'exec', '--json'], cwd: '/tmp', first: 'the job', spawn });
+describe('mirroring a seat', () => {
+  it('reconstructs the seat screen from what its terminal writes', async () => {
+    const pty = fakePty();
+    const session = openSession({
+      argv: ['claude'],
+      cwd: '/tmp',
+      first: 'x',
+      turnFormat: 'interactive',
+      readyDelayMs: 0,
+      capture: {},
+      spawnPty: pty.spawnPty,
+    });
 
-    expect(calls[0]!.args).toEqual(['exec', '--json', 'the job']);
-    expect(session.canPush).toBe(false);
-    // Refused loudly. A silent no-op would look like delivery and be a lie.
-    await expect(session.send('anything')).rejects.toThrow(/cannot take a turn/);
+    pty.emit('Reading harbor.ts');
+
+    const screen = session.screen();
+    expect(screen?.rows[0]?.map((run) => run.text).join('')).toBe('Reading harbor.ts');
+    expect(screen?.cols).toBe(PTY_SIZE.cols);
+  });
+
+  it('captures a piped harness too, so a non-interactive seat is watchable', async () => {
+    const { spawn, last } = harness();
+    const session = openSession({
+      argv: ['claude'],
+      cwd: '/tmp',
+      first: 'x',
+      turnFormat: 'stream-json',
+      capture: {},
+      spawn,
+    });
+
+    last().emit('thinking');
+    await new Promise((done) => setImmediate(done));
+
+    expect(session.screen()?.rows[0]?.map((run) => run.text).join('')).toBe('thinking');
+  });
+
+  /**
+   * Capture is a parse per chunk. A seat nobody is watching should not pay for
+   * a screen nobody reads, so it is opt-in and `screen()` says so by returning
+   * nothing rather than an empty grid.
+   */
+  it('captures nothing unless asked', async () => {
+    const { spawn, last } = harness();
+    const session = openSession({ argv: ['claude'], cwd: '/tmp', first: 'x', turnFormat: 'stream-json', spawn });
+
+    last().emit('output nobody asked for');
+    await new Promise((done) => setImmediate(done));
+
+    expect(session.screen()).toBeUndefined();
+  });
+
+  it('sends raw keys with nothing added, so Escape stays Escape', async () => {
+    const pty = fakePty();
+    const session = openSession({
+      argv: ['claude'],
+      cwd: '/tmp',
+      first: 'x',
+      turnFormat: 'interactive',
+      readyDelayMs: 0,
+      spawnPty: pty.spawnPty,
+    });
+    await new Promise((done) => setTimeout(done, 5));
+
+    await session.key('\u001b');
+    // `send` appends the Return that submits a turn; `key` must not, or an
+    // arrow key would submit whatever was half-typed in the composer.
+    expect(pty.written()).toBe('x\n\u001b');
   });
 });

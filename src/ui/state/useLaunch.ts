@@ -34,6 +34,14 @@ export interface SeatSession {
   activity: { verb: string; path?: string; working: boolean; at: number } | null;
   /** The Remote Control handle to attach to from a phone, when there is one. */
   remoteControl: string | null;
+  /**
+   * Whether this daemon holds the pipe to the seat's terminal.
+   *
+   * False for a seat someone started in their own shell: it is real, it is
+   * working, and there is nothing here to mirror. The hub says so instead of
+   * offering a terminal that would never fill.
+   */
+  mirrored?: boolean;
 }
 
 export interface SessionsView {

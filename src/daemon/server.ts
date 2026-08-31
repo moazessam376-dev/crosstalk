@@ -22,6 +22,7 @@ import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js
 import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
 import { workspaceWarning } from './workspace.js';
 import { Presence } from './presence.js';
+import { SessionRegistry } from '../harness/sessions.js';
 import { currentRungOf } from '../core/decisions.js';
 import { normaliseRoom } from '../core/rooms.js';
 
@@ -379,6 +380,15 @@ class Daemon {
   /** Keyed by participant and reported cwd. Empty string means "checked, nothing wrong". */
   readonly #workspaceWarnings = new Map<string, string>();
   readonly #presence = new Presence();
+  /**
+   * The CLI sessions this daemon started, so the hub can mirror them.
+   *
+   * Only seats launched from here appear: a seat someone started in their own
+   * terminal has no pipe into this process, and reporting it as mirrorable
+   * would be the "control that cannot work" defect all over again. `/sessions`
+   * says which is which.
+   */
+  readonly #sessions = new SessionRegistry();
 
   /** Absolute path to the clone. `config.project.repo` is relative to the config file. */
   readonly #repo: string;
@@ -664,7 +674,39 @@ class Daemon {
             // Seats launched interactive are named after themselves, so this is
             // the handle to attach to from a phone.
             remoteControl: participant.harness.endsWith('-live') ? participant.id : null,
+            // Whether this daemon holds the pipe. A seat someone started in
+            // their own terminal is real and working and cannot be mirrored,
+            // and the hub must say so rather than draw a dead terminal.
+            mirrored: this.#sessions.get(participant.id) !== undefined,
           })),
+      });
+      return;
+    }
+
+    const screenParams = matchPath(path, '/sessions/:id/screen');
+    if (screenParams !== undefined && method === 'GET') {
+      const seat = decodeURIComponent(screenParams[0]!);
+      const session = this.#sessions.get(seat);
+      if (session === undefined) {
+        send(response, 404, wire('daemon', 'NO_MIRRORED_SESSION', `no mirrored session for ${seat}`));
+        return;
+      }
+      const snapshot = session.screen();
+      // The version the watcher already has. Answering "unchanged" for the cost
+      // of a number is what makes a mirror pollable at a second's cadence
+      // without shipping a grid per seat per tick.
+      const since = Number(url.searchParams.get('since') ?? '-1');
+      if (snapshot !== undefined && Number.isFinite(since) && snapshot.version === since) {
+        send(response, 200, { seat, unchanged: true, version: snapshot.version, running: session.running });
+        return;
+      }
+      send(response, 200, {
+        seat,
+        unchanged: false,
+        running: session.running,
+        exitCode: session.exitCode ?? null,
+        canPush: session.canPush,
+        screen: snapshot ?? null,
       });
       return;
     }
@@ -688,6 +730,41 @@ class Daemon {
     const roomParams = matchPath(path, '/rooms/:room/events');
     if (roomParams !== undefined && method === 'GET') {
       send(response, 200, await this.#readRoom(ctx, decodeURIComponent(roomParams[0]!), url));
+      return;
+    }
+
+    const inputParams = matchPath(path, '/sessions/:id/input');
+    if (inputParams !== undefined && method === 'POST') {
+      // Typing into somebody's CLI is not a protocol act — it never reaches the
+      // log, so it cannot be mistaken for something the team decided. It is the
+      // operator leaning over and using the keyboard, and it is the human seat's
+      // to do.
+      if (who !== HUMAN_ID) {
+        send(response, 403, wire('daemon', 'ROLE_NOT_PERMITTED', 'POST /sessions/:id/input requires the human seat'));
+        return;
+      }
+      const seat = decodeURIComponent(inputParams[0]!);
+      const session = this.#sessions.get(seat);
+      if (session === undefined) {
+        send(response, 404, wire('daemon', 'NO_MIRRORED_SESSION', `no mirrored session for ${seat}`));
+        return;
+      }
+      const payload = (await readJsonBody(request)) as { turn?: unknown; keys?: unknown };
+      if (typeof payload.keys === 'string') {
+        await session.key(payload.keys);
+        send(response, 200, { seat, sent: 'keys' });
+        return;
+      }
+      if (typeof payload.turn !== 'string' || payload.turn.trim() === '') {
+        send(response, 400, wire('daemon', 'MALFORMED_BODY', 'send `turn` (a prompt) or `keys` (raw bytes)'));
+        return;
+      }
+      if (!session.canPush) {
+        send(response, 409, wire('daemon', 'SESSION_CANNOT_TAKE_TURN', `${seat} cannot take a turn after it starts`));
+        return;
+      }
+      await session.send(payload.turn);
+      send(response, 200, { seat, sent: 'turn' });
       return;
     }
 
@@ -948,6 +1025,10 @@ class Daemon {
       job: job.trim(),
       participants: (seats ?? []) as string[],
       ...(typeof shape === 'string' ? { shape } : {}),
+      // What makes the mirror possible: the seats this daemon starts publish
+      // their sessions here, so `/sessions/:id/screen` has something to read and
+      // `/sessions/:id/input` has somewhere to write.
+      sessions: this.#sessions,
       // The job reaches the board through this handler's own append below, so
       // compose must not post it a second time.
       postJob: async () => {},

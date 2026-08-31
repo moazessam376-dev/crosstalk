@@ -14,6 +14,14 @@ export type DaemonErrorCode =
   | 'NOT_A_ROOM_MEMBER'
   | 'ROLE_NOT_PERMITTED'
   | 'UNKNOWN_ROUTE'
+  /**
+   * Asked to mirror a seat this daemon has no pipe to. Not a protocol failure:
+   * a seat someone started in their own terminal is working perfectly and is
+   * simply not watchable from here.
+   */
+  | 'NO_MIRRORED_SESSION'
+  /** The seat's harness reads its prompt once and cannot be handed another. */
+  | 'SESSION_CANNOT_TAKE_TURN'
   | 'DAEMON_ALREADY_RUNNING'
   | 'PORT_IN_USE'
   | 'PORT_BLOCKED'

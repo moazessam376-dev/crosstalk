@@ -1,0 +1,217 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body {
+      margin: 0;
+      background: #0a0a0a;
+      color: #f2f2f3;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+    }
+    a { color: #5b8dee; }
+    a:hover { color: #7ea6f2; }
+    .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", monospace; }
+    .panel { border: 1px solid #232326; border-radius: 10px; background: #121212; }
+    .label {
+      font-family: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
+      font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: #6e6e78;
+    }
+    .tile {
+      width: 20px; height: 20px; border-radius: 6px; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid #2e2e33; background: #1e1e1e;
+    }
+  </style>
+</helmet>
+
+<div style="min-height: 900px; display: flex; flex-direction: column; background: #0a0a0a;">
+
+  <!-- header -->
+  <div style="display: flex; align-items: center; gap: 11px; padding: 13px 22px; border-bottom: 1px solid #232326;">
+    <span class="mono" style="font-size: 12.5px; color: #6e6e78;">vault-bench-1</span>
+    <span class="mono" style="font-size: 12.5px; color: #54545c;">/</span>
+    <span style="font-weight: 600;">Continue Vault</span>
+    <span style="display: inline-flex; align-items: center; gap: 6px;">
+      <span style="width: 5px; height: 5px; border-radius: 999px; background: #4a9d5f;"></span>
+      <span class="mono" style="font-size: 11.5px; color: #4a9d5f;">running</span>
+    </span>
+    <span style="margin-left: auto; display: flex; gap: 8px;">
+      <span class="mono" style="font-size: 11.5px; color: #a3a3aa; border: 1px solid #2a2a2e; border-radius: 6px; padding: 6px 12px;">Pause all</span>
+      <span class="mono" style="font-size: 11.5px; color: #0a0a0a; background: #f2f2f3; border-radius: 6px; padding: 6px 14px; font-weight: 500;">Open board</span>
+    </span>
+  </div>
+
+  <div style="flex-grow: 1; padding: 26px 22px 48px; display: flex; justify-content: center;">
+    <div style="width: 100%; max-width: 1120px; display: flex; flex-direction: column; gap: 22px;">
+
+      <!-- top strip: the four numbers that matter -->
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px;">
+        <sc-for list="{{stats}}" as="s" hint-placeholder-count="4">
+          <div class="panel" style="padding: 15px 17px; display: flex; flex-direction: column; gap: 6px;">
+            <div class="label">{{s.label}}</div>
+            <div class="mono" style="font-size: 21px; color: #f2f2f3; letter-spacing: -0.01em;">{{s.value}}</div>
+            <div style="font-size: 11.5px; color: #6e6e78;">{{s.note}}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 12px; align-items: start;">
+
+        <!-- GITHUB MIRROR -->
+        <div class="panel" style="overflow: hidden;">
+          <div style="display: flex; align-items: center; gap: 9px; padding: 13px 17px; border-bottom: 1px solid #232326;">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="#a3a3aa" aria-hidden="true">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+            </svg>
+            <span style="font-weight: 600;">GitHub mirror</span>
+            <span class="mono" style="{{mirror.chipStyle}}">{{mirror.state}}</span>
+            <span class="mono" style="font-size: 11px; color: #6e6e78; margin-left: auto;">{{mirror.drain}}</span>
+          </div>
+
+          <div style="padding: 6px 0;">
+            <sc-for list="{{prs}}" as="pr" hint-placeholder-count="3">
+              <div style="display: grid; grid-template-columns: 20px 62px minmax(0, 1fr) auto; gap: 11px; align-items: center; padding: 10px 17px;">
+                <span class="tile">
+                  <sc-if value="{{pr.isClaude}}" hint-placeholder-val="{{true}}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <g stroke="#D97757" stroke-width="1.9" stroke-linecap="round"><path d="M12 12L12.0 2.6"></path><path d="M12 12L16.5 4.2"></path><path d="M12 12L20.2 7.2"></path><path d="M12 12L20.8 12.0"></path><path d="M12 12L20.0 16.6"></path><path d="M12 12L16.3 19.4"></path><path d="M12 12L12.0 21.3"></path><path d="M12 12L7.5 19.8"></path><path d="M12 12L3.8 16.8"></path><path d="M12 12L3.3 12.0"></path><path d="M12 12L4.1 7.4"></path><path d="M12 12L7.6 4.4"></path></g></svg>
+                  </sc-if>
+                  <sc-if value="{{pr.isCodex}}" hint-placeholder-val="{{false}}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M12.0 4.6A3.2 3.2 0 0 1 17.2 6.8A3.2 3.2 0 0 1 19.4 12.0A3.2 3.2 0 0 1 17.2 17.2A3.2 3.2 0 0 1 12.0 19.4A3.2 3.2 0 0 1 6.8 17.2A3.2 3.2 0 0 1 4.6 12.0A3.2 3.2 0 0 1 6.8 6.8A3.2 3.2 0 0 1 12.0 4.6Z" stroke="#C9CBD6" stroke-width="1.7" stroke-linejoin="round"></path><path d="M9.6 9.9 12.1 12l-2.5 2.1" stroke="#C9CBD6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path><path d="M13.4 14.4h2.9" stroke="#C9CBD6" stroke-width="1.6" stroke-linecap="round"></path>
+                    </svg>
+                  </sc-if>
+                </span>
+                <span class="mono" style="font-size: 12px; color: #6e6e78;">{{pr.number}}</span>
+                <span style="min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-size: 12.5px; color: #f2f2f3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{pr.title}}</span>
+                  <span class="mono" style="font-size: 11px; color: #6e6e78;">{{pr.branch}}</span>
+                </span>
+                <span class="mono" style="{{pr.stateStyle}}">{{pr.state}}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="padding: 11px 17px; border-top: 1px solid #232326; font-size: 11.5px; color: #6e6e78; line-height: 1.5;">{{mirror.note}}</div>
+        </div>
+
+        <!-- GATES + SPEND -->
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+
+          <div class="panel" style="overflow: hidden;">
+            <div style="padding: 13px 17px; border-bottom: 1px solid #232326; display: flex; align-items: center; gap: 9px;">
+              <span style="font-weight: 600;">Gates</span>
+              <span class="mono" style="font-size: 11px; color: #6e6e78; margin-left: auto;">{{gateCount}}</span>
+            </div>
+            <div style="padding: 4px 0;">
+              <sc-for list="{{gates}}" as="g" hint-placeholder-count="6">
+                <div style="display: flex; align-items: center; gap: 10px; padding: 8px 17px;">
+                  <span style="{{g.markStyle}}"></span>
+                  <span class="mono" style="{{g.idStyle}}">{{g.id}}</span>
+                  <span class="mono" style="font-size: 11px; color: #6e6e78; margin-left: auto;">{{g.by}}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div class="panel" style="overflow: hidden;">
+            <div style="padding: 13px 17px; border-bottom: 1px solid #232326; font-weight: 600;">Spend</div>
+            <div style="padding: 4px 0;">
+              <sc-for list="{{spend}}" as="row" hint-placeholder-count="4">
+                <div style="display: flex; align-items: center; gap: 10px; padding: 8px 17px;">
+                  <span class="mono" style="font-size: 12px; color: #a3a3aa;">{{row.id}}</span>
+                  <span class="mono" style="font-size: 12px; color: #f2f2f3; margin-left: auto;">{{row.out}}</span>
+                  <span class="mono" style="font-size: 11px; color: #6e6e78; width: 68px; text-align: right;">{{row.cache}}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="padding: 10px 17px; border-top: 1px solid #232326; font-size: 11.5px; color: #6e6e78;">{{spendNote}}</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "mirrorOn": {"editor": "boolean", "default": true, "section": "Run"},
+  "$preview": {"width": 1440, "height": 900}
+}'>
+class Component extends DCLogic {
+  renderVals() {
+    const on = this.props.mirrorOn !== false;
+
+    const word = (colour) => 'font-size: 11.5px; color: ' + colour + ';';
+
+    // GitHub's dark-mode state colours, so a PR reads the same here as it does
+    // on the PR page — merged is purple everywhere else, so it is purple here.
+    const PR_STATE = { open: '#3fb950', merged: '#a371f7', draft: '#8b949e', closed: '#f85149' };
+
+    const stats = [
+      { label: 'Phase', value: 'build', note: '2 of 4 gates met' },
+      { label: 'Elapsed', value: '1h 42m', note: 'started 09:14' },
+      { label: 'Sessions', value: '3 live', note: 'no restarts' },
+      { label: 'Output', value: '412k', note: 'tokens across the team' },
+    ];
+
+    const prs = [
+      { number: '#21', title: 'sim: elevator holds the car while a dweller is inside', branch: 'ct/peer-2', state: 'open', harness: 'claude-code-live' },
+      { number: '#20', title: 'game: drag a dweller onto a room to assign them', branch: 'ct/peer-1', state: 'merged', harness: 'claude-code-live' },
+      { number: '#19', title: 'world: raiders enter from the vault door', branch: 'ct/peer-3', state: 'draft', harness: 'codex-cli' },
+    ].map((pr) => ({
+      ...pr,
+      isClaude: pr.harness.indexOf('claude') === 0,
+      isCodex: pr.harness.indexOf('codex') === 0,
+      stateStyle: word(PR_STATE[pr.state] ?? '#8b949e'),
+    }));
+
+    const GATES = [
+      { id: 'contract-exists', by: 'workspace', met: true },
+      { id: 'split-agreed', by: 'asserted · all', met: true },
+      { id: 'no-shared-files', by: 'workspace', met: true },
+      { id: 'tests-green', by: 'asserted · all', met: true },
+      { id: 'self-verified', by: 'asserted · all', met: false },
+      { id: 'integration-verified', by: 'asserted', met: false },
+    ].map((g) => ({
+      ...g,
+      markStyle: 'width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; background: '
+        + (g.met ? '#4a9d5f' : 'transparent') + '; border: 1px solid ' + (g.met ? '#4a9d5f' : '#3a3a40') + ';',
+      idStyle: 'font-size: 12px; color: ' + (g.met ? '#a3a3aa' : '#f2f2f3') + ';',
+    }));
+
+    const spend = [
+      { id: 'peer-1', out: '158k', cache: '92M' },
+      { id: 'peer-2', out: '141k', cache: '88M' },
+      { id: 'peer-3', out: '113k', cache: '61M' },
+    ];
+
+    return {
+      stats,
+      prs,
+      gates: GATES,
+      spend,
+      gateCount: '4 of 6 met',
+      spendNote: 'Output tokens and cache reads, per session. Cache reads are billed at about a tenth of input — and they are most of the bill.',
+      mirror: {
+        state: on ? 'enabled' : 'not configured',
+        chipStyle: word(on ? '#4a9d5f' : '#6e6e78'),
+        drain: on ? 'last drain 14s ago · 0 retrying' : '',
+        note: on
+          ? 'Each seat’s branch gets a draft PR, and its board messages are mirrored into the PR thread. The mirror never writes back into the log, so a GitHub outage cannot stall the run.'
+          : 'No mirror block in crosstalk.yaml, so nothing is being pushed. Seats can still open their own PRs with gh — which is what happened on vault-1.',
+      },
+    };
+  }
+}
+</script>
+</body>
+</html>

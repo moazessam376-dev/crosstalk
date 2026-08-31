@@ -514,10 +514,10 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
   const findings: Finding[] = [];
   const leaders = config.participants.filter((participant) => participant.role === 'leader');
   const peers = config.participants.filter((participant) => participant.role === 'peer');
-  // Same rule `init` enforces: led (one leader, no peers) or flat (two or more
+  // Same rule `init` enforces: led (one leader, no peers) or flat (one or more
   // peers, no leader). The generator and the validator must agree or `init`
   // emits what `doctor` rejects.
-  const flat = leaders.length === 0 && peers.length >= 2;
+  const flat = leaders.length === 0 && peers.length >= 1;
   // A roster with nobody but the operator is not a broken roster, it is a repo
   // nobody has staffed yet. `crosstalk up` writes one so the hub can open, and
   // the team is chosen there — rejecting it would put the picker behind the
@@ -537,7 +537,7 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
     findings.push(finding(
       'reject',
       'LEADER_COUNT',
-      `Expected exactly one leader participant (or a flat roster of two or more peers), found ${leaders.length} leader(s) and ${peers.length} peer(s).`,
+      `Expected exactly one leader participant (or a flat roster of peers), found ${leaders.length} leader(s) and ${peers.length} peer(s).`,
       'Configure exactly one participant with role: leader, or an all-peer roster with no leader.',
     ));
   } else if (!flat && peers.length > 0) {

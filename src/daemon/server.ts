@@ -1080,7 +1080,13 @@ class Daemon {
     // never minted, so they could not have called back — but the fix was to
     // mint and reload, not to refuse.
     const requested = (seats ?? []) as string[];
-    const restaffing = rosterDiffers(this.#config.participants, requested);
+    // A shape change is grounds to re-staff on its own. The roster can be
+    // identical and the team still be a different team: `trio-contract` and
+    // three unshaped peers seat the same three people and are not the same
+    // thing to run, and the briefs each seat reads are written by `init`.
+    const restaffing =
+      rosterDiffers(this.#config.participants, requested) ||
+      (typeof shape === 'string' && shape !== this.#config.shape);
 
     const { runCompose } = await import('../cli/compose.js');
     void (async () => {
@@ -1089,7 +1095,12 @@ class Daemon {
         // and mints tokens for the new ones while keeping every token that
         // already exists. Then this daemon picks all of it up in place.
         const { runInit } = await import('../cli/init.js');
-        await runInit({ repo: this.#repo, participants: requested, force: true });
+        await runInit({
+          repo: this.#repo,
+          participants: requested,
+          force: true,
+          ...(typeof shape === 'string' ? { shape } : {}),
+        });
         await this.reload();
       }
       const result = await runCompose({

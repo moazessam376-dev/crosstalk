@@ -36,6 +36,13 @@ export interface InitOptions {
   /** `id:role:harness[:model[:effort]]`, repeatable. Empty means the default roster. */
   participants: string[];
   force: boolean;
+  /**
+   * How the team works, by name — see `core/shape.ts`. Omitted keeps whatever
+   * the roster on disk already names, for the same reason the roster itself is
+   * read back rather than overwritten: `init` is also how you regenerate briefs
+   * and `.mcp.json`, and doing that must not quietly demote a team to no shape.
+   */
+  shape?: string;
 }
 
 const DEFAULT_ROSTER = ['leader:leader:claude-code-app', 'codex:worker:codex-app'];
@@ -91,10 +98,16 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   // validator rejects is the bug, not the validator.
   const leaders = participants.filter((participant) => participant.role === 'leader');
   const peers = participants.filter((participant) => participant.role === 'peer');
-  // Two shapes: led (exactly one leader, no peers) or flat (two or more peers,
+  // Two shapes: led (exactly one leader, no peers) or flat (one or more peers,
   // no leader). A flat roster has no task authority on purpose — peers
   // coordinate on the board and no assign/accept machinery operates.
-  const flat = leaders.length === 0 && peers.length >= 2;
+  //
+  // One peer is flat, and used to be rejected. That made the `solo` shape —
+  // one seat, no board, the control every team result is measured against —
+  // impossible to initialise: the roster the benchmark exists to compare
+  // against could not be written. Nothing about task authority needs a second
+  // peer to be absent.
+  const flat = leaders.length === 0 && peers.length >= 1;
   // A roster of nobody but the operator is the "not staffed yet" state that
   // `crosstalk up` writes so the hub can open on an unconfigured repo. The team
   // is chosen in the launcher, which calls back here with the real roster and
@@ -105,7 +118,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   );
   if (!unstaffed && !flat && leaders.length !== 1) {
     throw new CliError(
-      `LEADER_COUNT: Expected exactly one leader participant (or a flat roster of two or more peers), found ${leaders.length} leader(s) and ${peers.length} peer(s).`,
+      `LEADER_COUNT: Expected exactly one leader participant (or a flat roster of peers), found ${leaders.length} leader(s) and ${peers.length} peer(s).`,
       EXIT.protocol,
       'Configure exactly one participant with role: leader, or an all-peer roster with no leader.',
     );
@@ -117,6 +130,13 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
       'Use worker seats under a leader, or make every builder a peer and remove the leader.',
     );
   }
+  // Preserved, not defaulted. The shape is what the phase machine reads, and it
+  // reached the config through nothing at all before this: `runCompose` passed
+  // it to `runInit`, which had no such option and dropped it, so every team the
+  // hub launched ran shapeless — no phases, no gates, and seats briefed without
+  // the one thing that tells three peers how to be a team.
+  const shape = options.shape ?? (await configuredShape(repo));
+
   const config: CrosstalkConfig = {
     version: 1,
     // Detected, not assumed. `mainBranch` was hard-coded to `main`, so on a
@@ -127,6 +147,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     project: { repo: '.', mainBranch: await currentBranch(repo) },
     participants,
     policy: DEFAULT_POLICY,
+    ...(shape === undefined ? {} : { shape }),
   };
 
   // Issue #23. `init` was the only command that could leave a repository in a
@@ -783,6 +804,14 @@ async function kickoffLines(
  * with `--force` on a config they have broken is asking to have it rebuilt, and
  * refusing would leave them with no way through except deleting the file.
  */
+async function configuredShape(repo: string): Promise<string | undefined> {
+  try {
+    return (await loadConfig(repo)).shape;
+  } catch {
+    return undefined;
+  }
+}
+
 async function configuredRoster(repo: string): Promise<Participant[] | undefined> {
   try {
     const existing = await loadConfig(repo);

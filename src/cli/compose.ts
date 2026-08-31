@@ -10,6 +10,7 @@ import { probeCliHarnesses, type PathProbe } from '../harness/path.js';
 import { boardTurn, driveSupervised, spawnSupervised, type ExecFile } from '../harness/runner.js';
 import { openSession, type SpawnProcess } from '../harness/session.js';
 import type { SessionRegistry } from '../harness/sessions.js';
+import type { SpawnPty } from '../harness/pty.js';
 import { trustWorkspaces } from '../harness/trust.js';
 import type { Inbox } from '../core/inbox.js';
 import { CliError, DaemonClient, EXIT, type WriteResult } from './client.js';
@@ -30,6 +31,8 @@ export interface ComposeOptions {
   postJob?: (repo: string, job: string) => Promise<void>;
   /** Injected in tests, so supervision can be driven without a real binary. */
   spawnProcess?: SpawnProcess;
+  /** The same seam for interactive seats, which run on a pty rather than a pipe. */
+  spawnPty?: SpawnPty;
   /**
    * Where to publish each opened session, so something can mirror it.
    *
@@ -147,6 +150,7 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
       first: job,
       turnFormat: descriptor.turnFormat,
       ...(options.spawnProcess === undefined ? {} : { spawn: options.spawnProcess }),
+      ...(options.spawnPty === undefined ? {} : { spawnPty: options.spawnPty }),
       // Only when somebody is there to look. Capture is a parse per chunk, and
       // a seat nobody is watching should not pay for a screen nobody reads.
       ...(options.sessions === undefined ? {} : { capture: {} }),

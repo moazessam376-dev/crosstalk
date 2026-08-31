@@ -19,6 +19,7 @@ import {
 import { startMirror } from '../mirror/index.js';
 import { resolveHubDist } from '../daemon/hub.js';
 import { HUMAN_ID } from '../contracts/room.js';
+import { SHAPES } from '../core/shape.js';
 import { dmId } from '../core/rooms.js';
 
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
@@ -29,7 +30,7 @@ import { bold, dim, emit, eventLine, failureText, table } from './output.js';
 
 const USAGE = `crosstalk — multi-agent development where a finding is a claim, not a command
 
-  crosstalk init [--participant id:role:harness[:model[:effort]]]... [--force]
+  crosstalk init [--participant id:role:harness[:model[:effort]]]... [--shape NAME] [--force]
   crosstalk compose --job '...' [--participant id:role:harness[:model[:effort]]]... [--force]
   crosstalk up   [--port N] [--host ADDR] [--no-open] [--force]
   crosstalk down [--as <id>] [--purge]
@@ -126,14 +127,28 @@ async function main(argv: string[]): Promise<number> {
 async function cmdInit(argv: string[]): Promise<number> {
   const { flags } = read(argv, {
     participant: { type: 'string', multiple: true },
+    shape: { type: 'string' },
     force: { type: 'boolean', default: false },
   });
   const repo = str(flags, 'repo') ?? '.';
+
+  // The shape is how a team is told to be a team. It was reachable only from
+  // the hub's launcher, so a roster staffed at the command line ran with no
+  // phases and no gates and nothing said so.
+  const shape = str(flags, 'shape');
+  if (shape !== undefined && !SHAPES.has(shape)) {
+    throw new CliError(
+      `no shape named ${shape}`,
+      EXIT.usage,
+      `Known shapes: ${[...SHAPES.keys()].join(', ')}.`,
+    );
+  }
 
   const result = await runInit({
     repo,
     participants: (flags['participant'] as string[] | undefined) ?? [],
     force: flags['force'] === true,
+    ...(shape === undefined ? {} : { shape }),
   });
 
   emit({ config: result.configPath, mcp: result.mcp, participants: result.kickoff }, flags['json'] === true, () => {

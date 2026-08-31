@@ -58,6 +58,31 @@ export interface HarnessSession {
  */
 export const PTY_SIZE = { rows: 32, cols: 110 } as const;
 
+/** What a keyboard sends for Return. Not `\n`: that is Line Feed. */
+const RETURN = '\r';
+
+/**
+ * The gap between typing a turn and pressing Return.
+ *
+ * A terminal UI that reads text and its Return in one chunk sees a *paste*, and
+ * a Return inside a paste is a newline, not a submit. So the turn was typed and
+ * never sent: the seat sat with the job in its composer, looking alive and
+ * doing nothing — the exact failure the trailing newline was added to prevent,
+ * arriving by the other door.
+ *
+ * Measured against three live Claude Code seats: one write of `text` + Return
+ * never submitted once, and every board wake stacked another unsent copy into
+ * the composer until it filled the screen. The same text followed by a separate
+ * write of Return submitted every time.
+ *
+ * The number is a coalescing window, not a draw time — `readyDelayMs` is what
+ * waits for the TUI to be ready. This only has to outlast the reads being
+ * merged.
+ */
+export const SUBMIT_DELAY_MS = 250;
+
+const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
+
 export type SpawnProcess = (
   file: string,
   args: string[],
@@ -91,6 +116,8 @@ export function openSession(args: {
   spawnPty?: SpawnPty;
   /** Interactive only: how long to let the TUI draw before typing the job. */
   readyDelayMs?: number;
+  /** Interactive only: the gap between typing a turn and pressing Return. */
+  submitDelayMs?: number;
   /**
    * Reconstruct the seat's terminal from its output, so the hub can mirror it.
    *
@@ -113,11 +140,15 @@ export function openSession(args: {
 
   const send = async (turn: string): Promise<void> => {
     if (!push) throw new Error(`${args.argv[0]} cannot take a turn after it starts`);
-    // A terminal takes typing, not envelopes. The trailing newline is the
-    // Return that submits it; without it the text sits in the composer and the
-    // seat looks alive while doing nothing.
-    transport.write(interactive ? `${turn.replace(/\n/g, ' ')}\n` : frame(turn));
-    await Promise.resolve();
+    if (!interactive) {
+      transport.write(frame(turn));
+      return;
+    }
+    // A terminal takes typing, not envelopes — and the Return that submits it
+    // has to arrive as its own keystroke. See SUBMIT_DELAY_MS.
+    transport.write(turn.replace(/\n/g, ' '));
+    await pause(args.submitDelayMs ?? SUBMIT_DELAY_MS);
+    transport.write(RETURN);
   };
 
   // An interactive session has to finish drawing before it will accept input.

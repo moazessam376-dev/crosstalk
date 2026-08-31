@@ -98,13 +98,32 @@ function loadNodePty(): NodePty {
  */
 export const PTY_TERM = 'xterm-256color';
 
+/**
+ * Markers a seat must not inherit from whoever started the daemon.
+ *
+ * A seat is its own agent, not a sub-agent of the operator's session. When the
+ * daemon is itself launched from inside a CLI harness, that harness's session
+ * markers are in `process.env` and every seat picks them up — and Claude Code,
+ * seeing one, turns transcript saving off, because it believes it is a child
+ * whose transcript belongs to a parent. Measured on the first hub-launched
+ * team: three seats ran a whole phase with no transcript on disk to review.
+ */
+export const INHERITED_SESSION_MARKERS = ['CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ID'] as const;
+
+/** The environment a seat runs in: the operator's, minus what it must not inherit. */
+export function seatEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env, TERM: PTY_TERM };
+  for (const marker of INHERITED_SESSION_MARKERS) delete out[marker];
+  return out;
+}
+
 export const spawnPty: SpawnPty = (spec) => {
   const child = loadNodePty().spawn(spec.file, spec.args, {
     name: PTY_TERM,
     cols: spec.cols,
     rows: spec.rows,
     cwd: spec.cwd,
-    env: { ...(spec.env ?? process.env), TERM: PTY_TERM } as NodeJS.ProcessEnv,
+    env: seatEnv(spec.env ?? process.env) as NodeJS.ProcessEnv,
   });
   return {
     write: (data) => child.write(data),

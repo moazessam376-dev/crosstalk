@@ -41,13 +41,19 @@ export async function driveSupervised(args: {
       if (!running || inbox === undefined) return;
       if (inbox.unread.length === 0 && inbox.next === 'idle') continue;
       const turn = format(inbox);
-      // Never say the same thing twice. With nothing unread, a turn carries
-      // only the standing status — an unmet gate, a task already assigned —
-      // and repeating it is not news, it is a seat being told the same
-      // sentence until its context is full of it. The server blocks on an
-      // unchanged status too; this is the layer that protects the seat even if
-      // something upstream starts answering immediately again.
-      if (inbox.unread.length === 0 && turn === lastTurn) continue;
+      // Never say the same thing twice, whatever the inbox claims is unread.
+      //
+      // This first only skipped repeats when nothing was unread, which left the
+      // worse half of the bug open: a card that keeps being handed back as
+      // unread produces the same turn every time, and the seat gets its own
+      // brief typed into its composer again and again. That is what the
+      // operator was watching — one #floor message pasted into a focused
+      // terminal over and over.
+      //
+      // Identity is the right test either way. A genuinely new card changes the
+      // turn: a different seq, a different body, a different status. A turn
+      // byte-identical to the last one carries nothing the seat has not read.
+      if (turn === lastTurn) continue;
       lastTurn = turn;
       try {
         await args.write(turn);

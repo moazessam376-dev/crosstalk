@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parse, stringify } from 'yaml';
@@ -143,7 +144,7 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
       continue;
     }
 
-    const seatArgv = withSeatModel(nameRemoteControl(argv, participant.id), participant);
+    const seatArgv = withFreshSession(withSeatModel(nameRemoteControl(argv, participant.id), participant));
     const session = openSession({
       argv: seatArgv,
       cwd,
@@ -241,6 +242,26 @@ export function withSeatModel(
   if (participant.model !== undefined && !out.includes('--model')) out.push('--model', participant.model);
   if (participant.effort !== undefined && !out.includes('--effort')) out.push('--effort', participant.effort);
   return out;
+}
+
+/**
+ * A fresh conversation for every launch.
+ *
+ * A seat is a new agent each run, not a continuation of the last one, and its
+ * workspace is the same directory every time — so anything a harness carries
+ * forward per directory is carried into a run that never asked for it. The
+ * operator watched exactly that: launching again and landing back in the
+ * wreckage of the previous, broken run, with its composer still full.
+ *
+ * Naming the conversation explicitly settles it rather than depending on what
+ * any harness does by default. `--session-id` takes a UUID and pins the
+ * conversation to it; a UUID nobody has used is a conversation nobody has had.
+ * Only for `claude`, which is the flag's owner — another harness gets its argv
+ * untouched.
+ */
+export function withFreshSession(argv: readonly string[], id: string = randomUUID()): string[] {
+  if (argv[0] !== 'claude' || argv.includes('--session-id')) return [...argv];
+  return [...argv, '--session-id', id];
 }
 
 async function markSupervised(repo: string): Promise<void> {

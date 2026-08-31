@@ -7,6 +7,7 @@ import { assignColours, identityFor } from '../state/identity.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { HarnessMark } from '../marks/HarnessMark.js';
 import { harnessKind } from '../marks/kind.js';
+import { pullRequestState } from '../state/pullRequest.js';
 import { HUMAN_ID } from '../../contracts/room.js';
 import type { MirrorView } from '../state/useMirror.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -81,7 +82,9 @@ function section(
   );
 }
 
-function rows(pairs: [string, string][]) {
+type Row = [string, string | ReturnType<typeof createElement>];
+
+function rows(pairs: Row[]) {
   return createElement(
     'dl',
     { className: 'dock-rows' },
@@ -162,10 +165,25 @@ export function Dock({
           rows(
             [
               ['branch', task.branch],
-              ...(task.pr === undefined ? [] : ([['pr', `#${task.pr}`]] as [string, string][])),
+              // GitHub's semantics and GitHub's colours — purple for merged
+              // above all, because that is the one every reader already knows.
+              // Open was amber here, which reads as "needs attention" for what
+              // is the healthy state of a pull request.
+              ...(task.pr === undefined
+                ? []
+                : ([
+                    [
+                      'pr',
+                      createElement(
+                        'span',
+                        { className: 'pr-state', 'data-pr': pullRequestState(task.state), 'data-testid': 'dock-pr' },
+                        `#${task.pr} ${pullRequestState(task.state)}`,
+                      ),
+                    ],
+                  ] as Row[])),
               ['assignee', task.assignee],
-              ...(assignee === undefined ? [] : ([['worktree', assignee.workspace]] as [string, string][])),
-            ] as [string, string][],
+              ...(assignee === undefined ? [] : ([['worktree', assignee.workspace]] as Row[])),
+            ] as Row[],
           ),
           'dock-workspace',
         ),

@@ -1771,6 +1771,24 @@ button:focus-visible {
    panel, read once and operated, not a conversation you live in.
    ============================================================ */
 
+/*
+ * The launcher is a page, so it scrolls like one.
+ *
+ * `.hub-root` is `height: 100dvh; overflow: hidden`, and the board's three
+ * regions each scroll inside themselves. The launcher is not one of them, so it
+ * had no scroll container: staff more than about three seats and the rest of
+ * the form — including the job box and the button that starts the run — was
+ * clipped off the bottom of the window with no way to reach it.
+ *
+ * The scroller is the full-width child so the scrollbar sits at the window edge
+ * rather than inside the centred column.
+ */
+.launcher-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .launcher {
   max-width: 940px;
   margin: 0 auto;

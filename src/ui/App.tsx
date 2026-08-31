@@ -9,6 +9,9 @@ import { loadHubConfig, type HubConnection } from './state/hubConfig.js';
 import { useMirror } from './state/useMirror.js';
 import { postCompose, postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
 import { dmId } from '../core/rooms.js';
+// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
+import { Launcher } from './launch/Launcher.js';
+import { useLaunch, useShapes } from './state/useLaunch.js';
 
 /**
  * Used when no daemon answers `/config.json` — `vite dev`, or a static build
@@ -43,7 +46,13 @@ export default function App({ connection: injected }: AppProps = {}) {
   const [connection, setConnection] = useState<HubConnection>(injected ?? { kind: 'loading' });
   const [notice, setNotice] = useState<string | undefined>();
   const [sampleOpened, setSampleOpened] = useState(false);
+  // The board is where a run is watched; the launcher is where one starts. They
+  // are different jobs, so they are different screens rather than a panel that
+  // steals room from the conversation once the run is under way.
+  const [view, setView] = useState<'board' | 'launch'>('board');
   const mirror = useMirror(connection.kind === 'live');
+  const shapes = useShapes(connection.kind === 'live');
+  const { launch, launching } = useLaunch();
 
   useEffect(() => {
     if (injected !== undefined) return;
@@ -133,7 +142,28 @@ export default function App({ connection: injected }: AppProps = {}) {
       ? createElement('p', { className: 'app-notice', role: 'alert', 'data-testid': 'human-action-notice' }, notice)
       : null,
     createElement('p', { className: 'app-status sr-only', 'aria-live': 'polite' }, status),
-    createElement(Layout, {
+    connection.kind === 'live'
+      ? createElement(
+          'nav',
+          { className: 'hub-views', 'aria-label': 'hub views' },
+          (['board', 'launch'] as const).map((name) =>
+            createElement(
+              'button',
+              {
+                key: name,
+                type: 'button',
+                className: `hub-view${view === name ? ' is-current' : ''}`,
+                'aria-current': view === name ? 'page' : undefined,
+                onClick: () => setView(name),
+              },
+              name === 'board' ? 'Board' : 'Start a run',
+            ),
+          ),
+        )
+      : null,
+    view === 'launch' && connection.kind === 'live'
+      ? createElement(Launcher, { shapes, launching, onLaunch: launch })
+      : createElement(Layout, {
       state,
       activeRoom,
       maxRounds,

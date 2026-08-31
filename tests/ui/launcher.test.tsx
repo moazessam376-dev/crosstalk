@@ -95,7 +95,13 @@ describe('the launcher', () => {
     expect((screen.getByText('Start the run') as unknown as { disabled: boolean }).disabled).toBe(true);
   });
 
-  it('sends the roster in the spelling init takes', async () => {
+  /**
+   * The pickers have to reach the seats. This test used to assert the opposite
+   * — that only `id:role:harness` was sent — which made the model and effort
+   * controls decorative: the seats launched on whatever the roster defaulted
+   * to, and nothing in the hub said so.
+   */
+  it('sends the roster in the spelling init takes, models and effort included', async () => {
     const onLaunch = vi.fn(async (_request: { job: string; shape?: string; seats: string[] }) => ({ ok: true as const }));
     render(createElement(Launcher, { shapes: [TRIO], onLaunch }));
 
@@ -108,11 +114,28 @@ describe('the launcher', () => {
       job: 'build a vault',
       shape: 'trio-contract',
       seats: [
-        'peer-1:peer:claude-code-live',
-        'peer-2:peer:claude-code-live',
-        'peer-3:peer:claude-code-live',
+        'peer-1:peer:claude-code-live:claude-opus-5:high',
+        'peer-2:peer:claude-code-live:claude-opus-5:high',
+        'peer-3:peer:claude-code-live:claude-opus-5:high',
       ],
     });
+  });
+
+  it('omits a model and effort nobody chose, rather than sending empty fields', async () => {
+    const onLaunch = vi.fn(async (_request: { job: string; shape?: string; seats: string[] }) => ({ ok: true as const }));
+    render(createElement(Launcher, { shapes: [TRIO], onLaunch }));
+
+    fireEvent.click(screen.getByText('trio-contract'));
+    fireEvent.change(screen.getByLabelText('seat 1 model'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('seat 1 effort'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('the job'), { target: { value: 'build a vault' } });
+    fireEvent.click(screen.getByText('Start the run'));
+
+    await waitFor(() => expect(onLaunch).toHaveBeenCalled());
+    // A trailing `:` would write `model: ""` into the roster, which renders as a
+    // blank beside the seat and reads as a configured value rather than as
+    // "nobody said".
+    expect(onLaunch.mock.calls[0]![0].seats[0]).toBe('peer-1:peer:claude-code-live');
   });
 
   it('keeps a hand-edited roster when the shape is clicked again', () => {

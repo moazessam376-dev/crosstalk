@@ -44,6 +44,8 @@ export interface LayoutProps {
   openSeat?: string;
   onOpenSession?: (seat: string) => void;
   onCloseSession?: () => void;
+  /** Point the mirror at a repository. Passed through to the rail. */
+  onConfigureMirror?: (url: string) => Promise<{ ok: boolean; reason?: string }>;
 }
 
 export function Layout({
@@ -65,6 +67,7 @@ export function Layout({
   openSeat,
   onOpenSession,
   onCloseSession,
+  onConfigureMirror,
 }: LayoutProps) {
   const seat = sessions?.seats.find((candidate) => candidate.id === openSeat);
   const showingSeat = seat !== undefined && onCloseSession !== undefined;
@@ -75,7 +78,13 @@ export function Layout({
     { className: 'hub-shell' },
     sessions === undefined && mirror === undefined
       ? null
-      : createElement(EnvironmentRail, { sessions, mirror, onOpenSession, openSeat }),
+      : createElement(EnvironmentRail, {
+          sessions,
+          mirror,
+          onOpenSession,
+          openSeat,
+          ...(onConfigureMirror === undefined ? {} : { onConfigureMirror }),
+        }),
     createElement(
     'div',
     {

@@ -3,6 +3,7 @@ harnesses:
     label: Claude Code · headless
     models: [claude-opus-5, claude-fable-5, claude-sonnet-5, claude-haiku-4-5-20251001]
     briefFile: CLAUDE.md
+    settings: claude-code
     mcp: stdio
     mcpConfigPath: .mcp.json
     supervisable: true
@@ -13,6 +14,7 @@ harnesses:
   claude-code-app:
     label: Claude Code · app
     briefFile: CLAUDE.md
+    settings: claude-code
     mcp: stdio
     mcpConfigPath: .mcp.json
     supervisable: false
@@ -51,6 +53,7 @@ harnesses:
     label: Claude Code · interactive
     models: [claude-opus-5, claude-fable-5, claude-sonnet-5, claude-haiku-4-5-20251001]
     briefFile: CLAUDE.md
+    settings: claude-code
     mcp: stdio
     mcpConfigPath: .mcp.json
     supervisable: true

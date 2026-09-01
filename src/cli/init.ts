@@ -11,10 +11,11 @@ import { HUMAN_ID } from '../contracts/room.js';
 import { loadConfig } from '../daemon/config.js';
 import { distPath } from '../daemon/paths.js';
 import { tokenFilename } from '../daemon/server.js';
-import { localBriefFile, writeBrief } from '../harness/brief.js';
+import { localBriefFile, seatTags, writeBrief } from '../harness/brief.js';
 import { checkPrerequisites, doctor, type Finding } from '../harness/doctor.js';
 import { loadRegistry, probeTier, resolveConfigPath, type HarnessDescriptor } from '../harness/registry.js';
 import { writePresenceHook, writeSeatSettings } from '../harness/hooks.js';
+import { SKILL_FILE, writeBoardSkill } from '../harness/skill.js';
 import {
   branchSha,
   branchShaIfExists,
@@ -493,6 +494,9 @@ async function untrackedArtifacts(): Promise<string[]> {
     // `.mcp.json` — Crosstalk wrote it into somebody's checkout, so Crosstalk
     // has to keep it out of their next commit.
     '.claude/settings.json',
+    // The generated board skill. Same reason as the two above: crosstalk wrote
+    // it into somebody's checkout, so crosstalk keeps it out of their commit.
+    SKILL_FILE.replace(/\\/g, '/'),
   ]);
   for (const descriptor of registry.values()) {
     patterns.add(basename(localBriefFile(descriptor.briefFile)));
@@ -546,16 +550,29 @@ async function writeBriefs(
     const tier = participant.transport ?? (await probeTier(descriptor, resolve(repo, participant.workspace)));
     await writeBrief(participant, descriptor, policy, tier, repo, shape);
 
-    // Claude Code seats only: the hook config and the trust flag are its
-    // settings format, and writing them for a harness that ignores them would
-    // be clutter claiming to be configuration.
-    if (participant.harness.startsWith('claude-code')) {
+    // Only harnesses that read this settings format: the hook config and the
+    // trust flag are Claude Code's, and writing them for a harness that ignores
+    // them would be clutter claiming to be configuration.
+    //
+    // Asked of the registry rather than pattern-matched off the key. A harness
+    // named outside the convention got nothing, silently, and the convention
+    // was never a contract.
+    if (descriptor.settings === 'claude-code') {
       await writeSeatSettings({
         repo,
         workspace: participant.workspace,
         seat: participant.id,
         scriptPath: hookPath ?? (hookPath = await writePresenceHook(repo)),
       });
+      // The board vocabulary as a skill, rendered from the same record the
+      // tool schema and every refusal render from — so it cannot drift from
+      // what the daemon actually enforces. Only where the shape names this
+      // seat's tags: with no shape nothing is enforced, and a skill teaching an
+      // unenforced schema is a rule that is not real.
+      const tags = seatTags(participant, shape);
+      if (tags !== undefined) {
+        await writeBoardSkill({ repo, workspace: participant.workspace, tags });
+      }
     }
   }
 }

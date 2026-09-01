@@ -23,7 +23,7 @@ import { SHAPES } from '../core/shape.js';
 import type { MirrorMode } from '../contracts/config.js';
 import { dmId } from '../core/rooms.js';
 import { ledgerOf, renderLedger } from '../core/ledger.js';
-import type { RunSummary } from '../core/runs.js';
+import { isRunStart, runIdOf, RUN_ID_PATTERN, type RunSummary } from '../core/runs.js';
 
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
 import { runCompose } from './compose.js';
@@ -40,7 +40,7 @@ const USAGE = `crosstalk — multi-agent development where a finding is a claim,
   crosstalk down [--as <id>] [--purge]
   crosstalk doctor
   crosstalk github <url> [--login <gh-login>] [--mode one-way|two-way-human]
-  crosstalk ledger [--json]        what the last run cost, per seat
+  crosstalk ledger [--run <id>] [--all] [--json]   what a run cost, per seat
   crosstalk runs [--json]                    every run this repository has had
   crosstalk runs new [--job '...']           put this one away and start fresh
   crosstalk runs archive <id>                move it out of the live log
@@ -951,20 +951,62 @@ async function cmdMine(argv: string[]): Promise<number> {
  * Reads the file rather than the daemon, so it works on a finished run and on a
  * repo whose daemon is down — which is when somebody actually asks.
  */
+/**
+ * What a run cost, per seat.
+ *
+ * This read the whole of `events.jsonl` and called the answer "the last run",
+ * which was true only while a repository had ever had one. Now that runs are a
+ * thing the log records, the default is the run the operator is actually in —
+ * and once archiving moves a finished run to its own file, `--run <id>` is the
+ * only way its cost is reachable at all.
+ *
+ * Still a projection over a file, not a call to the daemon: a ledger has to
+ * work on a repository whose daemon has stopped, which is exactly when someone
+ * asks what the run cost.
+ */
 async function cmdLedger(argv: string[]): Promise<number> {
-  const { flags } = read(argv, { json: { type: 'boolean' } });
+  const { flags } = read(argv, {
+    json: { type: 'boolean' },
+    run: { type: 'string' },
+    all: { type: 'boolean', default: false },
+  });
   const repo = resolve(str(flags, 'repo') ?? '.');
-  const path = join(repo, '.crosstalk', 'events.jsonl');
+  const wanted = str(flags, 'run');
+  const path =
+    wanted !== undefined && RUN_ID_PATTERN.test(wanted)
+      ? join(repo, '.crosstalk', 'runs', `${wanted}.jsonl`)
+      : join(repo, '.crosstalk', 'events.jsonl');
 
+  if (wanted !== undefined && !RUN_ID_PATTERN.test(wanted)) {
+    // Refused as an id before it is treated as a path — the same rule the
+    // daemon applies, for the same reason, in the one place the CLI builds
+    // that path itself.
+    throw new CliError(`no run named ${wanted}`, EXIT.usage, 'Run `crosstalk runs` to list them.');
+  }
+
+  // Whether the bytes we end up with are that run's archive — already exactly
+  // one run — or the live log, which holds several and has to be narrowed.
+  let fromArchive = wanted !== undefined;
   let raw: string;
   try {
     raw = await readFile(path, 'utf8');
   } catch {
-    throw new CliError(
-      `no log at ${path}`,
-      EXIT.protocol,
-      'A ledger is a projection over the log, so there has to have been a run.',
-    );
+    if (wanted === undefined) {
+      throw new CliError(
+        `no log at ${path}`,
+        EXIT.protocol,
+        'A ledger is a projection over the log, so there has to have been a run.',
+      );
+    }
+    // No archive by that name, so it may still be a run in the live log.
+    fromArchive = false;
+    raw = await readFile(join(repo, '.crosstalk', 'events.jsonl'), 'utf8').catch(() => {
+      throw new CliError(
+        `no run named ${wanted}`,
+        EXIT.protocol,
+        'Run `crosstalk runs` to list them — an archived run is read from .crosstalk/runs/.',
+      );
+    });
   }
 
   const events = raw
@@ -980,7 +1022,18 @@ async function cmdLedger(argv: string[]): Promise<number> {
       }
     });
 
-  const ledger = ledgerOf(events);
+  const scoped = scopeToRun(events, wanted, flags['all'] === true, fromArchive);
+  if (scoped === undefined) {
+    // Asked for a run this repository does not have. Reporting the whole log
+    // under that run's name would be a confident wrong answer, which is the
+    // only kind worth refusing.
+    throw new CliError(
+      `no run named ${wanted}`,
+      EXIT.protocol,
+      'Run `crosstalk runs` to list them.',
+    );
+  }
+  const ledger = ledgerOf(scoped);
   process.stdout.write(flags.json === true ? `${JSON.stringify(ledger, null, 2)}\n` : `${renderLedger(ledger)}\n`);
   return EXIT.ok;
 }
@@ -1132,6 +1185,44 @@ async function cmdRuns(argv: string[]): Promise<number> {
     EXIT.usage,
     'Use `crosstalk runs` to list them, `runs new` to start one, `runs archive <id>` to put one away, or `runs rm <id>` to delete an archive.',
   );
+}
+
+/**
+ * Narrow a log to one run, or `undefined` if it does not hold that run.
+ *
+ * Three sources, and they need different handling. An **archive** is already
+ * exactly one run — and the pre-boundary run has no marker at all, so looking
+ * for one there would find nothing and report nothing. `--all` is asking for
+ * no narrowing. The **live log** holds several, and is the only case that has
+ * to search.
+ *
+ * The `undefined` return is the case worth having: asking for a run this
+ * repository does not have used to fall through to "the whole log", reported
+ * under that run's name. A confident wrong answer is the only kind worth
+ * refusing over.
+ *
+ * A repository with no boundary anywhere has one unnamed run — everything — so
+ * `crosstalk ledger` keeps working on a project that predates runs.
+ */
+function scopeToRun(
+  events: CrosstalkEvent[],
+  wanted: string | undefined,
+  all: boolean,
+  fromArchive: boolean,
+): CrosstalkEvent[] | undefined {
+  if (all || fromArchive) return events;
+  const starts = events.filter((event) => isRunStart(event));
+  if (starts.length === 0) return wanted === undefined ? events : undefined;
+
+  const from =
+    wanted === undefined
+      ? starts[starts.length - 1]!
+      : starts.find((event) => runIdOf(event) === wanted);
+  if (from === undefined) return undefined;
+
+  const after = starts.find((event) => event.seq > from.seq);
+  const end = after?.seq ?? Number.POSITIVE_INFINITY;
+  return events.filter((event) => event.seq >= from.seq && event.seq < end);
 }
 
 /**

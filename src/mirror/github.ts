@@ -197,11 +197,33 @@ export class GhTransport implements GitHubTransport {
     return found[0];
   }
 
+  /**
+   * Put the branch on the remote, so there is something to open a PR against.
+   *
+   * Nothing in `src/` ran `git push`, and a seat branch exists only in the
+   * seat's own worktree — so `gh pr create --head ct/opus` was being asked to
+   * open a pull request for a branch GitHub had never seen. The mirror's PR
+   * machinery has therefore never usefully run; last session the seats pushed
+   * by hand and nobody noticed the gap.
+   *
+   * `--force-with-lease` rather than `--force`: a seat re-pushing its own
+   * branch after a rebase is ordinary, and overwriting someone else's work
+   * because the ref moved underneath is not.
+   */
+  async #pushBranch(branch: string): Promise<void> {
+    await run('git', ['push', '--force-with-lease', '--set-upstream', 'origin', branch], {
+      cwd: this.#cwd,
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 120_000,
+    });
+  }
+
   async createDraftPullRequest(input: {
     branch: string;
     title: string;
     body: string;
   }): Promise<PullRequestRef> {
+    await this.#pushBranch(input.branch);
     await this.#run(ghArgs.createDraftPullRequest({ ...input, base: this.#base }));
 
     // `gh pr create` prints the URL, not JSON. Reading the PR back by branch

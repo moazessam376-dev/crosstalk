@@ -1,4 +1,4 @@
-import { createElement } from 'react';
+import { createElement, useState } from 'react';
 import type { MirrorView } from '../state/useMirror.js';
 import type { SessionsView } from '../state/useLaunch.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -23,6 +23,15 @@ export interface EnvironmentRailProps {
   /** Opens a seat's terminal. Absent when nothing is mirrorable. */
   onOpenSession?: (seat: string) => void;
   openSeat?: string;
+  /**
+   * Point the mirror at a repository.
+   *
+   * Absent in a hub with no daemon behind it. Present, the rail grows a field:
+   * the measured reason nobody ever configured the mirror is that the only way
+   * to do it was a terminal command against an undocumented YAML block, while
+   * the hub showed "no mirror configured" and offered nothing.
+   */
+  onConfigureMirror?: (url: string) => Promise<{ ok: boolean; reason?: string }>;
 }
 
 /**
@@ -36,9 +45,32 @@ function mirrorState(mirror: MirrorView): { label: string; state: string } {
   return { label: 'mirroring to GitHub', state: 'running' };
 }
 
-export function EnvironmentRail({ sessions, mirror, onOpenSession, openSeat }: EnvironmentRailProps) {
+export function EnvironmentRail({
+  sessions,
+  mirror,
+  onOpenSession,
+  openSeat,
+  onConfigureMirror,
+}: EnvironmentRailProps) {
   const phase = sessions?.phase ?? undefined;
   const seats = sessions?.seats ?? [];
+  const [repoUrl, setRepoUrl] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [mirrorNotice, setMirrorNotice] = useState<string | undefined>();
+
+  const configure = async (): Promise<void> => {
+    const url = repoUrl.trim();
+    if (url === '' || saving || onConfigureMirror === undefined) return;
+    setSaving(true);
+    const result = await onConfigureMirror(url);
+    setSaving(false);
+    if (result.ok) {
+      setRepoUrl('');
+      setMirrorNotice(undefined);
+      return;
+    }
+    setMirrorNotice(result.reason ?? 'the daemon refused it');
+  };
 
   return createElement(
     'section',
@@ -87,29 +119,40 @@ export function EnvironmentRail({ sessions, mirror, onOpenSession, openSeat }: E
             { className: 'env-seat-row' },
             seats.map((seat) => {
               const openable = onOpenSession !== undefined && seat.mirrored === true;
+              // What the supervisor said about this seat's health.
+              //
+              // It has always been on the roster and never drawn. Those notices
+              // used to be posted to `#floor` under the operator's name instead
+              // — 622 of the vault run's 1187 events — and moving them to
+              // presence was only half the repair: a fact nobody renders is
+              // still a fact nobody has.
+              const blocked = seat.activity?.blocked;
+              const state = blocked !== undefined ? 'stalled' : seat.present ? 'running' : 'exited';
+              const title =
+                blocked !== undefined
+                  ? `${seat.id} ${blocked}`
+                  : openable
+                    ? `Open ${seat.id}'s terminal`
+                    : // Said, not implied: a seat started in someone's own shell
+                      // is working fine and simply cannot be watched from here.
+                      `${seat.id} was not started from the hub, so it has no terminal to mirror`;
               return createElement(
                 openable ? 'button' : 'span',
                 {
                   key: seat.id,
-                  className: `env-seat${openSeat === seat.id ? ' is-open' : ''}`,
+                  className: `env-seat${openSeat === seat.id ? ' is-open' : ''}${blocked === undefined ? '' : ' is-blocked'}`,
                   'data-harness': harnessKind(seat.harness),
                   'data-present': seat.present ? 'true' : 'false',
+                  ...(blocked === undefined ? {} : { 'data-blocked': 'true' }),
                   'data-testid': `env-seat-${seat.id}`,
-                  ...(openable
-                    ? {
-                        type: 'button',
-                        title: `Open ${seat.id}'s terminal`,
-                        onClick: () => onOpenSession(seat.id),
-                      }
-                    : // Said, not implied: a seat started in someone's own shell
-                      // is working fine and simply cannot be watched from here.
-                      { title: `${seat.id} was not started from the hub, so it has no terminal to mirror` }),
+                  title,
+                  ...(openable ? { type: 'button', onClick: () => onOpenSession(seat.id) } : {}),
                 },
                 createElement(HarnessMark, { harness: seat.harness, size: 13 }),
                 createElement('span', { className: 'env-seat-id' }, seat.id),
                 createElement('span', {
                   className: 'state-dot',
-                  'data-state': seat.present ? 'running' : 'exited',
+                  'data-state': state,
                   'aria-hidden': 'true',
                 }),
               );
@@ -129,6 +172,49 @@ export function EnvironmentRail({ sessions, mirror, onOpenSession, openSeat }: E
             createElement('span', { className: 'state-dot', 'aria-hidden': 'true' }),
             mirrorState(mirror).label,
           ),
+          // The field, and only while there is nothing configured: a repo URL
+          // box beside a working mirror is a way to point it somewhere else by
+          // accident.
+          mirror.configured || onConfigureMirror === undefined
+            ? null
+            : createElement(
+                'form',
+                {
+                  className: 'env-mirror-setup',
+                  'data-testid': 'env-mirror-setup',
+                  onSubmit: (event: { preventDefault(): void }) => {
+                    event.preventDefault();
+                    void configure();
+                  },
+                },
+                createElement('input', {
+                  className: 'env-mirror-url',
+                  'data-testid': 'env-mirror-url',
+                  'aria-label': 'GitHub repository to mirror to',
+                  placeholder: 'Paste a GitHub repo URL',
+                  value: repoUrl,
+                  autoComplete: 'off',
+                  spellCheck: false,
+                  onChange: (event: { target: { value: string } }) => setRepoUrl(event.target.value),
+                }),
+                createElement(
+                  'button',
+                  {
+                    type: 'submit',
+                    className: 'env-mirror-save',
+                    'data-testid': 'env-mirror-save',
+                    disabled: saving || repoUrl.trim() === '',
+                  },
+                  saving ? 'Setting up' : 'Mirror',
+                ),
+              ),
+          mirrorNotice === undefined
+            ? null
+            : createElement(
+                'span',
+                { className: 'env-note env-mirror-notice', role: 'alert', 'data-testid': 'env-mirror-notice' },
+                mirrorNotice,
+              ),
           mirror.lastDrain === undefined
             ? null
             : createElement(

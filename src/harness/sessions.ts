@@ -37,6 +37,19 @@ export interface SessionHandle {
   /** Set once the process has gone. A dead seat's last screen is still worth reading. */
   readonly exitCode: number | null | undefined;
   readonly running: boolean;
+  /**
+   * Kill the process, and *only* the process.
+   *
+   * No `git checkout`, no `clean`, no worktree removal. A seat that is stopped
+   * mid-edit has uncommitted work in its worktree and that work is the
+   * operator's — throwing it away because they wanted the board clear is a
+   * different, much worse operation than the one they asked for.
+   * `purgeWorkspaces` exists for that and is reachable only from `down
+   * --purge`, where it is spelled out.
+   */
+  stop(): void;
+  /** Settles with the exit code. Awaited with a timeout, never bare. */
+  readonly exited: Promise<number | null>;
 }
 
 export class SessionRegistry {
@@ -49,6 +62,25 @@ export class SessionRegistry {
    * cleanup-on-exit registry would throw away first.
    */
   register(id: string, session: HarnessSession): SessionHandle {
+    /**
+     * Refusing to orphan a live pty.
+     *
+     * This was a bare `set`. Registering a second time over a running seat
+     * dropped the only reference to the first process — nothing held it, and
+     * `SessionHandle` had no `stop`, so it could not have been killed even
+     * deliberately. It kept running, kept its worktree, and kept answering
+     * `/await`, so two `driveSupervised` loops raced one `#delivered` cursor
+     * and each took roughly half of what the other was owed.
+     *
+     * Overwriting a seat that has *exited* stays legal: keeping a dead seat's
+     * handle is the deliberate choice made above, and re-seating that id is
+     * exactly what starting a new run does.
+     */
+    const previous = this.#sessions.get(id);
+    if (previous?.running === true) {
+      throw new Error(`${id} is already running. End the current run before seating it again.`);
+    }
+
     let exitCode: number | null | undefined;
     let running = true;
     void session.exited.then((code) => {
@@ -71,6 +103,8 @@ export class SessionRegistry {
       get running() {
         return running;
       },
+      stop: () => session.stop(),
+      exited: session.exited,
     };
     this.#sessions.set(id, handle);
     return handle;
@@ -82,6 +116,11 @@ export class SessionRegistry {
 
   ids(): string[] {
     return [...this.#sessions.keys()];
+  }
+
+  /** The seats with a process still behind them, in registration order. */
+  live(): SessionHandle[] {
+    return [...this.#sessions.values()].filter((session) => session.running);
   }
 
   get size(): number {

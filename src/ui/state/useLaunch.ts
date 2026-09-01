@@ -58,6 +58,15 @@ export interface SeatSession {
    * offering a terminal that would never fill.
    */
   mirrored?: boolean;
+  /**
+   * Whether the seat still has a process behind it.
+   *
+   * Distinct from `mirrored`, which stays true after the process exits so the
+   * mirror can keep showing its last screen. Starting a run is refused while
+   * any of these is true, so the launcher reads it to say so before the
+   * operator presses the button rather than after.
+   */
+  live?: boolean;
 }
 
 export interface SessionsView {
@@ -158,6 +167,14 @@ export interface LaunchRequest {
   shape?: string;
   /** `id:role:harness` per seat, the same spelling `crosstalk init` takes. */
   seats: string[];
+  /**
+   * Stop the seats still running before starting.
+   *
+   * Absent unless the operator pressed a button that said so. The daemon
+   * refuses a launch over live seats precisely so this cannot happen by
+   * accident, and sending it unconditionally would delete that guard.
+   */
+  end?: boolean;
 }
 
 /** Starts a run. The daemon spawns and supervises; this returns as soon as it has. */

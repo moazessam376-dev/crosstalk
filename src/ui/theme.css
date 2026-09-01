@@ -2813,3 +2813,15 @@ button.member-body:hover .member-id {
   cursor: progress;
   opacity: 0.6;
 }
+
+/* The ruler the panel measures a cell against. In the terminal's own font, out
+   of the flow, and never containing anything the seat drew — a cell width taken
+   from rendered content feeds back into the resize that produced it. */
+.terminal-gauge {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: pre;
+  top: 0;
+  left: 0;
+}

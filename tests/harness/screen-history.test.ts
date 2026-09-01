@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_SCROLLBACK, Screen } from '../../src/harness/screen.js';
+import { DEFAULT_SCROLLBACK, MAX_COLS, MAX_ROWS, Screen } from '../../src/harness/screen.js';
 
 const ESC = '\u001b';
 const CSI = `${ESC}[`;
@@ -208,5 +208,32 @@ describe('Screen scrolling region', () => {
     screen.write('a\r\nb\r\nc\r\nd');
     screen.write(`${CSI}1;1H${ESC}M`);
     expect(screen.text()).toBe('\na\nb\nc');
+  });
+});
+
+describe('Screen bounds', () => {
+  it('refuses a size that would build a grid nobody asked for', () => {
+    // Geometry arrives from a browser measuring itself, and a measurement that
+    // feeds back into what it measures runs away — one live run did, and took
+    // the daemon to a 2 GB heap. The measurement is fixed; this is the ceiling
+    // that makes the next such bug a wrong-looking screen, not a dead daemon.
+    const screen = new Screen(4, 20);
+    screen.resize(100_000, 100_000);
+    expect(screen.rows).toBeLessThanOrEqual(MAX_ROWS);
+    expect(screen.cols).toBeLessThanOrEqual(MAX_COLS);
+    expect(screen.snapshot().rows.length).toBe(screen.rows);
+  });
+
+  it('clamps at construction too, not only on resize', () => {
+    const screen = new Screen(100_000, 100_000);
+    expect(screen.rows).toBe(MAX_ROWS);
+    expect(screen.cols).toBe(MAX_COLS);
+  });
+
+  it('survives a size that is not a number', () => {
+    const screen = new Screen(4, 20);
+    screen.resize(Number.NaN, Number.NaN);
+    expect(screen.rows).toBeGreaterThan(0);
+    expect(screen.cols).toBeGreaterThan(0);
   });
 });

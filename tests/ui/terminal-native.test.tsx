@@ -178,3 +178,52 @@ describe('colour fidelity', () => {
     expect(style.color).not.toBe(style.background);
   });
 });
+
+describe('reporting how big the terminal is', () => {
+  /**
+   * The measurement must not depend on what the seat drew.
+   *
+   * Taking a cell width from a rendered row is a feedback loop: a row is as
+   * wide as its content, so a wider terminal makes wider rows, which makes the
+   * cell look wider, which asks for a wider terminal. One live run with that
+   * loop resized the pty continuously and killed the daemon at a 2 GB heap.
+   */
+  it('measures against a gauge whose width the seat cannot change', () => {
+    const seen: [number, number][] = [];
+    const { rerender } = render(
+      createElement(Terminal, {
+        screen: aScreen({ cols: 20, rows: [[{ text: 'x'.repeat(20) }]] }),
+        onGeometry: (rows: number, cols: number) => seen.push([rows, cols]),
+      }),
+    );
+    const first = seen.length;
+
+    // The seat draws something far wider. Nothing about the panel changed, so
+    // nothing about the reported geometry may change either.
+    rerender(
+      createElement(Terminal, {
+        screen: aScreen({ cols: 20, rows: [[{ text: 'y'.repeat(400) }]] }),
+        onGeometry: (rows: number, cols: number) => seen.push([rows, cols]),
+      }),
+    );
+
+    const after = seen.slice(first);
+    for (const [, cols] of after) expect(cols).toBe(seen[0]?.[1]);
+  });
+
+  it('renders the gauge, since the measurement depends on it', () => {
+    render(createElement(Terminal, { screen: aScreen() }));
+    const terminal = screen.getByTestId('terminal') as unknown as {
+      querySelector(selector: string): { textContent: string | null } | null;
+    };
+    const gauge = terminal.querySelector('.terminal-gauge');
+    expect(gauge).not.toBeNull();
+    expect(gauge?.textContent?.length).toBeGreaterThan(1);
+  });
+
+  it('says nothing when nobody asked', () => {
+    // No `onGeometry`, no measuring, no resize traffic for a panel that is only
+    // being read.
+    expect(() => render(createElement(Terminal, { screen: aScreen() }))).not.toThrow();
+  });
+});

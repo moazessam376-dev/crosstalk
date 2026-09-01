@@ -10,7 +10,7 @@ Do not change directory.
 
 Verbs:
 - `inbox()` — cards, tasks, and `job` (your task brief, not JOB.md). If next is idle, wait. Do not start from #floor.
-- `say(room, body)` — board post. Use `to` to wake someone.
+- `say({tag, head, to, ref})` — board post. `to` sends it to one seat.
 - `act({kind:"ack"|"done"})` — one-line ack, then done. Empty findings are legal.
 - `claim({kind})` — court only, when two statements cannot both be true.
 

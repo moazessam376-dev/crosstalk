@@ -65,6 +65,19 @@ export class Presence {
     this.#lastSeen.set(who, now);
   }
 
+  /**
+   * Forget everyone. Called when a run ends.
+   *
+   * "editing harbor.ts" is a fact about a run, and a run that has ended has no
+   * facts about now. Without this the new run's rail opens showing the previous
+   * team mid-edit — the same class of wrong answer `activityOf` already drops
+   * stale entries to avoid, arriving by a different route.
+   */
+  reset(): void {
+    this.#lastSeen.clear();
+    this.#activity.clear();
+  }
+
   /** Reported by the harness itself, through a hook. Overwrites; never appends. */
   note(who: ParticipantId, activity: Omit<Activity, 'at'>, now: number): void {
     this.#activity.set(who, { ...activity, at: now });

@@ -2,6 +2,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -23,7 +24,10 @@ import { startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
 
 const execFile = promisify(execFileCallback);
 
-const CLI = new URL('../../dist/cli/index.js', import.meta.url).pathname;
+// `fileURLToPath`, never `.pathname`: on Windows a file URL's pathname is
+// `/D:/a/…`, and node then resolves that against the drive as `D:\D:\a\…`
+// and cannot find the module. Measured in CI, not reasoned about.
+const CLI = fileURLToPath(new URL('../../dist/cli/index.js', import.meta.url));
 
 const FLAT_ROSTER = `version: 1
 project:

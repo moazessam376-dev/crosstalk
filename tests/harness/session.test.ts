@@ -54,6 +54,23 @@ function harness(): { spawn: SpawnProcess; calls: SpawnCall[]; last: () => Retur
   return { spawn, calls, last: () => made! };
 }
 
+/**
+ * Wait for the session to have written something, rather than for a stopwatch.
+ *
+ * The opening turn is delivered asynchronously — it looks at the screen before
+ * pressing Return — so a fixed 5ms sleep asserted against whatever had happened
+ * by then. That is fast enough on this machine and not on a Windows runner,
+ * where the same tests failed with the Return not yet sent.
+ */
+async function until(check: () => boolean, ms = 3000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((done) => setTimeout(done, 5));
+  }
+  throw new Error('timed out waiting for the session to write');
+}
+
 describe('a harness that takes streamed turns', () => {
   it('writes the job as the first turn instead of an argv positional', async () => {
     const { spawn, calls, last } = harness();
@@ -210,7 +227,7 @@ describe('an interactive seat, watchable over Remote Control', () => {
       submitDelayMs: 0,
       spawnPty: pty.spawnPty,
     });
-    await new Promise((done) => setTimeout(done, 5));
+    await until(() => pty.written().endsWith('\r'));
 
     expect(pty.spec().args).not.toContain('build the thing');
     expect(pty.written()).toBe('build the thing\r');
@@ -227,7 +244,7 @@ describe('an interactive seat, watchable over Remote Control', () => {
       submitDelayMs: 0,
       spawnPty: pty.spawnPty,
     });
-    await new Promise((done) => setTimeout(done, 5));
+    await until(() => pty.written() === 'x\r');
 
     // A newline in the middle of a brief is a Return: it would submit the first
     // paragraph and leave the rest typing into a running turn.
@@ -242,14 +259,23 @@ describe('an interactive seat, watchable over Remote Control', () => {
       cwd: '/tmp',
       first: 'the job',
       turnFormat: 'interactive',
-      readyDelayMs: 30,
+      readyDelayMs: 120,
       submitDelayMs: 0,
       spawnPty: pty.spawnPty,
     });
 
+    // The half about waiting: silent now, and still silent well inside the
+    // delay. 30ms was too tight to say that on a runner whose timers tick in
+    // 15.6ms steps, so the window is wide enough to be a claim.
     expect(pty.written()).toBe('');
-    await new Promise((done) => setTimeout(done, 45));
-    expect(pty.written()).toBe('the job\r');
+    await new Promise((done) => setTimeout(done, 40));
+    expect(pty.written()).toBe('');
+
+    // The half about typing, waited for as a *state*. Delivery is two writes —
+    // the text, then Return — so a stopwatch asserts against whichever half had
+    // happened when it fired. On Windows that was reliably 'the job' with the
+    // Return still in flight, which is a slow machine, not a broken session.
+    await until(() => pty.written() === 'the job\r');
   });
 
   it('settles exited when the pty closes, so a supervisor cannot hang', async () => {
@@ -331,7 +357,7 @@ describe('mirroring a seat', () => {
       submitDelayMs: 0,
       spawnPty: pty.spawnPty,
     });
-    await new Promise((done) => setTimeout(done, 5));
+    await until(() => pty.written() === 'x\r');
 
     await session.key('\u001b');
     // `send` presses the Return that submits a turn; `key` must not, or an

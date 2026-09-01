@@ -158,3 +158,71 @@ describe('crosstalk runs', () => {
     expect(wrong.out).toContain('delete');
   }, GIT_TEST_TIMEOUT);
 });
+
+describe('crosstalk ledger, once runs exist', () => {
+  it('reports the current run, not every run the repo has ever had', async () => {
+    // It read the whole log and called the answer "the last run" — true only
+    // while a repository had ever had one. A boundary makes the claim checkable
+    // and this is where it was wrong.
+    const { repo } = await project();
+    await ct(repo, ['say', '--as', '@human', '--tag', 'note', '--head', 'the old run']);
+    await ct(repo, ['runs', 'new']);
+    await ct(repo, ['say', '--as', '@human', '--tag', 'note', '--head', 'the new run']);
+
+    const { out } = await ct(repo, ['ledger', '--json']);
+    const ledger = JSON.parse(out) as { messages?: number; events?: number };
+    const whole = JSON.parse((await ct(repo, ['ledger', '--all', '--json'])).out) as typeof ledger;
+
+    // Narrower than the whole log, which is the property — the exact counts
+    // are the ledger's business and `core/ledger.test.ts` owns them.
+    expect(JSON.stringify(ledger)).not.toEqual(JSON.stringify(whole));
+  }, GIT_TEST_TIMEOUT);
+
+  it('reads an archived run’s cost from its own file', async () => {
+    // Once a run is archived it is not in the live log at all, so without this
+    // the cost of the run you just finished becomes unreachable — which is the
+    // one moment anybody asks for it.
+    const { repo } = await project();
+    await ct(repo, ['say', '--as', '@human', '--tag', 'note', '--head', 'the archived run']);
+    await ct(repo, ['runs', 'new']);
+    const older = (await ids(repo)).find((run) => !run.current)!;
+    await ct(repo, ['runs', 'archive', older.id]);
+
+    const { code, out } = await ct(repo, ['ledger', '--run', older.id, '--json']);
+
+    expect(code).toBe(0);
+    expect(() => JSON.parse(out)).not.toThrow();
+  }, GIT_TEST_TIMEOUT);
+
+  it('refuses a run id that is not one, before it becomes a path', async () => {
+    const { repo } = await project();
+    const { code, out } = await ct(repo, ['ledger', '--run', '../../events']);
+    expect(code).not.toBe(0);
+    expect(out).toContain('no run named');
+  }, GIT_TEST_TIMEOUT);
+
+  it('refuses a well-formed id this repository has never had', async () => {
+    // The dangerous case, because it looks like an answer. Falling through to
+    // "the whole log" and printing it under that run's name is a confident
+    // wrong answer, which is the only kind worth refusing over.
+    //
+    // Two shapes, because they are two different branches and only the second
+    // is the one that nearly shipped: a log with no boundaries at all, and a
+    // log that has boundaries and simply not this one. The first version of
+    // this test had only the former, and stayed green with the search's
+    // refusal deleted.
+    const { repo } = await project();
+    await ct(repo, ['say', '--as', '@human', '--tag', 'note', '--head', 'this run']);
+
+    const unmarked = await ct(repo, ['ledger', '--run', 'r-20200101-0000-abcdef', '--json']);
+    expect(unmarked.code).not.toBe(0);
+    expect(unmarked.out).toContain('no run named');
+
+    await ct(repo, ['runs', 'new']);
+    await ct(repo, ['say', '--as', '@human', '--tag', 'note', '--head', 'a second run']);
+
+    const marked = await ct(repo, ['ledger', '--run', 'r-20200101-0000-abcdef', '--json']);
+    expect(marked.code).not.toBe(0);
+    expect(marked.out).toContain('no run named');
+  }, GIT_TEST_TIMEOUT);
+});

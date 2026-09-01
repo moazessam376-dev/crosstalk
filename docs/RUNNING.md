@@ -214,6 +214,10 @@ running). `crosstalk runs archive <id>` moves a finished run to
 archive permanently — the only thing in Crosstalk that destroys history, which
 is why it wants the flag.
 
+`crosstalk ledger` reports on the **current** run. Add `--run <id>` for an
+older one — including an archived one, whose events are no longer in the live
+log at all — or `--all` for every run the repository has had.
+
 ### Sending a screenshot
 
 ⌘V into the composer, drag a file onto it, or the paperclip beside `Send`.

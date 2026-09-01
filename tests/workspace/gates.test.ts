@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { contractExists, noSharedFiles } from '../../src/workspace/gates.js';
+import { createWorktree, seatBranches } from '../../src/workspace/git.js';
 
 const execFile = promisify(execFileCallback);
 
@@ -97,8 +98,36 @@ describe('the no-shared-files gate', () => {
     expect(gate.missing).toContain('sonnet');
   });
 
-  it('treats a seat that has not branched yet as having collided with nobody', async () => {
+  it('reports a seat with no branch as unchecked, not as clear', async () => {
+    // This used to assert `met: true`, on the argument that a seat which has
+    // not pushed has not collided with anyone. True about that seat, and wrong
+    // about the gate: `changedFiles` swallowed *every* unknown ref into `[]`,
+    // so when the daemon asked about `ct/<id>` while init had created
+    // `ct/<id>-base`, all three seats came back empty, the intersection of
+    // three empty sets was empty, and the gate reported green for the whole
+    // life of the feature. It has never once run against real branches.
+    //
+    // A gate that cannot tell "nobody collided" from "I could not look" is not
+    // a gate. Advancing past Build because a seat produced nothing is also the
+    // wrong answer on its own terms.
     const dir = await repoWithBranches({ 'ct/opus': { 'src/world.ts': 'world\n' } });
+
+    const gate = await noSharedFiles(dir, 'main', [
+      { seat: 'opus', branch: 'ct/opus' },
+      { seat: 'sonnet', branch: 'ct/sonnet' },
+    ]);
+
+    expect(gate.met).toBe(false);
+    expect(gate.missing).toContain('sonnet');
+    expect(gate.missing).toContain('ct/sonnet');
+  });
+
+  it('still passes a branch that exists and changed nothing', async () => {
+    // The neighbouring case, and the one the old comment was actually right
+    // about. An existing branch with an empty diff has genuinely collided with
+    // nobody, and must not be confused with a branch that is not there.
+    const dir = await repoWithBranches({ 'ct/opus': { 'src/world.ts': 'world\n' } });
+    await git(dir, 'branch', 'ct/sonnet', 'main');
 
     const gate = await noSharedFiles(dir, 'main', [
       { seat: 'opus', branch: 'ct/opus' },
@@ -124,5 +153,56 @@ describe('the no-shared-files gate', () => {
       { seat: 'sonnet', branch: 'ct/sonnet' },
     ]);
     expect(gate.met).toBe(true);
+  });
+});
+
+describe('resolving which branch a seat is on', () => {
+  it('reads the branch from git rather than guessing the name', async () => {
+    // The bug this exists for: `init` creates `ct/<id>-base`, and the daemon
+    // asked `noSharedFiles` about `ct/<id>`. Neither half was obviously wrong
+    // on its own, and together they made the gate unfalsifiable. A branch a
+    // seat is on is a fact git holds; nothing should be reconstructing it from
+    // an id and a convention.
+    const dir = await repoWithBranches({});
+    await createWorktree(dir, 'peer-1', 'ct/peer-1-base');
+    await createWorktree(dir, 'peer-2', 'ct/peer-2-base');
+
+    const resolved = await seatBranches(dir, [
+      { id: 'peer-1', workspace: '.crosstalk/worktrees/peer-1' },
+      { id: 'peer-2', workspace: '.crosstalk/worktrees/peer-2' },
+    ]);
+
+    expect(resolved).toEqual([
+      { seat: 'peer-1', branch: 'ct/peer-1-base' },
+      { seat: 'peer-2', branch: 'ct/peer-2-base' },
+    ]);
+  });
+
+  it('leaves out a seat working in the repo root', async () => {
+    // The planner sits at the root, which is where merging N branches has to
+    // happen. It owns no branch of its own, so it is not a party to a
+    // no-shared-files check and must not be reported as an unknown one.
+    const dir = await repoWithBranches({});
+    await createWorktree(dir, 'peer-1', 'ct/peer-1-base');
+
+    const resolved = await seatBranches(dir, [
+      { id: 'planner', workspace: '.' },
+      { id: 'peer-1', workspace: '.crosstalk/worktrees/peer-1' },
+    ]);
+
+    expect(resolved).toEqual([{ seat: 'peer-1', branch: 'ct/peer-1-base' }]);
+  });
+
+  it('carries a seat whose worktree is gone through as unknown, not as absent', async () => {
+    // Dropping it would put us back where we started: a seat that cannot be
+    // checked, silently not counted.
+    const dir = await repoWithBranches({});
+
+    const resolved = await seatBranches(dir, [
+      { id: 'peer-1', workspace: '.crosstalk/worktrees/peer-1' },
+    ]);
+
+    expect(resolved).toEqual([{ seat: 'peer-1', branch: 'ct/peer-1-base' }]);
+    expect((await noSharedFiles(dir, 'main', resolved)).met).toBe(false);
   });
 });

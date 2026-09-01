@@ -45,8 +45,22 @@ export async function noSharedFiles(
   branches: readonly { seat: string; branch: string }[],
 ): Promise<WorkspaceGate> {
   const owned = new Map<string, string[]>();
+  const unchecked: string[] = [];
   for (const { seat, branch } of branches) {
-    owned.set(seat, await changedFiles(repo, base, branch));
+    const changed = await changedFiles(repo, base, branch);
+    if (changed === undefined) {
+      unchecked.push(`${seat} (${branch} is unknown)`);
+      continue;
+    }
+    owned.set(seat, changed);
+  }
+
+  // Said before the intersection, because a seat whose branch could not be read
+  // contributes an empty set to it, and an empty set collides with nothing. An
+  // unreadable branch reported as "no overlap" is how this gate stayed green
+  // through every run it has ever been part of.
+  if (unchecked.length > 0) {
+    return { met: false, missing: `no branch to check for ${unchecked.join('; ')}` };
   }
 
   const collisions: string[] = [];
@@ -68,6 +82,15 @@ export async function noSharedFiles(
     missing: `two seats wrote the same file: ${collisions.join('; ')}`,
   };
 }
+
+/**
+ * The gate ids `workspaceGates` knows how to answer.
+ *
+ * Exported so a shape can be checked against it. A shape naming a gate nothing
+ * implements does not fail loudly — `workspaceGates` simply never sets it,
+ * `statusOf` reads it as unmet, and the phase stalls forever.
+ */
+export const WORKSPACE_GATES: readonly GateId[] = ['contract-exists', 'no-shared-files'];
 
 export async function workspaceGates(args: {
   repo: string;

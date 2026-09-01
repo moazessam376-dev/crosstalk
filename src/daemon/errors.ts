@@ -14,12 +14,31 @@ export type DaemonErrorCode =
   | 'NOT_A_ROOM_MEMBER'
   | 'ROLE_NOT_PERMITTED'
   | 'UNKNOWN_ROUTE'
+  /**
+   * Asked to mirror a seat this daemon has no pipe to. Not a protocol failure:
+   * a seat someone started in their own terminal is working perfectly and is
+   * simply not watchable from here.
+   */
+  | 'NO_MIRRORED_SESSION'
+  /** The seat's harness reads its prompt once and cannot be handed another. */
+  | 'SESSION_CANNOT_TAKE_TURN'
   | 'DAEMON_ALREADY_RUNNING'
   | 'PORT_IN_USE'
   | 'PORT_BLOCKED'
   /** `--host` naming an address no interface on this machine has. */
   | 'HOST_UNAVAILABLE'
   | 'PAYLOAD_TOO_LARGE'
+  /**
+   * The transport was fine and the message was too long. Distinct from
+   * PAYLOAD_TOO_LARGE, which is about bytes on the wire: this one an agent can
+   * act on by compressing and moving the detail into `ref`.
+   */
+  | 'MESSAGE_TOO_LONG'
+  // The message schema: a missing or over-budget tag, head or body, a required
+  // `ref` or `to` absent, or a tag posted in the wrong kind of room. In-band
+  // and separate from MALFORMED_BODY, because every one of these is something
+  // the author can fix and re-send — the refusal text names the fix.
+  | 'MESSAGE_REFUSED'
   | 'EVENT_KIND_NOT_APPENDABLE';
 
 export class DaemonError extends Error {

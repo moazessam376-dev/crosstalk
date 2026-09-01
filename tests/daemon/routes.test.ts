@@ -999,3 +999,40 @@ describe('CT-9 the cwd header survives a path that is not Latin-1', () => {
     }
   });
 });
+
+describe('concurrent raises cannot share an id', () => {
+  it('mints distinct claim ids for two raises in flight together', async () => {
+    // `nextClaimId` is `C-${claims.size + 1}` computed against a state
+    // snapshot. Before write handlers were serialized, two concurrent raises
+    // read the same snapshot, both minted `C-1`, and the projection silently
+    // merged two distinct claims under one id.
+    await withDaemon(async (daemon) => {
+      const raise = (assertion: string, who: string) =>
+        post(daemon, '/claims', {
+          against: 'codex',
+          target: 'src/example.ts:1',
+          assertion,
+          severity: 'defect',
+          falsifier: 'If wrong, the two raises project to a single claim id.',
+          evidence: [],
+        }, who);
+
+      const [first, second] = await Promise.all([
+        raise('first concurrent claim', 'leader'),
+        raise('second concurrent claim', 'cursor'),
+      ]);
+      expect(first!.status).toBe(201);
+      expect(second!.status).toBe(201);
+
+      const events = await readJson<EventsResponse>(
+        await fetch(`${daemon.url}/events`, { headers: auth(daemon, 'leader') }),
+      );
+      const claimIds = events.events
+        .filter((event): event is Extract<CrosstalkEvent, { kind: 'claim_raised' }> => event.kind === 'claim_raised')
+        .map((event) => event.claim.id);
+
+      expect(claimIds).toHaveLength(2);
+      expect(new Set(claimIds).size).toBe(2);
+    });
+  });
+});

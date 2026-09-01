@@ -67,17 +67,15 @@ describe('what an agent actually receives over MCP', () => {
     await withMcpClient(async (client) => {
       const { tools } = await client.listTools();
 
-      expect(tools.map((tool) => tool.name)).toContain('raise_claim');
-      expect(tools).toHaveLength(15);
+      expect(tools.map((tool) => tool.name)).toEqual(['inbox', 'say', 'act', 'claim']);
+      expect(tools).toHaveLength(4);
 
-      const raise = tools.find((tool) => tool.name === 'raise_claim');
-      // The requirement survives the round trip: an agent reading the tool list
-      // is told falsifier is mandatory, not merely that the server will refuse.
-      expect(raise?.inputSchema.required).toContain('falsifier');
-      expect(raise?.description ?? '').toMatch(/not an instruction/i);
+      const claim = tools.find((tool) => tool.name === 'claim');
+      expect(claim?.inputSchema.required).toContain('kind');
+      expect(claim?.description ?? '').toMatch(/court|falsifier/i);
 
-      const respond = tools.find((tool) => tool.name === 'respond_to_claim');
-      expect(respond?.description ?? '').toContain('UPHOLD_WITHOUT_NEW_EVIDENCE');
+      const inbox = tools.find((tool) => tool.name === 'inbox');
+      expect((inbox?.description ?? '').length).toBeLessThanOrEqual(200);
     });
   });
 
@@ -98,8 +96,9 @@ describe('what an agent actually receives over MCP', () => {
   it('reports a protocol refusal as a tool error rather than a transport failure', async () => {
     await withMcpClient(async (client) => {
       const result = await client.callTool({
-        name: 'raise_claim',
+        name: 'claim',
         arguments: {
+          kind: 'raise',
           against: 'leader',
           target: 'src/mcp/tools.ts:1',
           assertion: 'the schema is wrong',
@@ -133,9 +132,9 @@ describe('CT-8 every tool result names the caller', () => {
     });
   });
 
-  it('attaches `you` to roster as well, where the kickoff line sends agents', async () => {
+  it('attaches `you` to inbox as well, where the kickoff line sends agents', async () => {
     await withMcpClient(async (client) => {
-      const result = await client.callTool({ name: 'roster', arguments: {} });
+      const result = await client.callTool({ name: 'inbox', arguments: { wait: false } });
       expect((JSON.parse(firstText(result)) as { you?: string }).you).toBe('leader');
     });
   });
@@ -154,7 +153,7 @@ describe('CT-9 the client actually reports where it is running', () => {
    */
   it('warns, end to end, because the process is not in the declared workspace', async () => {
     await withMcpClient(async (client) => {
-      const result = await client.callTool({ name: 'roster', arguments: {} });
+      const result = await client.callTool({ name: 'inbox', arguments: { wait: false } });
       const payload = JSON.parse(firstText(result)) as { warnings?: string[] };
 
       expect(payload.warnings ?? []).toHaveLength(1);

@@ -7,7 +7,13 @@ export type ParticipantId = string;
  * party to: a reviewer's whole purpose is to speak, and it needs its own brief
  * telling it explicitly not to implement.
  */
-export type Role = 'leader' | 'worker' | 'observer' | 'human' | 'plan_reviewer';
+/**
+ * `peer` is a leaderless builder: it starts from the `#floor` job directly,
+ * coordinates on the board, and no participant holds task authority over it.
+ * A roster is either led (exactly one leader) or flat (one or more peers,
+ * no leader) — `doctor` refuses the mixtures.
+ */
+export type Role = 'leader' | 'worker' | 'observer' | 'human' | 'plan_reviewer' | 'spoc' | 'peer';
 
 /**
  * How a participant reaches the hub. Descending fidelity: `mcp` validates

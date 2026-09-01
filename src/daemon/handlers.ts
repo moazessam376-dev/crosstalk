@@ -148,6 +148,17 @@ export async function createTask(ctx: HandlerContext, body: Body): Promise<Cross
   return [await ctx.append({ kind: 'task_created', from: ctx.who, room: `task:${task.id}`, task })];
 }
 
+/** Leader create + assign in one write. The board verb `act.assign`. */
+export async function assignTask(ctx: HandlerContext, body: Body): Promise<CrosstalkEvent[]> {
+  if (roleOf(ctx, ctx.who) !== 'leader') {
+    throw new ProtocolError('NOT_TASK_AUTHORITY', `only the leader may assign; ${ctx.who} may not`);
+  }
+  const created = await createTask(ctx, body);
+  const id = requireString(body, 'id');
+  const assigned = await setTaskState(ctx, id, { state: 'assigned' });
+  return [...created, ...assigned];
+}
+
 export async function acknowledgeTask(
   ctx: HandlerContext,
   taskId: string,
@@ -178,7 +189,7 @@ export async function submitTask(
   const task = requireTask(ctx, taskId);
   requireAssignee(ctx, task, 'submit');
 
-  const critique = readCritique(body);
+  const critique = readCritique(body); // defaults when omitted — act.done
   // `self_review` is gate 2's counterpart to `brief_ack`. Until it existed the
   // gate was unreachable from the log at all (CT-D-1).
   const events = [
@@ -299,7 +310,13 @@ async function commitSharedRootWork(ctx: HandlerContext, task: Task): Promise<vo
 }
 
 function requireTaskAuthority(ctx: HandlerContext, task: Task, to: TaskState): void {
-  const authority = (TASK_AUTHORITY as Readonly<Record<string, TaskAuthority>>)[to];
+  // SPOC reject is `submitted → in_progress`. The to-state is normally the
+  // assignee's, so authority has to look at the from-state or SPOC can never
+  // send work back and the assignee can pull its own task out of review.
+  const authority =
+    task.state === 'submitted' && to === 'in_progress'
+      ? 'acceptance_policy'
+      : (TASK_AUTHORITY as Readonly<Record<string, TaskAuthority>>)[to];
   // Not a state at all. That is a legality question, and `validateTransition`
   // is a line away.
   if (authority === undefined) return;
@@ -354,6 +371,17 @@ function requireAcceptanceAuthority(ctx: HandlerContext, task: Task): void {
         );
       }
       return;
+    case 'spoc': {
+      const delegate = ctx.config.policy.taskAcceptance.delegate;
+      const isHuman = ctx.who === HUMAN_ID || roleOf(ctx, ctx.who) === 'human';
+      if (ctx.who !== delegate && !isHuman) {
+        throw new ProtocolError(
+          'NOT_TASK_AUTHORITY',
+          `policy.taskAcceptance.method is "spoc", so only ${delegate ?? 'the named SPOC'} or ${HUMAN_ID} may accept ${task.id}`,
+        );
+      }
+      return;
+    }
     default:
       // `majority` and `unanimous` name a decision rather than a participant,
       // and so do `discriminating_test` and `ladder`, which `DecisionMethod`
@@ -506,6 +534,8 @@ export interface RosterEntry {
   model?: string;
   transport?: string;
   status: 'awaiting_turn' | 'active' | 'offline';
+  /** What the harness last reported doing. Absent when it reports nothing. */
+  activity?: { verb: string; path?: string; working: boolean; blocked?: string };
 }
 
 /**
@@ -533,6 +563,16 @@ export function roster(
    * life of the daemon.
    */
   isPresent: (who: ParticipantId) => boolean = (who) => ctx.state.participants.has(who),
+  /**
+   * What each seat is doing, when its harness reports it.
+   *
+   * The row that would have stopped beacon-1's duplicated build: one seat read
+   * a true-but-stale finding, pinged twice, got no answer because the author
+   * was heads-down writing, and rebuilt the file from scratch.
+   */
+  activityOf: (
+    who: ParticipantId,
+  ) => { verb: string; path?: string; working: boolean; blocked?: string } | undefined = () => undefined,
 ): { you: ParticipantId; participants: RosterEntry[] } {
   const participants = ctx.config.participants.map((participant) => ({
     id: participant.id,
@@ -547,6 +587,7 @@ export function roster(
       : isPresent(participant.id)
         ? ('active' as const)
         : ('offline' as const),
+      ...(activityOf(participant.id) === undefined ? {} : { activity: activityOf(participant.id) }),
   }));
   return { you: ctx.who, participants };
 }
@@ -693,6 +734,18 @@ function readStringList(body: Body, field: string): string[] {
 
 function readCritique(body: Body): CritiqueRecord {
   const value = body['critique'];
+  if (value === undefined) {
+    // Gate 2 used to fabricate `{rounds: 1, critic: 'self', findings: []}`
+    // here, which made the gate a rubber stamp: an agent that never looked at
+    // its own work passed by saying nothing, and the README's "nothing reaches
+    // submitted without a self-critique record" was false at the API. The
+    // record must be authored. Empty findings stay legal — the gate asks for
+    // the review to have happened, not for it to have found something.
+    throw new ProtocolError(
+      'GATE_NOT_SELF_REVIEWED',
+      'submit requires a `critique` record: {rounds, critic, findings} — findings may be [] if your review found nothing',
+    );
+  }
   if (value === null || typeof value !== 'object') {
     throw new DaemonError('MALFORMED_BODY', '`critique` is required');
   }

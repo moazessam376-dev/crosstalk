@@ -42,6 +42,10 @@ async function commitOnOrphanBranch(repo: string, name = 'orphan'): Promise<stri
   await git(repo, ['commit', '-m', name]);
   const orphan = await git(repo, ['rev-parse', 'HEAD']);
   await git(repo, ['checkout', 'main']);
+  // Deleted so the commit is *orphaned*, not merely unmerged: staleness now
+  // means no local branch reaches the sha, and a live `orphan` branch would
+  // keep its commit legitimately fresh.
+  await git(repo, ['branch', '-D', name]);
   return orphan;
 }
 

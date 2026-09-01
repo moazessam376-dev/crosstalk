@@ -1,0 +1,468 @@
+import type { Role } from '../contracts/participant.js';
+import type { MessageTag } from '../contracts/say.js';
+
+/**
+ * A team's way of working, as data.
+ *
+ * Before this, "how a team works" was spread across seven places — the `Role`
+ * union, `InboxRole`, the switch in `nextLine`, `jobFor`, `readTemplate`'s
+ * literal union, a ternary in `brief.ts`, and four prose templates. Adding a
+ * seat kind was a five-file change and composing a shape at runtime was not
+ * possible at all, which is why the launcher had nothing to offer.
+ *
+ * The rule that makes a shape checkable rather than advisory: a phase names who
+ * may write and what must exist to leave it, and *only the transitions* are
+ * gated. Inside a phase the seats are free. Beacon-1's peer brief told seats to
+ * post short asks and not narrate; one posted 54 narrations. A line agents can
+ * ignore is a no-op, so the rules that matter are the ones something checks.
+ */
+
+export type PhaseId = 'plan' | 'build' | 'verify' | 'repair';
+
+/**
+ * What a phase permits its seats to write. Advisory in the brief today, and the
+ * shape of the check when ownership is enforced at submit.
+ */
+export type WriteScope = 'no-source' | 'own-files' | 'tests-only' | 'anything';
+
+export type GateId =
+  | 'contract-exists'
+  | 'split-agreed'
+  | 'slices-posted'
+  | 'no-shared-files'
+  | 'tests-green'
+  | 'self-verified'
+  | 'bug-list-posted'
+  | 'run-clean'
+  | 'integration-verified'
+  // The planner has put a real choice to the operator and had it answered.
+  | 'operator-questioned'
+  // One gate in place of `tests-green` and `self-verified`. Two all-quorum
+  // gates cost 2N board messages to say one thing; the requirement survives
+  // whole in the gate's own text.
+  | 'slice-done';
+
+export interface Gate {
+  id: GateId;
+  /** What the seat has to make true, in the seat's own language. */
+  need: string;
+  /**
+   * How it is established.
+   *
+   * `workspace` — Crosstalk checks it against the repository, and no seat can
+   * assert its way past it. `asserted` — a seat posts it to the board with
+   * `ref: gate:<id>`, so the claim is on the record with a body attached. The
+   * split is deliberate: mechanical where mechanical is possible, and visibly
+   * a claim where it is not, rather than pretending a self-report is a check.
+   */
+  by: 'workspace' | 'asserted' | 'log';
+  /** For asserted gates: one seat is enough, or every seat has to say it. */
+  quorum?: 'any' | 'all';
+}
+
+export interface Phase {
+  id: PhaseId;
+  /** One line the seat reads at the top of every turn. */
+  intent: string;
+  writes: WriteScope;
+  /** Who is writing this phase. `one` means a single seat takes it for the team. */
+  actors: 'all' | 'one';
+  /**
+   * The role this phase belongs to. Absent means every seat is in it.
+   *
+   * Seats outside it go idle. `phaseLine` handed every seat the same blocking
+   * string, so through Verify and Repair — owned by one seat — every builder was
+   * told about a gate it could not meet, forever, and the wake loop wrote it a
+   * turn each time the string changed. That is builders filling a board with
+   * nothing, and it is a line of code rather than a habit.
+   */
+  owner?: Role;
+  exit: readonly Gate[];
+}
+
+export interface SeatSpec {
+  role: Role;
+  count: number;
+  /** Where this seat's work comes from. */
+  job: 'floor' | 'assigned';
+  /**
+   * The board verbs this seat has.
+   *
+   * Absent means the daemon does not hold this seat to the message schema, so
+   * every project that predates it keeps working unchanged. Present, it is also
+   * how a shape says what a seat is *for*: a builder without `plan` has no verb
+   * for reviewing another seat's work, which is a stronger statement than a
+   * brief line telling it not to.
+   */
+  tags?: readonly MessageTag[];
+  /** True when the operator may staff more or fewer of these. */
+  varies?: boolean;
+  /** What this seat must have posted to be finished. */
+  done?: GateId;
+  /** Appended to this seat's brief. The shape's own voice, not the role's. */
+  brief: string;
+}
+
+export interface TeamShape {
+  name: string;
+  summary: string;
+  /**
+   * The file `contract-exists` looks for, when the config names none.
+   *
+   * A shape that gates on a contract has to be able to say which one. Without
+   * this the gate reads `config.contractPath`, which nothing writes, and the
+   * shape can never leave its first phase — which is what `trio-contract` did
+   * for every run it was ever used in.
+   */
+  contract?: string;
+  seats: readonly SeatSpec[];
+  phases: readonly Phase[];
+}
+
+const CONTRACT_FIRST: Phase[] = [
+  {
+    id: 'plan',
+    intent: 'Agree the contract and a split with no two seats in one file. Write no source yet.',
+    writes: 'no-source',
+    actors: 'all',
+    exit: [
+      {
+        id: 'contract-exists',
+        need: 'The shared contract file exists and is not empty.',
+        by: 'workspace',
+      },
+      {
+        id: 'split-agreed',
+        need: 'Every seat has posted the split it is taking, with `ref: gate:split-agreed`.',
+        by: 'asserted',
+        quorum: 'all',
+      },
+    ],
+  },
+  {
+    id: 'build',
+    intent: 'Build your own files against the frozen contract. If the contract has to change, stop and say so.',
+    writes: 'own-files',
+    actors: 'all',
+    exit: [
+      {
+        id: 'no-shared-files',
+        need: 'No two seat branches touch the same file.',
+        by: 'workspace',
+      },
+      {
+        id: 'tests-green',
+        need: 'Each seat has posted its own green run, with `ref: gate:tests-green`.',
+        by: 'asserted',
+        quorum: 'all',
+      },
+      {
+        id: 'self-verified',
+        need:
+          'Each seat has *run* its own surface and looked at the result — not just a green suite — ' +
+          'and posted what it saw with `ref: gate:self-verified`. Name the sizes, states and inputs you covered.',
+        by: 'asserted',
+        quorum: 'all',
+      },
+    ],
+  },
+  {
+    id: 'verify',
+    intent: 'One seat merges every branch, then plays the whole thing and writes down what is broken.',
+    writes: 'tests-only',
+    actors: 'one',
+    exit: [
+      {
+        id: 'bug-list-posted',
+        need: 'The bug list is on the board with `ref: gate:bug-list-posted`, before anything is fixed.',
+        by: 'asserted',
+        quorum: 'any',
+      },
+    ],
+  },
+  {
+    id: 'repair',
+    intent: 'The same seat fixes the list and keeps the rest working. Anything may be edited now.',
+    writes: 'anything',
+    actors: 'one',
+    exit: [
+      {
+        id: 'run-clean',
+        need: 'A full run is clean, posted with `ref: gate:run-clean`.',
+        by: 'asserted',
+        quorum: 'any',
+      },
+      {
+        id: 'integration-verified',
+        need:
+          'The integrating seat has re-run the same first-hand verification on the *assembled* build — ' +
+          'not on its own branch — and posted what it saw with `ref: gate:integration-verified`.',
+        by: 'asserted',
+        quorum: 'any',
+      },
+    ],
+  },
+];
+
+/**
+ * The trio the bench runs.
+ *
+ * Three writers is defensible only because of the contract freeze. Beacon-1
+ * split three ways without one, and both team cells put a bug in a seam: a
+ * defect fell between two files with no owner, and a fix landed in the renderer
+ * because the sim's owner had gone quiet-done.
+ */
+const TRIO_CONTRACT: TeamShape = {
+  name: 'trio-contract',
+  summary: 'Three peers, one frozen contract, one of them integrates and repairs.',
+  contract: 'src/contract.ts',
+  seats: [
+    {
+      role: 'peer',
+      count: 3,
+      job: 'floor',
+      // Every verb: three peers with no leader plan together, so `plan` is
+      // theirs too. What the schema buys here is not authority but shape — an
+      // `ask` has to name a seat and leave the room, and a `status` is one line.
+      tags: ['status', 'result', 'ask', 'answer', 'blocked', 'gate', 'plan', 'note'],
+      brief: [
+        'You are one of three peers. There is no leader.',
+        '',
+        'The work moves through four phases and you can see the current one in `inbox()`.',
+        'Only the transitions are gated — inside a phase, work however you like.',
+        '',
+        '- **plan** — agree the shared contract file and a split where no two seats own the same file. Post your slice with `say({room:"#floor", body:"...", ref:"gate:split-agreed"})`. Write no source yet.',
+        '- **build** — your own files only. The contract is frozen: if it has to change, say so on the board instead of editing around it. Post your green run with `ref:"gate:tests-green"`, and then verify your own surface first-hand and post that with `ref:"gate:self-verified"`.',
+        '- **verify** — one of you merges every branch and plays the whole thing. Post what is broken with `ref:"gate:bug-list-posted"` *before* fixing anything, so the list is on the record.',
+        '- **repair** — that same seat fixes the list, posts the clean run with `ref:"gate:run-clean"`, and then re-runs the first-hand verification on the assembled build with `ref:"gate:integration-verified"`.',
+        '',
+        '**Verifying your own work is a gate, not a courtesy.** Nobody may hand work to the team as done',
+        'without having run it and looked at the result. A green suite over a surface no one has watched is not',
+        'a delivery, and neither is a screenshot nobody opened.',
+        '',
+        '**Ask what your checks structurally cannot see, and go and look there.** A previous team passed 22 of 22',
+        'acceptance checks, a 10-shot screenshot tour and every keyboard shortcut it advertised — all at the one',
+        'window size its brief happened to name. More checks inside the frame you were handed will not find the',
+        'thing outside it. State plainly what you covered and what you did not.',
+        '',
+        'Ask a peer directly when you need one opinion rather than the room: `crosstalk dm --as <you> --with <them> --body "..."`. @human is in that room too, so it is a side room, not a back channel.',
+      ].join('\n'),
+    },
+  ],
+  phases: CONTRACT_FIRST,
+};
+
+/**
+ * One planner, N builders, and the planner integrates.
+ *
+ * The planner is the `leader` role and the builders are `worker`s — no new
+ * `Role`, deliberately. CONTEXT.md already describes this seat ("Leader. One.
+ * Plans, assigns, owns merge order"), and reusing it makes three things fall
+ * out for nothing: `runInit` already accepts one leader plus workers,
+ * `needsWorktree` already returns false for a leader so the planner sits at the
+ * repo root — which is where merging N branches has to happen — and `jobFor`
+ * already hands a worker its own slice rather than the whole floor. A new role
+ * would have touched `Role`, `InboxRole`, `displayRole`, `needsWorktree`,
+ * `membersOf`, doctor's count rules and a template.
+ *
+ * A builder has no `plan` tag, and that is the whole of "builders do not
+ * cross-review". There is no board verb for reviewing another seat's work and
+ * no long-form budget for one. The vault-team run put 298 of its 560 peer
+ * messages into cross-review across 125 merges, none of it asked for; here it
+ * has nowhere to go.
+ */
+const PLANNER_INTEGRATOR: TeamShape = {
+  name: 'planner-integrator',
+  summary: 'One planner writes the spec and the contract, cuts the slices, then merges and verifies every one of them.',
+  contract: 'src/contract.ts',
+  seats: [
+    {
+      role: 'leader',
+      count: 1,
+      job: 'floor',
+      tags: ['plan', 'ask', 'answer', 'gate', 'status', 'blocked', 'note'],
+      done: 'integration-verified',
+      brief: [
+        'You are the planner, and at the end you are the integrator. You do not write a slice.',
+        '',
+        '**Plan with the operator before you plan anything else.** Ask them the questions whose answers',
+        'change what gets built — scope, the trade you are unsure about, what "done" means to them. Ask with',
+        '`claim({kind:"open", question, options, voters:["@human"], method:"human"})`: it puts a real multiple',
+        'choice on their board with a button per option, and they can write their own answer instead. One',
+        'question per decision, and you cannot leave **plan** until one of them has been answered.',
+        '',
+        'Then write the spec, freeze the contract file, and cut one slice per builder with no two in the same',
+        'file. Post the split with `ref:"gate:slices-posted"`.',
+        '',
+        'Through **build** you are quiet. The builders own their files and do not need you.',
+        '',
+        'In **verify** you take every branch, merge it, and play the whole thing yourself. Post what is broken',
+        'with `ref:"gate:bug-list-posted"` *before* fixing any of it, so the list is on the record rather than',
+        'in your head. Then repair it, post the clean run with `ref:"gate:run-clean"`, and re-verify the',
+        'assembled build with `ref:"gate:integration-verified"`.',
+        '',
+        'You merge. Nobody else does, and nobody force-pushes.',
+      ].join('\n'),
+    },
+    {
+      role: 'worker',
+      count: 3,
+      varies: true,
+      job: 'assigned',
+      tags: ['status', 'result', 'ask', 'answer', 'blocked', 'gate', 'note'],
+      done: 'slice-done',
+      brief: [
+        'You own one slice. `inbox().job` is yours and it is the whole of your work.',
+        '',
+        'The contract is frozen. If it has to change, stop and say so — do not edit around it.',
+        'Write only your own files: two seats in one file is the seam every previous run shipped a bug into.',
+        '',
+        '**Do not review another builder\'s work.** The planner integrates and verifies; a second opinion on',
+        'a slice that is not yours costs the team more than it has ever returned here.',
+        '',
+        'When your slice is real: run it, *watch it work*, push your branch and open a PR. Then post',
+        '`ref:"gate:slice-done"` — one message saying your tests are green and what you watched with your own',
+        'eyes. A green suite over a surface nobody has looked at is not a delivery.',
+        '',
+        'Then stop. Done means stop.',
+      ].join('\n'),
+    },
+  ],
+  phases: [
+    {
+      id: 'plan',
+      intent: 'Ask the operator what you cannot decide for them, then write the contract and cut the slices.',
+      writes: 'no-source',
+      actors: 'one',
+      owner: 'leader',
+      exit: [
+        {
+          id: 'operator-questioned',
+          need: 'The operator has answered a decision you opened for them.',
+          by: 'log',
+        },
+        {
+          id: 'contract-exists',
+          need: 'The shared contract file exists and is not empty.',
+          by: 'workspace',
+        },
+        {
+          id: 'slices-posted',
+          need: 'The split is posted, with `ref: gate:slices-posted`.',
+          by: 'asserted',
+          quorum: 'any',
+        },
+      ],
+    },
+    {
+      id: 'build',
+      intent: 'Build your own slice against the frozen contract. Do not review anyone else.',
+      writes: 'own-files',
+      actors: 'all',
+      exit: [
+        {
+          id: 'no-shared-files',
+          need: 'No two seat branches touch the same file.',
+          by: 'workspace',
+        },
+        {
+          id: 'slice-done',
+          need: 'Every builder has posted a green run and what it watched, with `ref: gate:slice-done`.',
+          by: 'asserted',
+          quorum: 'all',
+        },
+      ],
+    },
+    {
+      id: 'verify',
+      intent: 'The planner merges every branch and plays the whole thing. Builders are done.',
+      writes: 'anything',
+      actors: 'one',
+      owner: 'leader',
+      exit: [
+        {
+          id: 'bug-list-posted',
+          need: 'What is broken is posted before anything is fixed, with `ref: gate:bug-list-posted`.',
+          by: 'asserted',
+          quorum: 'any',
+        },
+      ],
+    },
+    {
+      id: 'repair',
+      intent: 'Fix the list, then verify the assembled build again.',
+      writes: 'anything',
+      actors: 'one',
+      owner: 'leader',
+      exit: [
+        { id: 'run-clean', need: 'A full run is clean, posted with `ref: gate:run-clean`.', by: 'asserted', quorum: 'any' },
+        {
+          id: 'integration-verified',
+          need: 'The assembled build was watched, not inferred, with `ref: gate:integration-verified`.',
+          by: 'asserted',
+          quorum: 'any',
+        },
+      ],
+    },
+  ],
+};
+
+/** One seat, no board. The control the team is measured against. */
+const SOLO: TeamShape = {
+  name: 'solo',
+  summary: 'One builder, verifying its own work.',
+  seats: [
+    {
+      role: 'peer',
+      count: 1,
+      job: 'floor',
+      // Deliberately none. There is one seat and no room, so there is nobody to
+      // spare from reading and no `to` for an `ask` to name. Enforcing a board
+      // schema on a seat with no board is ceremony for its own sake.
+      brief: [
+        'You are the only seat. Build it, then verify it yourself.',
+        '',
+        'Verifying means playing the thing, not re-reading the code: a green suite over a blank page is not a delivery.',
+        'Write down what you checked by eye and what you did not.',
+      ].join('\n'),
+    },
+  ],
+  phases: [
+    {
+      id: 'build',
+      intent: 'Build it.',
+      writes: 'anything',
+      actors: 'one',
+      exit: [{ id: 'tests-green', need: 'A green run, posted with `ref: gate:tests-green`.', by: 'asserted', quorum: 'any' }],
+    },
+    {
+      id: 'verify',
+      intent: 'Play the whole thing and write down what is broken.',
+      writes: 'anything',
+      actors: 'one',
+      exit: [{ id: 'run-clean', need: 'A full run is clean, posted with `ref: gate:run-clean`.', by: 'asserted', quorum: 'any' }],
+    },
+  ],
+};
+
+export const SHAPES: ReadonlyMap<string, TeamShape> = new Map([
+  [PLANNER_INTEGRATOR.name, PLANNER_INTEGRATOR],
+  [TRIO_CONTRACT.name, TRIO_CONTRACT],
+  [SOLO.name, SOLO],
+]);
+
+export function shapeNamed(name: string | undefined): TeamShape | undefined {
+  if (name === undefined) return undefined;
+  return SHAPES.get(name);
+}
+
+/** The `ref` that marks a message as asserting a gate. */
+export function gateRef(id: GateId): string {
+  return `gate:${id}`;
+}
+
+export function gateOfRef(ref: string | undefined): GateId | undefined {
+  if (ref === undefined || !ref.startsWith('gate:')) return undefined;
+  const id = ref.slice('gate:'.length) as GateId;
+  return id;
+}

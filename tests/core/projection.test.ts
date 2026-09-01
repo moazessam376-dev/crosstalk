@@ -161,6 +161,66 @@ function responseSequence(from: string[]): CrosstalkEvent[] {
   return events;
 }
 
+describe('a ladder ruling binds the claim it was opened about', () => {
+  // The escalation ladder's whole output is a `decision_resolved` with an
+  // option outcome. Until this bound the claim, the ruling was advisory: the
+  // claim stayed `contested` and `UNRESOLVED_CLAIMS` blocked the task forever
+  // unless the losing side volunteered a concession.
+  it('resolves the claim as upheld when the outcome is uphold', () => {
+    const state = project(rulingSequence('uphold'));
+    expect(state.claims.get('C-1')!.state).toBe('resolved');
+    expect(state.claims.get('C-1')!.resolution).toBe('upheld');
+  });
+
+  it('resolves the claim as withdrawn when the outcome is withdraw', () => {
+    const state = project(rulingSequence('withdraw'));
+    expect(state.claims.get('C-1')!.state).toBe('resolved');
+    expect(state.claims.get('C-1')!.resolution).toBe('withdrawn');
+  });
+
+  it('leaves the claim alone on the bookkeeping outcome claim_resolved', () => {
+    // `closeLadderIfResolved` writes this outcome *because* the claim already
+    // settled on its own; folding it back in would be circular.
+    const state = project(rulingSequence('claim_resolved'));
+    expect(state.claims.get('C-1')!.state).toBe('contested');
+    expect(state.claims.get('C-1')!.resolution).toBeUndefined();
+  });
+});
+
+/** A contested C-1, a ladder decision about it, and a resolution outcome. */
+function rulingSequence(outcome: string): CrosstalkEvent[] {
+  const events = responseSequence(['codex']);
+  events.push(
+    {
+      seq: events.length + 1,
+      ts: '2026-08-09T00:01:00.000Z',
+      kind: 'decision_opened',
+      from: 'leader',
+      room: 'dispute:C-1',
+      decision: {
+        id: 'D-1',
+        question: 'Settle claim C-1',
+        options: ['uphold', 'withdraw'],
+        voters: ['leader', 'codex'],
+        method: 'ladder',
+        rationale: [],
+        votes: {},
+        claimId: 'C-1',
+      },
+    } as CrosstalkEvent,
+    {
+      seq: events.length + 2,
+      ts: '2026-08-09T00:02:00.000Z',
+      kind: 'decision_resolved',
+      from: 'leader',
+      room: 'dispute:C-1',
+      decisionId: 'D-1',
+      outcome,
+    } as CrosstalkEvent,
+  );
+  return events;
+}
+
 /* ------------------------------------------------------- A5: staleness -- */
 
 /**

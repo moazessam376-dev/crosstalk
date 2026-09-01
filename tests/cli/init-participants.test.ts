@@ -182,4 +182,21 @@ describe('init records what each participant is running', { timeout: 90_000 }, (
 
     expect(await readFile(join(repo, 'crosstalk.yaml'), 'utf8')).not.toMatch(/effort:/);
   });
+
+  it('accepts a SPOC seat and parks it in the repository root', async () => {
+    const repo = await repoWithCommit();
+    await runInit({
+      repo,
+      force: false,
+      participants: ['leader:leader:claude-code-app', 'reviewer:spoc:claude-code-app'],
+    });
+
+    const roster = parse(await readFile(join(repo, 'crosstalk.yaml'), 'utf8')) as {
+      participants: { id: string; role: string; workspace: string }[];
+    };
+    const spoc = roster.participants.find((participant) => participant.id === 'reviewer');
+
+    expect(spoc?.role).toBe('spoc');
+    expect(spoc?.workspace).toBe('.');
+  });
 });

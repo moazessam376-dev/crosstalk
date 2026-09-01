@@ -7,6 +7,8 @@ export interface ComposerProps {
   /** Who the daemon will attribute this to. Derived from the cookie, never asserted here. */
   self?: string;
   onSend: (body: string) => Promise<PostResult>;
+  /** What to call the poster. The log still records `self`. */
+  operator?: string;
 }
 
 /**
@@ -20,7 +22,9 @@ export interface ComposerProps {
  * a request failed is not an acceptable failure mode, and it is the one thing
  * a composer must never do.
  */
-export function Composer({ room, self = '@human', onSend }: ComposerProps) {
+export function Composer({ room, self = '@human', onSend,
+  operator,
+}: ComposerProps) {
   const [body, setBody] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
   const [sending, setSending] = useState(false);
@@ -65,7 +69,7 @@ export function Composer({ room, self = '@human', onSend }: ComposerProps) {
       'div',
       { className: 'composer-meta' },
       createElement('span', null, 'posting as'),
-      createElement('span', { className: 'composer-identity', 'data-testid': 'composer-identity' }, self),
+      createElement('span', { className: 'composer-identity', 'data-testid': 'composer-identity' }, operator ?? self),
       createElement('span', null, 'into'),
       createElement('span', { className: 'composer-room fact' }, room),
       // Said out loud because it is true and easy to forget: this is not a

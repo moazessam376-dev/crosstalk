@@ -1,33 +1,63 @@
 harnesses:
   claude-code-cli:
+    label: Claude Code · headless
+    models: [claude-opus-5, claude-fable-5, claude-sonnet-5, claude-haiku-4-5-20251001]
     briefFile: CLAUDE.md
     mcp: stdio
     mcpConfigPath: .mcp.json
     supervisable: true
-    spawn: [claude, -p]
+    # No positional prompt: with stream-json input the job is the first turn
+    # written to stdin, which is also what lets later turns land in the queue.
+    spawn: [claude, -p, --input-format, stream-json, --output-format, stream-json, --verbose]
+    turnFormat: stream-json
   claude-code-app:
+    label: Claude Code · app
     briefFile: CLAUDE.md
     mcp: stdio
     mcpConfigPath: .mcp.json
     supervisable: false
   codex-cli:
+    label: Codex
+    models: [gpt-5.3-codex, gpt-5.3-codex-mini, gpt-5.1-codex, o4-mini]
     briefFile: AGENTS.md
     mcp: stdio
     mcpConfigPath: "~/.codex/config.toml"
     supervisable: true
     spawn: [codex, exec, --json]
   codex-app:
+    label: Codex · app
     briefFile: AGENTS.md
     mcp: unverified
     supervisable: false
   cursor-cli:
+    label: Cursor
+    models: [claude-opus-5, claude-sonnet-5, gpt-5.3, auto]
     briefFile: .cursor/rules/crosstalk.mdc
     mcp: stdio
     mcpConfigPath: .cursor/mcp.json
     supervisable: true
     spawn: [cursor-agent, -p]
   cursor-app:
+    label: Cursor · app
     briefFile: .cursor/rules/crosstalk.mdc
     mcp: stdio
     mcpConfigPath: .cursor/mcp.json
     supervisable: false
+  claude-code-live:
+    label: Claude Code · interactive
+    models: [claude-opus-5, claude-fable-5, claude-sonnet-5, claude-haiku-4-5-20251001]
+    briefFile: CLAUDE.md
+    mcp: stdio
+    mcpConfigPath: .mcp.json
+    supervisable: true
+    # An interactive seat the operator can watch and steer from a phone, and
+    # mirror in the hub.
+    # `--remote-control` needs a terminal, so `openSession` runs this on a real
+    # pty; spawned without one, Claude Code falls back to print mode and exits.
+    # The pty is node-pty rather than `script`, which cannot be given a writable
+    # stdin from a daemon — measured: `tcgetattr/ioctl: Operation not supported
+    # on socket`. See src/harness/pty.ts.
+    # `bypassPermissions` because an interactive session that asks is a session
+    # that stalls, and nobody is at the keyboard at 4am.
+    spawn: [claude, --remote-control, --permission-mode, bypassPermissions]
+    turnFormat: interactive

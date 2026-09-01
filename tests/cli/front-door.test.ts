@@ -357,8 +357,9 @@ describe('the kickoff line an agent is actually given', () => {
     // CT-2: cursor-app got the shell line purely because its name does not
     // start with `claude-code`, in the same run where Crosstalk wrote it an MCP
     // registration and asserted the mcp tier was healthy.
-    expect(lineFor('binding')).toContain('await_turn()');
+    expect(lineFor('binding')).toContain('inbox()');
     expect(lineFor('binding')).not.toContain('--as binding');
+    expect(lineFor('binding')).not.toContain('await_turn()');
 
     // codex-cli registers at ~/.codex/config.toml, outside the repo, so it is
     // genuinely shell tier — the neighbouring case that must still get the CLI.
@@ -400,7 +401,7 @@ describe('the kickoff line an agent is actually given', () => {
     });
     const line = kickoff.find((entry) => entry.id === 'codex')!.line;
 
-    expect(line).toMatch(/node .*dist[\\/]cli[\\/]index\.js await /);
+    expect(line).toMatch(/node .*dist[\\/]cli[\\/]index\.js inbox /);
     expect(line).not.toMatch(/`ct await/);
   }, GIT_TEST_TIMEOUT);
 });

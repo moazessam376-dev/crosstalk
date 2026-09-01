@@ -52,6 +52,66 @@ export function ProtocolCard({ event, testId = defaultTestId(event) }: ProtocolC
         createElement('p', null, `${event.taskId} now targets ${event.newBase}`),
       );
       break;
+    case 'task_state':
+      content = createElement(
+        'div',
+        null,
+        createElement('span', { className: 'fact-label' }, 'task state'),
+        createElement('p', null, `${event.taskId} → ${event.state}`),
+        event.reason ? createElement('p', { className: 'fact' }, event.reason) : null,
+      );
+      break;
+    case 'brief_ack':
+      content = createElement(
+        'div',
+        null,
+        createElement('span', { className: 'fact-label' }, 'brief ack'),
+        createElement('p', null, event.ack.restatement),
+        event.ack.ambiguities.length > 0
+          ? createElement('p', { className: 'fact' }, event.ack.ambiguities.join(' · '))
+          : null,
+      );
+      break;
+    case 'participant_joined':
+      // Not an error, and it looked like one: three seats joining a run put
+      // three red "this build does not know how to display participant_joined"
+      // cards at the top of every fresh log. The roster is the most ordinary
+      // thing that happens in a session, and the hub reads it — the dock is
+      // built from these events — so the stream had no excuse to call it
+      // unsupported.
+      //
+      // One inline string, not the stacked label-and-paragraphs the other
+      // cases use. The row already prints the kind in its own column, so a
+      // `fact-label` here says "joined" next to "participant joined", and each
+      // block child costs another line — three seats joining took nine lines
+      // and pushed the actual conversation off the top of the stream.
+      content = createElement(
+        'span',
+        // The line ellipsises at a narrow stream width, so the full roster fact
+        // stays reachable rather than being lost to the clip.
+        { title: `${event.participant.id} — ${event.participant.role}` },
+        `${event.participant.id} — ${event.participant.role} · ${[
+          event.participant.harness,
+          event.participant.model,
+          event.participant.effort,
+        ]
+          .filter(Boolean)
+          .join(' · ')}`,
+      );
+      break;
+    case 'self_review':
+      content = createElement(
+        'div',
+        null,
+        createElement('span', { className: 'fact-label' }, 'self review'),
+        createElement(
+          'p',
+          null,
+          `${event.critique.findings.length} finding${event.critique.findings.length === 1 ? '' : 's'}`,
+        ),
+        createElement('p', { className: 'fact' }, event.critique.critic),
+      );
+      break;
     default:
       // An event this build does not know must look wrong, not plausible.
       // The plan said throw; throwing blanks the whole stream for one

@@ -4,12 +4,15 @@ import { readFileSync as readFileSyncFromFs } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import type { PolicyConfig, Participant, Tier } from '../contracts/index.js';
 import type { HarnessDescriptor } from './registry.js';
+import { shapeNamed } from '../core/shape.js';
+import { renderTagTable } from '../core/says.js';
+import type { MessageTag } from '../contracts/say.js';
 
 const VERSION_PLACEHOLDER = '<!-- crosstalk brief version: {{briefVersion}} -->';
 const VERSION_MARKER = /<!-- crosstalk brief version: ct-brief-[0-9a-f]{8} -->/g;
 const TOKEN = /\{\{([A-Za-z][A-Za-z0-9_]*)\}\}/g;
 
-function readTemplate(name: 'leader' | 'worker'): string {
+function readTemplate(name: 'leader' | 'worker' | 'spoc' | 'peer'): string {
   const candidates = [
     new URL(`./templates/${name}.md`, import.meta.url),
     new URL(`../../src/harness/templates/${name}.md`, import.meta.url),
@@ -41,54 +44,67 @@ function replaceTokens(template: string, tokens: Record<string, string>): string
 }
 
 function policySummary(policy: PolicyConfig): string {
-  const rungTimeouts = Object.keys(policy.dispute.rungTimeouts)
-    .sort()
-    .map((rung) => `${rung}: ${policy.dispute.rungTimeouts[rung as keyof typeof policy.dispute.rungTimeouts]}`)
-    .join(', ');
-
-  return [
-    `- Self-critique required: ${policy.selfCritique.required}; minimum rounds: ${policy.selfCritique.minRounds}`,
-    `- Leader critique maximum rounds: ${policy.leaderCritique.maxRounds}`,
-    `- Dispute maximum rounds: ${policy.dispute.maxRounds}`,
-    `- Dispute ladder: ${policy.dispute.ladder.join(' -> ')}`,
-    `- Rung timeouts: ${rungTimeouts || 'none'}`,
-    `- Task acceptance method: ${policy.taskAcceptance.method}`,
-  ].join('\n');
+  const method = policy.taskAcceptance.method;
+  if (method === 'spoc') {
+    return `Acceptance is the SPOC's (${policy.taskAcceptance.delegate ?? 'unnamed'}). @human can override.`;
+  }
+  if (method === 'human') {
+    return 'Acceptance is @human\'s.';
+  }
+  return '';
 }
 
-function transportInstructions(tier: Tier): string {
+/**
+ * The tags this seat has, from the shape, or undefined when the shape does not
+ * say. Undefined renders the whole table — which is right for a project with
+ * no shape, where the daemon enforces nothing either.
+ */
+function seatTags(participant: Participant, shape?: string): readonly MessageTag[] | undefined {
+  return shapeNamed(shape)?.seats.find((seat) => seat.role === participant.role)?.tags;
+}
+
+function transportInstructions(tier: Tier, tags?: readonly MessageTag[]): string {
   // Every name below is checked against the real CLI command table and the real
   // MCP tool list by `tests/harness/brief-vocabulary.test.ts`. This block named
   // four commands of which two did not exist — `acknowledge` and `submit` on
   // the shell tier, `acknowledge()` and `submit()` on MCP — and it survived a
   // full protocol repair because nothing compared it to the code. It is the
   // first thing every agent reads.
+  // No sizes anywhere below, and that is the point. The cap was stated as
+  // `1500` in all three of these blocks and twice more in the `say` tool
+  // schema, which a model re-reads on every call — and the median message over
+  // 1187 events landed at 1429. A budget told to the writer is a target; the
+  // sizes are enforced on the write and named only in refusals.
+  //
+  // Only when the shape names this seat's tags. With no shape the daemon
+  // enforces nothing, and a brief teaching a schema that will not be applied is
+  // context spent on a rule that is not real.
+  const guide = tags === undefined ? undefined : renderTagTable(tags);
+
   if (tier === 'mcp') {
     return [
-      'Use the registered MCP tools against the Crosstalk daemon.',
-      '- `ack_task(task_id, restatement, ambiguities[])` is the gate before code.',
-      '- `raise_claim({...})` requires assertion, severity, falsifier, and evidence.',
-      '- `respond_to_claim(claim_id, verdict, ...)` records accept, contest, or clarify.',
-      '- `submit_task(task_id, critique, evidence[])` is the self-critique gate.',
+      'Call `inbox()` first. If `job` is set, that is the work. If next is idle, wait.',
+      ...(guide === undefined ? [] : [guide]),
+      '`say({tag, head, to, ref})` — the head is the message, in one line. `to` sends it to one seat and nobody else reads it. Put depth behind `ref`.',
+      '`act({kind:"ack"|"assign"|"done"|"accept"|"reject"})` for tasks. `claim({kind})` only for contradictions.',
+      'Confirm `inbox()` says `you` is you before you write.',
     ].join('\n');
   }
 
   if (tier === 'shell') {
     return [
       'Use the Crosstalk shell CLI; validation failures are reported by exit code.',
+      '- `crosstalk inbox --as ID` returns cards now. Pass `--timeout 50` only to wait.',
+      ...(guide === undefined ? [] : [guide]),
+      '- `crosstalk say --as ID --tag TAG --head "..." [--to ID] [--ref path-or-sha]` — `--to` sends it to one seat and nobody else reads it.',
+      '- `crosstalk act --as ID --kind ack --task T-01 --restatement "..."`',
       '- `crosstalk claim --as ID --against leader --target src/file.ts:1 --assertion "..." --falsifier "..."`',
-      '- `crosstalk respond CLAIM_ID --as ID --verdict contest --rationale "..." --falsifier "..."`',
-      '- `crosstalk await --as ID --timeout 50` blocks until there is a turn for you.',
-      '- `crosstalk mine --as ID` lists the tasks you hold; `crosstalk board` shows all of them.',
-      '- `crosstalk task state ID --as ID --state in_progress` moves a task you hold.',
-      '- Leaders only: `crosstalk task create --as ID --id T-01 --title "..." --brief "..." --assignee ID --branch B`.',
-      'The task gates — acknowledging a brief and submitting a self-critique — are MCP tools only.',
-      'There is no CLI command for them yet; say so in `#floor` rather than inventing one.',
     ].join('\n');
   }
 
   return [
     'Use the Crosstalk file inbox/outbox format; each action is one fenced crosstalk block.',
+    ...(guide === undefined ? [] : [guide]),
     'Write the same payload fields required by the protocol validator, including a falsifier.',
     'Read the rendered inbox response after each action and correct rejected blocks there.',
   ].join('\n');
@@ -122,7 +138,7 @@ function workspaceRules(participant: Participant): string {
     '',
     `Every agent on this project shares this one directory, so your MCP server is`,
     `one of several registered here. Yours is \`crosstalk-${participant.id}\` — call`,
-    'its tools and no others. Confirm it before anything else: `roster()` returns',
+    'its tools and no others. Confirm it before anything else: `inbox()` returns',
     `\`you\`, and it must read \`${participant.id}\`. If it does not, stop and say so in`,
     '`#floor`; you are holding somebody else\'s token and everything you write will',
     'be attributed to them.',
@@ -169,8 +185,24 @@ export function renderBrief(
   policy: PolicyConfig,
   tier: Tier,
   repo: string,
+  /**
+   * The team's shape, by name. Its fragment is appended rather than replacing
+   * the role template: the role says what a seat *is*, the shape says how this
+   * particular team works, and a project with no shape renders exactly the
+   * brief it did before. `doctor` compares briefs byte-for-byte, so this has to
+   * reach both writers or every participant reports BRIEF_STALE.
+   */
+  shape?: string,
 ): string {
-  const template = readTemplate(participant.role === 'leader' ? 'leader' : 'worker');
+  const template = readTemplate(
+    participant.role === 'leader'
+      ? 'leader'
+      : participant.role === 'spoc'
+        ? 'spoc'
+        : participant.role === 'peer'
+          ? 'peer'
+          : 'worker',
+  );
   const draft = replaceTokens(template, {
     briefVersion: '{{briefVersion}}',
     participantId: participant.id,
@@ -185,10 +217,20 @@ export function renderBrief(
     tier,
     lifecycle: participant.lifecycle,
     policySummary: policySummary(policy),
-    transportInstructions: transportInstructions(tier),
+    transportInstructions: transportInstructions(tier, seatTags(participant, shape)),
     workspaceRules: workspaceRules(participant),
   });
-  return draft.replaceAll('{{briefVersion}}', briefVersion(draft));
+  const fragment = shapeFragment(participant, shape);
+  const whole = fragment === undefined ? draft : `${draft.trimEnd()}\n\n## How this team works\n\n${fragment}\n`;
+  return whole.replaceAll('{{briefVersion}}', briefVersion(whole));
+}
+
+/** The shape's own words for this seat, or nothing when the roster names no shape. */
+function shapeFragment(participant: Participant, name: string | undefined): string | undefined {
+  const shape = shapeNamed(name);
+  if (shape === undefined) return undefined;
+  const seat = shape.seats.find((candidate) => candidate.role === participant.role);
+  return seat?.brief;
 }
 
 /**
@@ -268,8 +310,9 @@ export async function writeBrief(
   policy: PolicyConfig,
   tier: Tier,
   repo: string,
+  shape?: string,
 ): Promise<void> {
-  const content = renderBrief(participant, descriptor, policy, tier, repo);
+  const content = renderBrief(participant, descriptor, policy, tier, repo, shape);
   const destination = resolve(repo, participant.workspace, briefPathFor(participant, descriptor.briefFile, repo));
   const directory = dirname(destination);
   await mkdir(directory, { recursive: true });

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { promisify } from 'node:util';
 import { execFile as execFileCb } from 'node:child_process';
 
@@ -23,6 +23,18 @@ import { openSession, type HarnessSession } from '../../src/harness/session.js';
  * every machine this will ever run on, and it emits exactly the escapes we care
  * about when told to.
  */
+
+/**
+ * A budget that fits the slowest machine this runs on, not the fastest.
+ *
+ * Vitest's 5s default is a claim about how long a test may take, and every
+ * test in this file spawns a real process on a real pty and waits for it to
+ * paint. On Windows that is ConPTY plus a node start — measured at 6.9s for
+ * the file against 0.9s here — so the default failed a passing test with
+ * "timed out in 5000ms" while the code under test was fine. The hook budget
+ * moves for the same reason: teardown now *waits* for each child to die.
+ */
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 const dirs: string[] = [];
 const sessions: HarnessSession[] = [];
@@ -98,9 +110,19 @@ function seat(cwd: string, script: string): HarnessSession {
 }
 
 afterEach(async () => {
-  while (sessions.length > 0) sessions.pop()!.stop();
+  // Stop, then *wait* for the process to actually be gone. Windows refuses to
+  // remove a directory any process still holds a handle on, and `stop()` only
+  // sends the signal — so tearing down immediately raced the child's death and
+  // failed with EBUSY on every one of these tests.
+  const stopping = sessions.splice(0).map(async (session) => {
+    session.stop();
+    await Promise.race([session.exited, new Promise((done) => setTimeout(done, 2000))]);
+  });
+  await Promise.all(stopping);
+  // `maxRetries` for the same reason: the handle can outlive the process by a
+  // moment, and a retry is cheaper than a flake.
   while (dirs.length > 0) {
-    await rm(dirs.pop()!, { recursive: true, force: true });
+    await rm(dirs.pop()!, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 

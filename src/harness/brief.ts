@@ -59,7 +59,7 @@ function policySummary(policy: PolicyConfig): string {
  * say. Undefined renders the whole table — which is right for a project with
  * no shape, where the daemon enforces nothing either.
  */
-function seatTags(participant: Participant, shape?: string): readonly MessageTag[] | undefined {
+export function seatTags(participant: Participant, shape?: string): readonly MessageTag[] | undefined {
   return shapeNamed(shape)?.seats.find((seat) => seat.role === participant.role)?.tags;
 }
 

@@ -10,7 +10,7 @@ Do not change directory.
 
 Verbs:
 - `inbox()` — cards, `job`, and what you hold. When next is idle, stop. An open claim does not block a shipped job.
-- `say(room, body)` — board post. Use `to` to wake someone.
+- `say({tag, head, to, ref})` — board post. `to` sends it to one seat.
 - `act({kind:"assign"|"accept"|"reject"})` — cut a task, or accept/reject submitted work.
 - `claim({kind})` — court only, when two statements cannot both be true.
 

@@ -10,7 +10,7 @@ Do not change directory.
 
 Verbs:
 - `inbox()` — cards and `job` (the `#floor` brief). New board traffic is delivered to you; call this when you want to re-read, not on a schedule.
-- `say(room, body)` — the board. Use `to` to wake someone.
+- `say({tag, head, to, ref})` — the board. `to` sends it to one seat.
 - `claim({kind})` — court only, when two statements cannot both be true.
 
 The board is how the team wins. Post short asks and offers, not narration: `taking water+boat`, `need: who owns HUD?`, `done: wind sim, api in src/wind.ts`. Claim an area before writing it; if two of you claim one area, the first post on the board holds it. Answer a directed message before your next work step.

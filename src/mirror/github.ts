@@ -175,10 +175,18 @@ export class GhTransport implements GitHubTransport {
     this.#base = base;
   }
 
-  /** Undefined when `gh` is not installed — the mirror then degrades to nothing. */
-  static async create(cwd: string, base: string): Promise<GhTransport | undefined> {
-    const gh = await findGh();
-    return gh === undefined ? undefined : new GhTransport(gh, cwd, base);
+  /**
+   * Undefined when `gh` is not installed — the mirror then degrades to nothing.
+   *
+   * `gh` is injectable for the same reason `transport` is in `startMirror`: the
+   * PR path has never been exercised, and the half of it that is not GitHub —
+   * pushing the branch, without which `gh pr create --head` is asked to open a
+   * pull request for a ref that does not exist remotely — can be proved against
+   * a local bare remote and a stub, with nothing published to anybody's repo.
+   */
+  static async create(cwd: string, base: string, gh?: string): Promise<GhTransport | undefined> {
+    const found = gh ?? (await findGh());
+    return found === undefined ? undefined : new GhTransport(found, cwd, base);
   }
 
   async #run(args: string[]): Promise<string> {
@@ -197,11 +205,33 @@ export class GhTransport implements GitHubTransport {
     return found[0];
   }
 
+  /**
+   * Put the branch on the remote, so there is something to open a PR against.
+   *
+   * Nothing in `src/` ran `git push`, and a seat branch exists only in the
+   * seat's own worktree — so `gh pr create --head ct/opus` was being asked to
+   * open a pull request for a branch GitHub had never seen. The mirror's PR
+   * machinery has therefore never usefully run; last session the seats pushed
+   * by hand and nobody noticed the gap.
+   *
+   * `--force-with-lease` rather than `--force`: a seat re-pushing its own
+   * branch after a rebase is ordinary, and overwriting someone else's work
+   * because the ref moved underneath is not.
+   */
+  async #pushBranch(branch: string): Promise<void> {
+    await run('git', ['push', '--force-with-lease', '--set-upstream', 'origin', branch], {
+      cwd: this.#cwd,
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 120_000,
+    });
+  }
+
   async createDraftPullRequest(input: {
     branch: string;
     title: string;
     body: string;
   }): Promise<PullRequestRef> {
+    await this.#pushBranch(input.branch);
     await this.#run(ghArgs.createDraftPullRequest({ ...input, base: this.#base }));
 
     // `gh pr create` prints the URL, not JSON. Reading the PR back by branch

@@ -2825,3 +2825,60 @@ button.member-body:hover .member-id {
   top: 0;
   left: 0;
 }
+
+/* Pointing the mirror at a repository, from the rail. Shown only while nothing
+   is configured — a repo box beside a working mirror is a way to point it
+   somewhere else by accident. */
+.env-mirror-setup {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.env-mirror-url {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--size-fact);
+  padding: 3px 8px;
+  color: var(--text-primary);
+  background: var(--surface-base);
+  border: 1px solid var(--border-hairline);
+  border-radius: 6px;
+}
+
+.env-mirror-url:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.env-mirror-save {
+  font: inherit;
+  font-size: var(--size-fact);
+  padding: 3px 10px;
+  color: var(--text-primary);
+  background: var(--surface-panel);
+  border: 1px solid var(--border-hairline);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.env-mirror-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.env-mirror-notice {
+  color: var(--danger, var(--text-secondary));
+}
+
+/* A seat the supervisor could not hand the board to. The notice used to be
+   posted to #floor under the operator's name — 622 of one run's 1187 events —
+   and presence is where a fact that flips back and forth belongs. */
+.env-seat.is-blocked {
+  border-color: var(--warn, var(--border-hairline));
+}
+
+.env-seat.is-blocked .env-seat-id {
+  color: var(--warn, var(--text-primary));
+}

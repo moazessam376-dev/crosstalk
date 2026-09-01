@@ -84,6 +84,17 @@ export async function postCompose(
   return post('/compose', { job }, fetchImpl);
 }
 
+/**
+ * Point the mirror at a GitHub repository.
+ *
+ * The measured reason nobody ever configured the mirror: doing it meant a
+ * terminal command against a YAML block with no documented shape, while the hub
+ * said "no mirror configured" and offered no way to change that.
+ */
+export async function postMirrorRepo(url: string, fetchImpl: typeof fetch = fetch): Promise<PostResult> {
+  return post('/mirror', { url }, fetchImpl);
+}
+
 async function post(path: string, payload: unknown, fetchImpl: typeof fetch): Promise<PostResult> {
   let response: Response;
   try {

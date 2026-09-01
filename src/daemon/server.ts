@@ -1443,6 +1443,14 @@ class Daemon {
       events: this.#state.messages,
       participants: seats.map((seat) => seat.id),
       workspace,
+      // Messages carry the asserted gates; the decisions are a separate
+      // projection and a log gate reading them needs to be handed them. The
+      // first cut passed only `messages` and `operator-questioned` could
+      // therefore never be met through the daemon at all.
+      decisions: this.#state.decisions.values(),
+      // A gate can be owed by some seats and not others: `slice-done` is the
+      // builders', and counting the planner in it held build shut forever.
+      roles: new Map(seats.map((seat) => [seat.id, seat.role])),
     });
   }
 
@@ -1618,6 +1626,12 @@ class Daemon {
       throw new DaemonError('MALFORMED_BODY', 'message `task` must be a string');
     }
 
+    // No room and no `to` is the board, which is what a seat means by saying
+    // something. Requiring `--room '#floor'` on every floor message made the
+    // common case the verbose one, and `refuseMessage` already reads an absent
+    // room as the floor — so the two disagreed and the seat got a transport
+    // complaint where it should have got the tag rule.
+    //
     // `to` with no room opens the side room. This is the whole of the fix for
     // the 312 messages that named one seat and were read by three: `to` alone
     // could never remove a reader, because `#floor` membership delivers to
@@ -1629,10 +1643,7 @@ class Daemon {
       ? named
       : typeof to === 'string'
         ? dmId(ctx.who, to)
-        : undefined;
-    if (room === undefined) {
-      throw new DaemonError('MALFORMED_BODY', 'message requires a room, or a `to` naming one seat');
-    }
+        : FLOOR;
 
     // `body` falls back to `head`, and this is the load-bearing half of the
     // amendment: every reader that predates it — the projection, the mirror,

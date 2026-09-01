@@ -201,3 +201,40 @@ describe('the brief and the tag table agree', () => {
     expect(content).not.toContain('`blocked`');
   });
 });
+
+/**
+ * A verb's *shape*, not just its name.
+ *
+ * The existing checks catch a brief naming a command that does not exist, which
+ * is the bug that created this file. They did not catch four templates still
+ * carrying `say(room, body)` directly above the tag table that contradicts it —
+ * the name was real, the signature had moved. A seat reading both would have
+ * had to guess which one the daemon meant.
+ */
+describe('the brief names say the way say is actually called', () => {
+  const required = TOOLS_BY_NAME.get('say')!.inputSchema.required ?? [];
+
+  it('has required fields to check against, so this is not vacuous', () => {
+    expect(required).toContain('tag');
+    expect(required).toContain('head');
+  });
+
+  for (const role of ['leader', 'worker', 'peer', 'spoc'] as const) {
+    it(`is right in the ${role} brief`, () => {
+      const content = renderBrief(
+        participant({ role, ...(role === 'leader' || role === 'spoc' ? { id: role } : {}) }),
+        descriptor(),
+        policy,
+        'mcp',
+        '/repo',
+        'trio-contract',
+      );
+
+      // The old signature, exactly. Positional args are the drift.
+      expect(content, `${role} brief still says say(room`).not.toContain('say(room');
+      for (const field of required) {
+        expect(content, `${role} brief calls say without ${field}`).toContain(field);
+      }
+    });
+  }
+});

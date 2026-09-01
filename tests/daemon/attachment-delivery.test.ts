@@ -206,8 +206,15 @@ describe('collecting blobs when a run is deleted', () => {
     };
     const older = listed.runs.filter((run) => !run.current);
     expect(older.length).toBeGreaterThanOrEqual(2);
-    // Archive both, oldest first — archiving moves a *prefix* of the log, so
-    // taking the newer one out from under the older is refused, and rightly.
+    // Archive both, oldest first.
+    //
+    // The order does not matter any more — archiving a run now takes the ones
+    // beneath it too, each into its own file — but this loop predates that fix
+    // and is left explicit, because an earlier version of this comment claimed
+    // the daemon *refused* an out-of-order archive. It did not. It succeeded
+    // and silently swallowed the older run; the 409 that suggested a refusal
+    // came from the delete afterwards, failing because the swallowed run no
+    // longer had an archive of its own. A symptom read as a guard.
     for (const run of [...older].reverse()) {
       await fetch(`${daemon.url}/runs/${run.id}/archive`, { method: 'POST', headers: auth(daemon) });
     }

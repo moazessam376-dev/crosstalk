@@ -3,6 +3,7 @@ import type { Claim } from '../../contracts/claim.js';
 import type { CrosstalkEvent } from '../../contracts/events.js';
 import { HUMAN_ID } from '../../contracts/room.js';
 import { isRunStart } from '../../core/runs.js';
+import { clockTime } from '../clock.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { ClaimCard } from '../cards/ClaimCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -190,9 +191,7 @@ export function Stream({
         'div',
         { key: String(event.seq) + '-run', className: 'run-divider', 'data-testid': 'run-divider' },
         createElement('span', { className: 'run-divider-label' }, 'run started'),
-        // `slice(11, 16)` is how every other timestamp on the board is cut
-        // (MessageCard:145). One convention, even where a helper would be tidier.
-        createElement('time', { className: 'run-divider-when', dateTime: event.ts }, event.ts.slice(11, 16)),
+        createElement('time', { className: 'run-divider-when', dateTime: event.ts }, clockTime(event.ts)),
       );
     }
 
@@ -285,7 +284,11 @@ export function Stream({
       { className: 'stream-head' },
       createElement('span', { className: 'stream-icon', 'aria-hidden': 'true' }, ICONS[kind] ?? '#'),
       createElement('h2', { className: 'stream-title' }, activeRoom ?? 'Stream'),
-      createElement('span', { className: 'stream-sub fact' }, `${visibleEvents.length} events`),
+      createElement(
+        'span',
+        { className: 'stream-sub fact' },
+        `${visibleEvents.length} event${visibleEvents.length === 1 ? '' : 's'}`,
+      ),
       createElement(
         'span',
         { className: 'stream-status', 'data-status': status, 'data-testid': 'stream-status' },

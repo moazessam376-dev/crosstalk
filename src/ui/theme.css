@@ -2072,6 +2072,14 @@ button:focus-visible {
 .launch-go:disabled { opacity: 0.4; cursor: not-allowed; }
 .launch-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .launch-hint { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-tertiary); }
+/* Full width so it wraps under the button rather than squeezing the hint. */
+.launch-warning {
+  flex-basis: 100%;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--warn, var(--text-secondary));
+}
 .launcher-error {
   margin: 0; font-size: 12.5px; color: var(--status-blocker);
   border-left: 2px solid var(--status-blocker); padding-left: 11px;

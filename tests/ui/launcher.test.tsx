@@ -440,3 +440,77 @@ describe('the stepper against a daemon that already has seats', () => {
     expect(seats.filter((seat) => seat.includes(':worker:'))).toHaveLength(5);
   });
 });
+
+describe('starting a run over one that is still going', () => {
+  /**
+   * The operator asked what happens if they start a run while one is live and
+   * guessed things would break. The daemon now refuses, but a refusal the
+   * operator only meets *after* pressing Start is a bad way to learn that
+   * pressing Start kills three agents. The button says so first.
+   */
+  const seat = (id: string, live: boolean) => ({
+    id, role: 'worker', harness: 'claude-code-live', model: null, effort: null,
+    workspace: '.', present: true, activity: null, remoteControl: null, mirrored: true, live,
+  });
+
+  it('says whose processes it will stop, by name', () => {
+    render(
+      createElement(Launcher, {
+        shapes: [PLANNER], launching: false, onLaunch: vi.fn(),
+        running: [seat('planner', true), seat('builder', true)],
+      }),
+    );
+
+    expect(screen.getByRole('button', { name: 'End current run & start' })).toBeInTheDocument();
+    // Named, not counted: "2 seats will be stopped" is not something an
+    // operator can check against what they believe is running.
+    const warning = screen.getByTestId('launch-warning');
+    expect(warning.textContent).toContain('planner');
+    expect(warning.textContent).toContain('builder');
+    // And it says what stopping does *not* do, because that is the part they
+    // would otherwise have to find out by losing a diff.
+    expect(warning.textContent).toContain('worktrees');
+  });
+
+  it('does not count a seat whose process has already exited', () => {
+    // `mirrored` stays true for a dead seat on purpose — the mirror shows the
+    // screen it died on. Reading that as "still running" would put the scary
+    // button on every launcher for the rest of the daemon's life.
+    render(
+      createElement(Launcher, {
+        shapes: [PLANNER], launching: false, onLaunch: vi.fn(),
+        running: [seat('planner', false), seat('builder', false)],
+      }),
+    );
+
+    expect(screen.getByRole('button', { name: 'Start the run' })).toBeInTheDocument();
+    expect(screen.queryByTestId('launch-warning')).toBeNull();
+  });
+
+  it('sends end only when something is actually live', async () => {
+    const onLaunch = vi.fn().mockResolvedValue({ ok: true });
+    const { rerender } = render(
+      createElement(Launcher, {
+        shapes: [PLANNER], launching: false, onLaunch, running: [seat('planner', true)],
+      }),
+    );
+    fireEvent.click(screen.getByText('planner-integrator'));
+    fireEvent.change(screen.getByLabelText('the job'), { target: { value: 'build a vault' } });
+    fireEvent.click(screen.getByRole('button', { name: 'End current run & start' }));
+    await waitFor(() => expect(onLaunch).toHaveBeenCalled());
+    expect((onLaunch.mock.calls[0]![0] as { end?: boolean }).end).toBe(true);
+
+    // And the other way: a blanket `end: true` would make the daemon's refusal
+    // unreachable, which is the guard's entire job.
+    onLaunch.mockClear();
+    rerender(
+      createElement(Launcher, {
+        shapes: [PLANNER], launching: false, onLaunch, running: [seat('planner', false)],
+      }),
+    );
+    fireEvent.change(screen.getByLabelText('the job'), { target: { value: 'build a vault' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start the run' }));
+    await waitFor(() => expect(onLaunch).toHaveBeenCalled());
+    expect((onLaunch.mock.calls[0]![0] as { end?: boolean }).end).toBeUndefined();
+  });
+});

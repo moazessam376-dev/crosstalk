@@ -33,7 +33,7 @@ export interface LauncherProps {
     watchable?: boolean;
   }[];
   launching?: boolean;
-  onLaunch: (request: { job: string; shape?: string; seats: string[] }) => Promise<PostResult>;
+  onLaunch: (request: { job: string; shape?: string; seats: string[]; end?: boolean }) => Promise<PostResult>;
 }
 
 /**
@@ -264,10 +264,23 @@ export function Launcher({ shapes, launching, onLaunch, running = [], catalog }:
     job.trim() !== '' && seats.length > 0 && clashes.length === 0
     && seats.every((seat) => seat.id.trim() !== '');
 
+  /**
+   * The seats that still have a process behind them.
+   *
+   * The daemon refuses a launch while any of these is up, because stopping one
+   * kills an agent that may be mid-edit. Rather than let the operator press
+   * Start and read a 409, the button says what it is about to do and names the
+   * seats it will do it to.
+   */
+  const live = running.filter((seat) => seat.live === true).map((seat) => seat.id);
+
   const start = async (): Promise<void> => {
     setError(undefined);
     const result = await onLaunch({
       job: job.trim(),
+      // Only sent when there is something to end. A blanket `end: true` would
+      // make the daemon's refusal unreachable, which is the guard's whole job.
+      ...(live.length > 0 ? { end: true } : {}),
       ...(shapeName === undefined ? {} : { shape: shapeName }),
       // `id:role:harness[:model[:effort]]` — the same spec `--participant`
       // takes. Sending only the first three made the model and effort pickers
@@ -539,13 +552,26 @@ export function Launcher({ shapes, launching, onLaunch, running = [], catalog }:
           disabled: !ready || launching === true,
           onClick: () => void start(),
         },
-        launching === true ? 'Starting…' : 'Start the run',
+        launching === true
+          ? 'Starting…'
+          : live.length > 0
+            ? 'End current run & start'
+            : 'Start the run',
       ),
       h(
         'span',
         { className: 'launch-hint' },
         `${seats.length} ${seats.length === 1 ? 'seat' : 'seats'}${shapeName === undefined ? ' · no shape' : ` · ${shapeName}`}`,
       ),
+      // Named, not counted. "3 seats will be stopped" is not something an
+      // operator can check against what they think is running.
+      live.length === 0
+        ? null
+        : h(
+            'p',
+            { className: 'launch-warning', 'data-testid': 'launch-warning' },
+            `Stops ${live.join(', ')} first. Their processes are killed; their worktrees and uncommitted work are left alone.`,
+          ),
     ),
     ),
   );

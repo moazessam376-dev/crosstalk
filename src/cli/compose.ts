@@ -144,7 +144,9 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
       continue;
     }
 
-    const seatArgv = withFreshSession(withSeatModel(nameRemoteControl(argv, participant.id), participant));
+    const seatArgv = withFreshSession(
+      withPermissionMode(withSeatModel(nameRemoteControl(argv, participant.id), participant), participant.permissionMode),
+    );
     const session = openSession({
       argv: seatArgv,
       cwd,
@@ -243,6 +245,24 @@ export function nameRemoteControl(argv: readonly string[], seat: string): string
   // Already named (a flag follows, or nothing does, means it is unnamed).
   if (next !== undefined && !next.startsWith('-')) return [...argv];
   return [...argv.slice(0, at + 1), seat, ...argv.slice(at + 1)];
+}
+
+/**
+ * The permission mode the operator chose, replacing whatever the registry ships.
+ *
+ * The registry's spawn line carries a default, not a decision. `auto` is the
+ * default now: `bypassPermissions` was chosen for a seat nobody was watching,
+ * and a mirrored seat is watched by definition — the operator is looking at it,
+ * can answer it, and would rather be asked than find out afterwards.
+ *
+ * Replacing rather than appending, because a duplicate `--permission-mode` is
+ * an argument parse error on some harnesses and a silent first-wins on others.
+ */
+export function withPermissionMode(argv: readonly string[], mode: string | undefined): string[] {
+  if (mode === undefined) return [...argv];
+  const at = argv.indexOf('--permission-mode');
+  if (at === -1) return [...argv, '--permission-mode', mode];
+  return [...argv.slice(0, at + 1), mode, ...argv.slice(at + 2)];
 }
 
 /** Per-seat model and effort, which the roster carries and the spawn never did. */

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { nameRemoteControl, withFreshSession, withSeatModel } from '../../src/cli/compose.js';
+import { nameRemoteControl, withFreshSession, withPermissionMode, withSeatModel } from '../../src/cli/compose.js';
 
-const LIVE = ['claude', '--remote-control', '--permission-mode', 'bypassPermissions'];
+const LIVE = ['claude', '--remote-control', '--permission-mode', 'auto'];
 
 describe('naming a Remote Control session', () => {
   it('names the session after the seat', () => {
@@ -14,7 +14,7 @@ describe('naming a Remote Control session', () => {
       '--remote-control',
       'opus',
       '--permission-mode',
-      'bypassPermissions',
+      'auto',
     ]);
   });
 
@@ -100,5 +100,42 @@ describe('a fresh conversation per launch', () => {
   it('does not override a session id that was already chosen', () => {
     const argv = ['claude', '--session-id', 'kept'];
     expect(withFreshSession(argv)).toEqual(argv);
+  });
+});
+
+describe('the permission mode a seat runs under', () => {
+  it('defaults to one that can ask, because somebody is watching', () => {
+    // `bypassPermissions` was right for an unattended seat. A mirrored seat is
+    // watched by definition: the hub draws its terminal and takes its keyboard,
+    // so a question it asks is a question the operator can answer.
+    expect(LIVE).toContain('auto');
+    expect(LIVE).not.toContain('bypassPermissions');
+  });
+
+  it('takes the operator\'s choice over the registry default', () => {
+    expect(withPermissionMode(LIVE, 'bypassPermissions')).toEqual([
+      'claude',
+      '--remote-control',
+      '--permission-mode',
+      'bypassPermissions',
+    ]);
+  });
+
+  it('replaces rather than appends, so no harness sees the flag twice', () => {
+    const once = withPermissionMode(LIVE, 'plan');
+    expect(once.filter((argument) => argument === '--permission-mode')).toHaveLength(1);
+  });
+
+  it('adds the flag to a harness whose spawn line has none', () => {
+    expect(withPermissionMode(['codex', 'exec'], 'auto')).toEqual([
+      'codex',
+      'exec',
+      '--permission-mode',
+      'auto',
+    ]);
+  });
+
+  it('leaves argv alone when the roster said nothing', () => {
+    expect(withPermissionMode(LIVE, undefined)).toEqual(LIVE);
   });
 });

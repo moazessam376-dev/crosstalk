@@ -899,6 +899,13 @@ class Daemon {
       return;
     }
 
+    const runEvents = /^\/runs\/([^/]+)\/events$/.exec(path);
+    if (runEvents !== null && method === 'GET') {
+      this.#requireOperator(ctx, 'GET /runs/:id/events');
+      send(response, 200, { events: await this.#eventsOfRun(decodeURIComponent(runEvents[1]!)) });
+      return;
+    }
+
     const archiveRun = /^\/runs\/([^/]+)\/archive$/.exec(path);
     if (archiveRun !== null && method === 'POST') {
       this.#requireOperator(ctx, 'POST /runs/:id/archive');
@@ -1621,6 +1628,44 @@ class Daemon {
       }
     }
     return runs;
+  }
+
+  /**
+   * Every event of one run — the current one, an older one still in the live
+   * log, or one that has been archived out of it.
+   *
+   * The read clamps exist so a *live* reader never sees across the boundary.
+   * This is the deliberate exception: the operator asking to read a finished
+   * run. It is a read, it is the operator's own, and without it the run picker
+   * lists runs it cannot open — a control that does nothing, which this project
+   * treats as a defect rather than a missing nicety.
+   *
+   * Read-only in the strongest sense available: there is no route that writes
+   * into a run other than the current one, so "read-only" is not a flag the hub
+   * sets and could forget.
+   */
+  async #eventsOfRun(runId: string): Promise<CrosstalkEvent[]> {
+    // Archived first: an id can be in both places for the moment between the
+    // archive being written and the live log being rewritten, and the archive
+    // is the copy that is definitely complete.
+    try {
+      const raw = await readFile(this.#archivePath(runId), 'utf8');
+      return raw
+        .split('\n')
+        .filter((line) => line.trim() !== '')
+        .map((line) => JSON.parse(line) as CrosstalkEvent);
+    } catch (error) {
+      // A malformed id is refused as an id by `#archivePath`, and that refusal
+      // is the answer — not "no such file".
+      if (error instanceof DaemonError) throw error;
+    }
+
+    const runs = await this.#listRuns();
+    const run = runs.find((entry) => entry.id === runId);
+    if (run === undefined) throw new DaemonError('UNKNOWN_RUN', `no run named ${runId}`);
+    const next = runs.filter((entry) => entry.firstSeq > run.firstSeq).map((entry) => entry.firstSeq);
+    const end = next.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...next);
+    return (await this.#log.read()).filter((event) => event.seq >= run.firstSeq && event.seq < end);
   }
 
   /** `.crosstalk/runs/<id>.jsonl`, built from a validated id and never from raw input. */

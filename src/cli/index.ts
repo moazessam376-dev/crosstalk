@@ -23,6 +23,7 @@ import { SHAPES } from '../core/shape.js';
 import type { MirrorMode } from '../contracts/config.js';
 import { dmId } from '../core/rooms.js';
 import { ledgerOf, renderLedger } from '../core/ledger.js';
+import type { RunSummary } from '../core/runs.js';
 
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
 import { runCompose } from './compose.js';
@@ -40,6 +41,10 @@ const USAGE = `crosstalk — multi-agent development where a finding is a claim,
   crosstalk doctor
   crosstalk github <url> [--login <gh-login>] [--mode one-way|two-way-human]
   crosstalk ledger [--json]        what the last run cost, per seat
+  crosstalk runs [--json]                    every run this repository has had
+  crosstalk runs new [--job '...']           put this one away and start fresh
+  crosstalk runs archive <id>                move it out of the live log
+  crosstalk runs rm <id>                     delete an archive, permanently
 
   ct inbox    [--as <id>] [--timeout 0] [--no-wait]
   ct say      --as <id> --tag <tag> --head '...' [--to <id>] [--room '#floor'] [--ref R] [--body '...']
@@ -494,10 +499,25 @@ function formatFindings(findings: readonly Finding[]): string {
     .join('\n\n');
 }
 
-async function withClient<T>(argv: string[], extra: ParseArgsConfig['options'], fn: (client: DaemonClient, flags: Flags, rest: string[]) => Promise<T>): Promise<T> {
+async function withClient<T>(
+  argv: string[],
+  extra: ParseArgsConfig['options'],
+  fn: (client: DaemonClient, flags: Flags, rest: string[]) => Promise<T>,
+  /**
+   * Who to be when `--as` is absent.
+   *
+   * Only the run commands pass one, and only `@human`: every run-shaped route
+   * is refused for anyone else, so demanding `--as @human` would be asking the
+   * operator to name the only identity the command can have. Every other
+   * command leaves this undefined and keeps refusing, because for those the
+   * identity genuinely is a choice — and guessing it wrong is how a message
+   * ends up attributed to the wrong seat.
+   */
+  fallbackAs?: string,
+): Promise<T> {
   const { flags, rest } = read(argv, extra);
   const repo = resolve(str(flags, 'repo') ?? '.');
-  const client = await DaemonClient.open(repo, str(flags, 'as'));
+  const client = await DaemonClient.open(repo, str(flags, 'as') ?? fallbackAs);
   return fn(client, flags, rest);
 }
 
@@ -1088,6 +1108,124 @@ async function cmdAnswer(argv: string[]): Promise<number> {
   });
 }
 
+/**
+ * `crosstalk runs`, and what you can do to one.
+ *
+ * The hub's run picker and this are two spellings of one interface — the
+ * repo's standing rule, and the reason it exists is that beacon-1 shipped a
+ * CLI and a hub that had drifted. Everything here is a call to a route the
+ * picker already uses; no rule is re-implemented, so there is no second answer
+ * to give.
+ *
+ * One `HANDLERS` key with a sub-dispatch, like `ct task`: `main` looks up
+ * `argv[0]` alone, so `'runs archive'` would be unreachable.
+ */
+async function cmdRuns(argv: string[]): Promise<number> {
+  const subcommand = argv[0];
+  if (subcommand === undefined || subcommand.startsWith('--')) return cmdRunsList(argv);
+  if (subcommand === 'new') return cmdRunsNew(argv.slice(1));
+  if (subcommand === 'archive') return cmdRunsArchive(argv.slice(1));
+  if (subcommand === 'rm') return cmdRunsRemove(argv.slice(1));
+
+  throw new CliError(
+    `Unknown runs subcommand "${subcommand}"`,
+    EXIT.usage,
+    'Use `crosstalk runs` to list them, `runs new` to start one, `runs archive <id>` to put one away, or `runs rm <id>` to delete an archive.',
+  );
+}
+
+/**
+ * `2026-09-02 02:25` — the operator's own clock, not UTC.
+ *
+ * `startedAt.slice(0, 16)` would be five characters cheaper and three hours
+ * wrong for anyone east of Greenwich. That exact slice was on every card in
+ * the hub until it was caught by putting two labels for one run side by side;
+ * writing it again here would reintroduce it in the one place nothing compares
+ * it to anything.
+ */
+function localStamp(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ` +
+    `${pad(at.getHours())}:${pad(at.getMinutes())}`
+  );
+}
+
+async function cmdRunsList(argv: string[]): Promise<number> {
+  return withClient(argv, {}, async (client, flags) => {
+    const result = await client.get<{ runs: RunSummary[] }>('/runs');
+    emit(result, flags['json'] === true, () =>
+      table(
+        result.runs.map((run) => [
+          run.id,
+          run.current ? 'live' : run.archived ? 'archived' : '',
+          `${run.events} event${run.events === 1 ? '' : 's'}`,
+          localStamp(run.startedAt),
+          // Clipped: a job is a paragraph and this is a column.
+          (run.job ?? '').slice(0, 48),
+        ]),
+      ),
+    );
+    return EXIT.ok;
+  }, HUMAN_ID);
+}
+
+async function cmdRunsNew(argv: string[]): Promise<number> {
+  return withClient(
+    argv,
+    { job: { type: 'string' }, end: { type: 'boolean', default: false } },
+    async (client, flags) => {
+      const job = typeof flags['job'] === 'string' ? flags['job'] : undefined;
+      const result = await client.post<{ events: { seq: number }[] }>('/runs', {
+        ...(job === undefined ? {} : { job }),
+        // Named on the command line for the same reason the hub names the
+        // seats on its button: stopping a live agent is destructive, and the
+        // daemon's refusal lists who it would stop.
+        ...(flags['end'] === true ? { end: true } : {}),
+      });
+      emit(result, flags['json'] === true, () => `${bold('new run')} — the board is clear`);
+      return EXIT.ok;
+    },
+    HUMAN_ID,
+  );
+}
+
+async function cmdRunsArchive(argv: string[]): Promise<number> {
+  const id = argv[0];
+  if (id === undefined || id.startsWith('--')) {
+    throw new CliError('runs archive needs a run id', EXIT.usage, 'Run `crosstalk runs` to list them.');
+  }
+  return withClient(argv.slice(1), {}, async (client, flags) => {
+    const result = await client.post<{ runs: RunSummary[] }>(`/runs/${encodeURIComponent(id)}/archive`, {});
+    emit(result, flags['json'] === true, () => `${bold(id)} archived to .crosstalk/runs/${id}.jsonl`);
+    return EXIT.ok;
+  }, HUMAN_ID);
+}
+
+async function cmdRunsRemove(argv: string[]): Promise<number> {
+  const id = argv[0];
+  if (id === undefined || id.startsWith('--')) {
+    throw new CliError('runs rm needs a run id', EXIT.usage, 'Run `crosstalk runs` to list them.');
+  }
+  return withClient(argv.slice(1), { yes: { type: 'boolean', default: false } }, async (client, flags) => {
+    // The one irreversible act in the product. The hub asks the operator to
+    // type the id; a terminal has no way to insist, so it insists on a flag —
+    // and says what would be lost rather than asking "are you sure?".
+    if (flags['yes'] !== true) {
+      throw new CliError(
+        `${id} would be deleted permanently, with the events in it`,
+        EXIT.usage,
+        `Nothing else in Crosstalk destroys history. Add --yes if that is what you mean: crosstalk runs rm ${id} --yes`,
+      );
+    }
+    const result = await client.delete<{ runs: RunSummary[] }>(`/runs/${encodeURIComponent(id)}`, { confirm: id });
+    emit(result, flags['json'] === true, () => `${bold(id)} deleted`);
+    return EXIT.ok;
+  }, HUMAN_ID);
+}
+
 const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   init: cmdInit,
   compose: cmdCompose,
@@ -1096,6 +1234,7 @@ const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   doctor: cmdDoctor,
   github: cmdGithub,
   ledger: cmdLedger,
+  runs: cmdRuns,
   inbox: cmdInbox,
   say: cmdSay,
   act: cmdAct,

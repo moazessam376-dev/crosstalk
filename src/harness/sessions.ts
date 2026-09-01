@@ -1,5 +1,5 @@
 import type { HarnessSession } from './session.js';
-import type { ScreenSnapshot } from './screen.js';
+import type { ScreenSnapshot, ScrollbackPage } from './screen.js';
 
 /**
  * The live sessions this process is supervising, keyed by seat.
@@ -19,8 +19,20 @@ import type { ScreenSnapshot } from './screen.js';
 export interface SessionHandle {
   readonly id: string;
   screen(): ScreenSnapshot | undefined;
+  /** A window onto what has scrolled off. `undefined` for an uncaptured seat. */
+  scrollback(from: number, count: number): ScrollbackPage | undefined;
+  /**
+   * Re-shape the terminal to what the operator is looking at.
+   *
+   * Both halves or neither: the pty and the reconstructed screen have to agree
+   * on geometry, and a mirror that disagreed with its pty would wrap text in
+   * one place and not the other.
+   */
+  resize(rows: number, cols: number): void;
   send(turn: string): Promise<void>;
   key(bytes: string): Promise<void>;
+  /** Told when the screen changes, so a watcher does not have to ask. */
+  watch(onChange: () => void): () => void;
   readonly canPush: boolean;
   /** Set once the process has gone. A dead seat's last screen is still worth reading. */
   readonly exitCode: number | null | undefined;
@@ -47,8 +59,11 @@ export class SessionRegistry {
     const handle: SessionHandle = {
       id,
       screen: () => session.screen(),
+      scrollback: (from, count) => session.scrollback(from, count),
+      resize: (rows, cols) => session.resize(rows, cols),
       send: (turn) => session.send(turn),
       key: (bytes) => session.key(bytes),
+      watch: (onChange) => session.watch(onChange),
       canPush: session.canPush,
       get exitCode() {
         return exitCode;

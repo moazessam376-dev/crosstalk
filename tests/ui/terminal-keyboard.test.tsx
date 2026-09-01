@@ -96,10 +96,18 @@ describe('what a keystroke means', () => {
     expect(keyBytes({ key: 'Control' })).toBeUndefined();
   });
 
-  /** Sending the name would type "F5" into the composer. */
+  /**
+   * Sending the name would type "AudioVolumeUp" into the composer.
+   *
+   * The function keys used to be in this list. They are modelled now — a
+   * terminal sends them, and an agent CLI binding F5 had no way to hear it —
+   * so what this pins is the rule, not the size of the table: a key with no
+   * encoding sends nothing at all.
+   */
   it('ignores keys it does not model rather than typing their names', () => {
-    expect(keyBytes({ key: 'F5' })).toBeUndefined();
     expect(keyBytes({ key: 'AudioVolumeUp' })).toBeUndefined();
+    expect(keyBytes({ key: 'BrightnessDown' })).toBeUndefined();
+    expect(keyBytes({ key: 'F5' })).toBe(`${ESC}[15~`);
   });
 
   it('spells Alt-x the way a terminal always has', () => {

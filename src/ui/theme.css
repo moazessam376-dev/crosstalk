@@ -1287,6 +1287,82 @@ button:focus-visible {
   font-size: 0.72em;
 }
 
+/* --- decision card ------------------------------------------------------ */
+
+/* A question the operator answers with one click. Styled like the dispute vote
+   control it borrows from, and bordered like `needs-you`, because that banner
+   is already lit by the same `awaitsHuman` rule that produced this card. */
+.decision-card {
+  margin: 8px 0;
+  border: 1px solid var(--status-open);
+  border-radius: var(--radius);
+  background: rgba(219, 171, 121, 0.06);
+  padding: 10px 12px;
+}
+
+.decision-card[data-answered='true'] {
+  border-color: var(--border-hairline);
+  background: var(--surface-raised);
+}
+
+.decision-question {
+  margin: 4px 0 8px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.decision-outcome {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.decision-answers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.decision-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.decision-option {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  padding: 5px 11px;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.decision-option:hover:not(:disabled) {
+  border-color: var(--status-open);
+}
+
+.decision-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.decision-why {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-base);
+  padding: 6px 9px;
+  color: var(--text-primary);
+  font: inherit;
+  width: 100%;
+}
+
+.decision-error {
+  margin: 0;
+  color: var(--status-open);
+  font-size: var(--size-mono);
+}
+
 /* --- needs-you tray ----------------------------------------------------- */
 
 .needs-you {

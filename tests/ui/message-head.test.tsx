@@ -39,9 +39,7 @@ describe('a message with a head', () => {
     expect(screen.getByTestId('message-body')).toHaveTextContent('supporting detail');
   });
 
-  it('offers no expander when the head is the whole message', () => {
-    // The neighbouring case, and the one the old threshold got wrong: a button
-    // that reveals nothing is worse than no button.
+  it('shows no body at all when the head is the whole message', () => {
     render(createElement(MessageCard, {
       from: 'peer-1',
       head: 'taking the water and the boat',
@@ -49,8 +47,25 @@ describe('a message with a head', () => {
       tag: 'status',
     }));
 
+    expect(screen.queryByTestId('message-body')).not.toBeInTheDocument();
     expect(screen.queryByTestId('message-expand')).not.toBeInTheDocument();
     expect(screen.getByTestId('message-head')).toBeInTheDocument();
+  });
+
+  it('offers no expander for a short body that already fits', () => {
+    // Caught by looking at it, not by a test: a two-line body under a head got
+    // a button that revealed nothing — the same mismatch the character
+    // threshold had, arrived at from the other side. Both questions have to be
+    // asked: is there a body, and is it long enough to be worth folding.
+    render(createElement(MessageCard, {
+      from: 'peer-1',
+      head: 'split: b-1 takes the sim, b-2 takes the renderer',
+      body: 'b-1 — src/sim/**, owns the tick.\nb-2 — src/render/**, owns the camera.',
+      tag: 'plan',
+    }));
+
+    expect(screen.getByTestId('message-body')).toBeInTheDocument();
+    expect(screen.queryByTestId('message-expand')).not.toBeInTheDocument();
   });
 
   it('shows what kind of message it is', () => {

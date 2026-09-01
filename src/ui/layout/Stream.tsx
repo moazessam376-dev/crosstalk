@@ -9,6 +9,8 @@ import { MessageCard } from '../cards/MessageCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { ProtocolCard } from '../cards/ProtocolCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
+import { DecisionCard } from '../cards/DecisionCard.js';
+// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { TaskCard } from '../cards/TaskCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Composer } from './Composer.js';
@@ -155,6 +157,12 @@ export function Stream({
   // two-second timer.
   const { scroller, remember } = useStreamScroll(activeRoom ?? '#floor', hidden === true, visibleEvents.length);
   const claims = new Map<string, Claim>();
+  // Answered decisions, so a card that has been settled shows the answer rather
+  // than offering the buttons again.
+  const outcomes = new Map<string, string>();
+  for (const event of visibleEvents) {
+    if (event.kind === 'decision_resolved') outcomes.set(event.decisionId, event.outcome);
+  }
   const staleShas = new Set<string>();
   const roster = new Map((participants ?? []).map((participant) => [participant.id, participant]));
   const colours = assignColours((participants ?? []).map((participant) => participant.id));
@@ -225,6 +233,20 @@ export function Stream({
           testId: 'card-claim-response-' + event.seq,
         });
       }
+    }
+
+    // A decision the operator is being asked to answer gets a card with a
+    // button per option. `ProtocolCard` draws the question and not the options,
+    // and the only vote control in the hub lives inside `DisputeView`, which a
+    // decision with no claim never reaches — so the one surface for planning
+    // with the operator rendered as a dead line of text.
+    if (event.kind === 'decision_opened' && event.decision.method === 'human') {
+      return createElement(DecisionCard, {
+        key: String(event.seq) + '-' + event.kind,
+        decision: event.decision,
+        ...(outcomes.get(event.decision.id) === undefined ? {} : { outcome: outcomes.get(event.decision.id)! }),
+        ...(onVote === undefined ? {} : { onVote }),
+      });
     }
 
     return createElement(ProtocolCard, { key: String(event.seq) + '-' + event.kind, event });

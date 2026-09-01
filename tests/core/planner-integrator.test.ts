@@ -36,6 +36,7 @@ function voted(seq: number, from: string): CrosstalkEvent {
     room: '#floor',
     decisionId: 'D-01',
     option: 'map first',
+    rationale: 'the map is what makes the combat legible',
   };
 }
 

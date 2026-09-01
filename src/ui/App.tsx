@@ -102,7 +102,18 @@ export default function App({ connection: injected }: AppProps = {}) {
     void runsView.refresh();
   }, [runSeq]);
   const maxRounds = connection.kind === 'live' ? connection.config.maxRounds : undefined;
-  const state = deriveState(events, maxRounds);
+  /**
+   * The board reads an older run when one is open, and the live buffer
+   * otherwise.
+   *
+   * Substituted here, at the one point every downstream view derives from, so
+   * "read-only" is not a flag each of them has to remember. There is no route
+   * that writes into a run other than the current one, so the guarantee is the
+   * daemon's; what the hub owes is not offering a composer over a transcript.
+   */
+  const shown = runsView.viewed ?? events;
+  const state = deriveState(shown, maxRounds);
+  const reading = runsView.viewing !== undefined;
   const defaultRoom = connection.kind === 'live'
     ? connection.config.room
     : state.rooms.find((room) => room.kind === 'dispute')?.id ?? state.rooms[0]?.id;
@@ -230,11 +241,14 @@ export default function App({ connection: injected }: AppProps = {}) {
         : {}),
       status: statusLabel,
       self: connection.kind === 'live' ? connection.config.self : undefined,
-      onSend: connection.kind === 'live' && activeRoom !== undefined
+      // No composer over a finished run. `Stream` renders none when `onSend`
+      // is absent, so this is the whole of read-only — one branch rather than
+      // a disabled control that looks like it might work.
+      onSend: connection.kind === 'live' && activeRoom !== undefined && !reading
         ? (body: string, attachments?: readonly MessageAttachment[]) =>
             postMessage(body, activeRoom, fetch, attachments)
         : undefined,
-      onVote: connection.kind === 'live'
+      onVote: connection.kind === 'live' && !reading
         ? (decisionId: string, option: string, rationale: string) => postVote(decisionId, option, rationale)
         : undefined,
       onSelectRoom: (roomId: string) => setSelectedRoom(roomId),
@@ -243,9 +257,29 @@ export default function App({ connection: injected }: AppProps = {}) {
       runPicker: connection.kind === 'live'
         ? createElement(RunPicker, {
             runs: runsView.runs,
+            ...(runsView.viewing === undefined ? {} : { viewing: runsView.viewing }),
+            onView: (runId: string | undefined) => {
+              void runsView.view(runId);
+              // The room selection belongs to the run being left: a `dm:` room
+              // from this run does not exist in that one, and an activeRoom
+              // pointing at nothing renders an empty board that looks broken.
+              setSelectedRoom(undefined);
+              setOpenSeat(undefined);
+            },
             onArchive: (runId: string) => void runsView.archive(runId),
-            onDelete: (runId: string) => void runsView.remove(runId),
-            onStartNew: () => void runsView.startNew(),
+            onDelete: (runId: string) => {
+              void runsView.remove(runId);
+              // Deleting the run you are reading leaves the board showing
+              // events that no longer exist anywhere — a transcript of a file
+              // the operator just destroyed. Back to the live one.
+              if (runsView.viewing === runId) void runsView.view(undefined);
+            },
+            onStartNew: () => {
+              void runsView.startNew();
+              // Starting a run while reading an old one puts you back on the
+              // live board, which is where the new run is happening.
+              void runsView.view(undefined);
+            },
           })
         : undefined,
       onHumanAction,

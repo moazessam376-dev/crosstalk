@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import type { CrosstalkEvent } from '../../contracts/events.js';
 import type { RunSummary } from '../../core/runs.js';
 
 export interface RunsView {
@@ -9,6 +10,17 @@ export interface RunsView {
   archive: (runId: string) => Promise<void>;
   remove: (runId: string) => Promise<void>;
   startNew: () => Promise<void>;
+  /**
+   * Which run the board is showing, and its events when that is not the
+   * current one.
+   *
+   * `undefined` means the current run, which is the live buffer the SSE
+   * stream is filling — the board's normal state, and the only one that
+   * accepts a message.
+   */
+  viewing?: string;
+  viewed?: CrosstalkEvent[];
+  view: (runId: string | undefined) => Promise<void>;
   error?: string;
 }
 
@@ -31,6 +43,8 @@ async function call(path: string, init?: RequestInit): Promise<Response> {
 export function useRuns(live: boolean): RunsView {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [error, setError] = useState<string | undefined>();
+  const [viewing, setViewing] = useState<string | undefined>();
+  const [viewed, setViewed] = useState<CrosstalkEvent[] | undefined>();
 
   const refresh = useCallback(async () => {
     if (!live) return;
@@ -68,10 +82,43 @@ export function useRuns(live: boolean): RunsView {
     [refresh],
   );
 
+  /**
+   * Open a run for reading, or go back to the current one.
+   *
+   * Fetched once and held, rather than streamed: a finished run does not
+   * change, so subscribing to it would be a socket that never delivers. Going
+   * back drops the buffer, so the next visit re-reads rather than showing a
+   * snapshot of what it was.
+   */
+  const view = useCallback(
+    async (runId: string | undefined): Promise<void> => {
+      if (runId === undefined) {
+        setViewing(undefined);
+        setViewed(undefined);
+        return;
+      }
+      try {
+        const response = await call(`/runs/${encodeURIComponent(runId)}/events`);
+        if (!response.ok) throw new Error(`run: ${response.status}`);
+        setViewed(((await response.json()) as { events: CrosstalkEvent[] }).events);
+        setViewing(runId);
+        setError(undefined);
+      } catch {
+        // Stay where we are. Switching to an empty board and calling it an old
+        // run would be a lie the operator cannot tell from an empty old run.
+        setError('could not open that run');
+      }
+    },
+    [],
+  );
+
   return {
     runs,
     refresh,
     error,
+    viewing,
+    viewed,
+    view,
     archive: (runId) => act(`/runs/${encodeURIComponent(runId)}/archive`, { method: 'POST' }),
     // The id again in the body, and the daemon checks it against the path.
     // Belt and braces on the one irreversible act: the hub already asks the

@@ -151,6 +151,17 @@ export class DaemonClient {
   post<T>(path: string, body: unknown): Promise<T> {
     return this.request('POST', path, body) as Promise<T>;
   }
+
+  /**
+   * The only method that destroys anything, and the only route that takes one.
+   *
+   * A body on a DELETE is unusual and deliberate: `DELETE /runs/:id` requires
+   * the run's own id back in it, so a request that reached the daemon by some
+   * other route still has to mean it.
+   */
+  delete<T>(path: string, body: unknown): Promise<T> {
+    return this.request('DELETE', path, body) as Promise<T>;
+  }
 }
 
 export interface WriteResult {

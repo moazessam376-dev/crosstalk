@@ -1460,9 +1460,20 @@ class Daemon {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let sentAt = 0;
     let closed = false;
+    let done = (): void => {
+      closed = true;
+    };
 
     const frame = (): void => {
       if (closed) return;
+      // A subscriber that stopped reading is a socket whose buffer only grows.
+      // The log stream has always reaped these; a screen stream ships far more
+      // bytes per second, so it needs it more.
+      if (backlogOf(response) > MAX_SUBSCRIBER_BACKLOG) {
+        done();
+        response.destroy();
+        return;
+      }
       sentAt = Date.now();
       const snapshot = session.screen();
       response.write(
@@ -1497,7 +1508,7 @@ class Daemon {
     const unwatch = session.watch(onChange);
     const heartbeat = setInterval(() => response.write(':hb\n\n'), HEARTBEAT_MS);
 
-    const done = (): void => {
+    done = (): void => {
       if (closed) return;
       closed = true;
       unwatch();

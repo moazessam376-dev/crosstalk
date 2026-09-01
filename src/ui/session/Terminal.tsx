@@ -119,7 +119,7 @@ interface Observer {
   observe(target: TerminalRoot): void;
   disconnect(): void;
 }
-declare const ResizeObserver: (new (callback: () => void) => Observer) | undefined;
+declare const ResizeObserver: new (callback: () => void) => Observer;
 
 interface TerminalRoot {
   readonly clientWidth: number;
@@ -149,6 +149,15 @@ export interface TerminalProps {
    */
   onGeometry?: (rows: number, cols: number) => void;
 }
+
+/**
+ * The string a cell is measured against.
+ *
+ * Ten of a fixed character, in the terminal's own font. Its width never depends
+ * on what the seat drew, which is the entire point: anything measured off the
+ * content can be changed by the measurement.
+ */
+const GAUGE = 'MMMMMMMMMM';
 
 /** Lines held above the top row, drawn above it. */
 export interface TerminalHistory {
@@ -198,28 +207,44 @@ export function Terminal({ screen, live = true, onKey, onGeometry }: TerminalPro
   // Report geometry once drawn, and again whenever the box changes. A seat that
   // is never told its size renders into a 110-column terminal inside a window
   // twice that wide, which is the "very limited" half of the complaint.
+  //
+  // Measured against a fixed gauge string, never against the rendered rows.
+  // Deriving a cell width from a row's own box is a feedback loop — a row is as
+  // wide as its content, so a wider terminal makes wider rows, which makes the
+  // cell look wider, which asks for a wider terminal again. One live run with
+  // that loop resized the pty continuously and took the daemon to a 2 GB heap
+  // and an out-of-memory kill. The gauge cannot join in: its content never
+  // changes.
   useLayoutEffect(() => {
     const element = root.current;
     if (element === null || onGeometry === undefined) return;
 
     const measure = (): void => {
-      const probe = element.querySelector('.terminal-row');
-      if (probe === null) return;
-      const box = probe.getBoundingClientRect();
-      if (box.height <= 0 || box.width <= 0) return;
-      const cell = box.width / Math.max(1, screen.cols);
-      if (cell <= 0) return;
-      const cols = Math.max(20, Math.floor(element.clientWidth / cell));
-      const rows = Math.max(4, Math.floor(element.clientHeight / box.height));
+      const gauge = element.querySelector('.terminal-gauge');
+      if (gauge === null) return;
+      const box = gauge.getBoundingClientRect();
+      const cell = box.width / GAUGE.length;
+      if (cell <= 0 || box.height <= 0) return;
+      const width = element.clientWidth;
+      const height = element.clientHeight;
+      if (width <= 0 || height <= 0) return;
+      // Bounded at both ends. A pty is not obliged to accept anything, and a
+      // panel in a hidden tab measures a zero-sized box that would otherwise
+      // ask for a one-column terminal.
+      const cols = Math.max(40, Math.min(400, Math.floor(width / cell)));
+      const rows = Math.max(8, Math.min(200, Math.floor(height / box.height)));
       onGeometry(rows, cols);
     };
 
     measure();
+    // `typeof`, not a comparison: where the global is not declared at all, a
+    // bare `ResizeObserver === undefined` throws a ReferenceError rather than
+    // being false — which took the whole panel down in jsdom.
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [onGeometry, screen.cols]);
+  }, [onGeometry]);
 
   // Focus reporting. An application that asked to know is told, and one that
   // did not is not — `focusBytes` decides, so this never invents traffic.
@@ -331,6 +356,7 @@ export function Terminal({ screen, live = true, onKey, onGeometry }: TerminalPro
       // being a mirror.
       style: { '--term-cols': String(screen.cols) } as Record<string, string>,
     },
+    createElement('span', { className: 'terminal-gauge', 'aria-hidden': 'true' }, GAUGE),
     screen.rows.map((runs, row) =>
       createElement(
         'div',

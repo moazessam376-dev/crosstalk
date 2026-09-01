@@ -155,6 +155,18 @@ export const DEFAULT_SCROLLBACK = 5_000;
 export const DEFAULT_ROWS = 32;
 export const DEFAULT_COLS = 110;
 
+/**
+ * The largest terminal this will build, whatever it is asked for.
+ *
+ * A ceiling rather than a preference. Geometry arrives from a browser measuring
+ * itself, and a measurement that feeds back into what it measures runs away —
+ * one live run did exactly that and took the daemon to a 2 GB heap. The
+ * measurement is fixed; this is what makes the next such bug a wrong-looking
+ * screen instead of a dead daemon.
+ */
+export const MAX_ROWS = 200;
+export const MAX_COLS = 400;
+
 function blank(): Cell {
   return { ch: ' ', attrs: {} };
 }
@@ -206,11 +218,13 @@ export class Screen {
     cols: number = DEFAULT_COLS,
     scrollbackLimit: number = DEFAULT_SCROLLBACK,
   ) {
-    this.rows = rows;
-    this.cols = cols;
-    this.#bottom = rows - 1;
+    this.rows = Math.max(1, Math.min(MAX_ROWS, rows));
+    this.cols = Math.max(1, Math.min(MAX_COLS, cols));
+    this.#bottom = this.rows - 1;
     this.#scrollbackLimit = Math.max(0, scrollbackLimit);
-    this.#grid = Array.from({ length: rows }, () => Array.from({ length: cols }, () => blank()));
+    this.#grid = Array.from({ length: this.rows }, () =>
+      Array.from({ length: this.cols }, () => blank()),
+    );
   }
 
   get version(): number {
@@ -256,8 +270,8 @@ export class Screen {
    * `SIGWINCH` anyway.
    */
   resize(rows: number, cols: number): void {
-    const nextRows = Math.max(1, Math.trunc(rows));
-    const nextCols = Math.max(1, Math.trunc(cols));
+    const nextRows = Math.max(1, Math.min(MAX_ROWS, Math.trunc(rows) || 1));
+    const nextCols = Math.max(1, Math.min(MAX_COLS, Math.trunc(cols) || 1));
     if (nextRows === this.rows && nextCols === this.cols) return;
 
     const resizedRow = (row: Cell[] | undefined): Cell[] => {

@@ -151,11 +151,12 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
       first: job,
       turnFormat: descriptor.turnFormat,
       // A seat that never got its job is indistinguishable, from the board,
-      // from a seat ignoring the room. Say which it is.
+      // from a seat ignoring the room. Say which it is — on the seat's own
+      // presence row, not on `#floor` under the operator's name.
       onStuck: (message) => {
         void (async () => {
-          const human = await DaemonClient.open(repo, HUMAN_ID);
-          await human.post('/events', { kind: 'message', room: FLOOR, body: `${participant.id} ${message}` });
+          const seat = await DaemonClient.open(repo, participant.id);
+          await seat.post('/presence', { verb: 'starting', working: false, blocked: message });
         })().catch(() => {});
       },
       ...(options.spawnProcess === undefined ? {} : { spawn: options.spawnProcess }),
@@ -170,7 +171,6 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
 
     loops.push(async () => {
       const seat = await DaemonClient.open(repo, participant.id);
-      const human = await DaemonClient.open(repo, HUMAN_ID);
       await driveSupervised({
         // Long-poll. The seat is not asked to check anything: the wake arrives
         // because something was said, which is the whole point of the change.
@@ -179,9 +179,21 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
         exited: session.exited,
         formatTurn: boardTurn,
         // A seat that dies silently is how beacon-1 lost twenty minutes to a
-        // teammate inferring, wrongly, that it was still working.
+        // teammate inferring, wrongly, that it was still working. So an exit
+        // still reaches the board — once, from the seat itself. Everything
+        // *reversible* about a seat's health goes to presence instead; those
+        // were 622 of the vault-team run's 1187 events, all posted here under
+        // `@human`, and a fact that flips back and forth is state, not history.
         notify: async (body) => {
-          await human.post('/events', { kind: 'message', room: FLOOR, body: `${participant.id}: ${body}` });
+          await seat.post('/presence', { verb: 'exited', working: false, blocked: body });
+          await seat.post('/events', { kind: 'message', room: FLOOR, body });
+        },
+        onHealth: async (health) => {
+          await seat.post('/presence', {
+            verb: health.stuck ? 'waiting for the operator' : 'working',
+            working: !health.stuck,
+            blocked: health.why ?? '',
+          });
         },
       });
     });

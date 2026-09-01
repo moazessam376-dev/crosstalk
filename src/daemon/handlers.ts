@@ -535,7 +535,7 @@ export interface RosterEntry {
   transport?: string;
   status: 'awaiting_turn' | 'active' | 'offline';
   /** What the harness last reported doing. Absent when it reports nothing. */
-  activity?: { verb: string; path?: string; working: boolean };
+  activity?: { verb: string; path?: string; working: boolean; blocked?: string };
 }
 
 /**
@@ -570,7 +570,9 @@ export function roster(
    * a true-but-stale finding, pinged twice, got no answer because the author
    * was heads-down writing, and rebuilt the file from scratch.
    */
-  activityOf: (who: ParticipantId) => { verb: string; path?: string; working: boolean } | undefined = () => undefined,
+  activityOf: (
+    who: ParticipantId,
+  ) => { verb: string; path?: string; working: boolean; blocked?: string } | undefined = () => undefined,
 ): { you: ParticipantId; participants: RosterEntry[] } {
   const participants = ctx.config.participants.map((participant) => ({
     id: participant.id,

@@ -31,7 +31,7 @@ export interface SeatSession {
   effort: string | null;
   workspace: string;
   present: boolean;
-  activity: { verb: string; path?: string; working: boolean; at: number } | null;
+  activity: { verb: string; path?: string; working: boolean; blocked?: string; at: number } | null;
   /** The Remote Control handle to attach to from a phone, when there is one. */
   remoteControl: string | null;
   /**

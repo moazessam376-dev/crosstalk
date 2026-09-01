@@ -59,6 +59,16 @@ const FALLBACK_HARNESSES: NonNullable<LauncherProps['catalog']> = [
  * Anything discovered replaces this list, and the field is typeable either way,
  * because a fixed vocabulary is the same mistake as a fixed model list.
  */
+/**
+ * How many workers the stepper offers.
+ *
+ * Capped at six rather than left open: every seat is a CLI holding a worktree
+ * and a model, and the research this project is built on puts coordination
+ * net-negative well before then. A number nobody should pick is not a number
+ * worth offering.
+ */
+const WORKER_CHOICES = [1, 2, 3, 4, 5, 6] as const;
+
 const EFFORTS = ['high', 'medium', 'low'];
 
 /**
@@ -75,7 +85,23 @@ const EFFORTS = ['high', 'medium', 'low'];
  * The shape's own seats are the fallback, for a hub whose daemon has not
  * reported a roster yet.
  */
-export function seatsFor(shape: ShapeSummary | undefined, running: readonly SeatSession[] = []): SeatDraft[] {
+/**
+ * The seat a shape lets you have more or fewer of, if it has one.
+ *
+ * Only `planner-integrator` does. The rest are fixed rosters, and offering a
+ * stepper on a shape that means exactly three peers would be a control that
+ * produces a roster the shape does not describe.
+ */
+export function varyingSeat(shape: ShapeSummary | undefined): { role: string; count: number } | undefined {
+  return shape?.seats.find((seat) => seat.varies === true);
+}
+
+export function seatsFor(
+  shape: ShapeSummary | undefined,
+  running: readonly SeatSession[] = [],
+  /** How many of the varying seat to lay out. Defaults to the shape's own count. */
+  vary?: number,
+): SeatDraft[] {
   const seated = running.filter((seat) => seat.role !== 'human');
   if (seated.length > 0) {
     return seated.map((seat) => ({
@@ -90,9 +116,10 @@ export function seatsFor(shape: ShapeSummary | undefined, running: readonly Seat
   if (shape === undefined) return [];
   const drafts: SeatDraft[] = [];
   for (const spec of shape.seats) {
-    for (let index = 0; index < spec.count; index += 1) {
+    const count = spec.varies === true && vary !== undefined ? vary : spec.count;
+    for (let index = 0; index < count; index += 1) {
       drafts.push({
-        id: spec.count === 1 ? spec.role : `${spec.role}-${index + 1}`,
+        id: count === 1 ? spec.role : `${spec.role}-${index + 1}`,
         role: spec.role,
         harness: 'claude-code-live',
         model: 'claude-opus-5',
@@ -188,12 +215,44 @@ export function Launcher({ shapes, launching, onLaunch, running = [], catalog }:
 
   const shape = useMemo(() => shapes.find((entry) => entry.name === shapeName), [shapes, shapeName]);
   const clashes = useMemo(() => clashingIds(seats), [seats]);
+  const varying = varyingSeat(shape);
+  /** How many of the varying seat, once a shape that has one is chosen. */
+  const [workers, setWorkers] = useState<number | undefined>();
+
+  /**
+   * The role "Add a seat" should add.
+   *
+   * The shape's own worker role where it has one, so a led roster grows by
+   * another worker rather than by a `peer` that `runInit` will refuse.
+   */
+  const addRole = varying?.role ?? shape?.seats[shape.seats.length - 1]?.role ?? 'peer';
 
   const chooseShape = (name: string): void => {
     setShapeName(name);
+    const picked = shapes.find((entry) => entry.name === name);
+    setWorkers(varyingSeat(picked)?.count);
     // Only replace a roster the operator has not edited. Losing hand-picked
     // models because a shape was re-clicked would be its own small betrayal.
-    if (!touched) setSeats(seatsFor(shapes.find((entry) => entry.name === name), running));
+    if (!touched) setSeats(seatsFor(picked, running));
+  };
+
+  /**
+   * Re-lay the roster for a different number of workers.
+   *
+   * Two deliberate overrides, both for the same reason — asking for five
+   * builders is asking for the roster to change, which is not the accidental
+   * clobber these guards exist to prevent:
+   *
+   * - `touched` does not protect it, so a hand-edited roster is still re-laid.
+   * - `running` is not passed, so the seats come from the *shape*. `seatsFor`
+   *   otherwise returns the live roster verbatim and ignores the count — which
+   *   made the stepper inert against a daemon that already had seats, i.e. in
+   *   the one situation it is most likely to be used. Found by clicking it.
+   */
+  const chooseWorkers = (count: number): void => {
+    setWorkers(count);
+    setTouched(true);
+    setSeats(seatsFor(shape, [], count));
   };
 
   const editSeat = (index: number, patch: Partial<SeatDraft>): void => {
@@ -378,6 +437,30 @@ export function Launcher({ shapes, launching, onLaunch, running = [], catalog }:
         null,
         'Seats',
         watchable > 0 ? h('span', { className: 'seat-note' }, `${watchable} watchable from your phone`) : null,
+        // Only where the shape says the count varies. On a shape that means
+        // exactly three peers, a stepper would build a roster the shape does
+        // not describe — and `runInit` would be right to refuse it.
+        varying === undefined
+          ? null
+          : h(
+              'div',
+              { className: 'seat-count', 'data-testid': 'seat-count' },
+              h('span', { className: 'seat-count-label' }, `${varying.role}s`),
+              ...WORKER_CHOICES.map((count) =>
+                h(
+                  'button',
+                  {
+                    key: count,
+                    type: 'button',
+                    className: `seat-count-option${(workers ?? varying.count) === count ? ' is-chosen' : ''}`,
+                    'aria-pressed': (workers ?? varying.count) === count ? 'true' : 'false',
+                    'aria-label': `${count} ${varying.role}${count === 1 ? '' : 's'}`,
+                    onClick: () => chooseWorkers(count),
+                  },
+                  String(count),
+                ),
+              ),
+            ),
       ),
       h(
         'div',
@@ -404,8 +487,13 @@ export function Launcher({ shapes, launching, onLaunch, running = [], catalog }:
             setSeats((current) => [
               ...current,
               {
-                id: `peer-${current.length + 1}`,
-                role: 'peer',
+                // The shape's own worker role, not a hardcoded `peer`.
+                // On a led roster (`planner-integrator` is leader + workers)
+                // adding a `peer` produced leader + workers + peer, which
+                // `runInit` refuses outright: "a roster is led or flat, not
+                // both". The button made a roster that could not launch.
+                id: `${addRole}-${current.length + 1}`,
+                role: addRole,
                 harness: 'claude-code-live',
                 model: 'claude-opus-5',
                 effort: 'high',

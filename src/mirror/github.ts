@@ -175,10 +175,18 @@ export class GhTransport implements GitHubTransport {
     this.#base = base;
   }
 
-  /** Undefined when `gh` is not installed — the mirror then degrades to nothing. */
-  static async create(cwd: string, base: string): Promise<GhTransport | undefined> {
-    const gh = await findGh();
-    return gh === undefined ? undefined : new GhTransport(gh, cwd, base);
+  /**
+   * Undefined when `gh` is not installed — the mirror then degrades to nothing.
+   *
+   * `gh` is injectable for the same reason `transport` is in `startMirror`: the
+   * PR path has never been exercised, and the half of it that is not GitHub —
+   * pushing the branch, without which `gh pr create --head` is asked to open a
+   * pull request for a ref that does not exist remotely — can be proved against
+   * a local bare remote and a stub, with nothing published to anybody's repo.
+   */
+  static async create(cwd: string, base: string, gh?: string): Promise<GhTransport | undefined> {
+    const found = gh ?? (await findGh());
+    return found === undefined ? undefined : new GhTransport(found, cwd, base);
   }
 
   async #run(args: string[]): Promise<string> {

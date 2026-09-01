@@ -1696,12 +1696,36 @@ class Daemon {
     }
     if (run.archived) return;
 
-    const dest = this.#archivePath(runId);
     await mkdir(join(resolve(this.#repo), '.crosstalk', 'runs'), { recursive: true });
-    // Everything below the *next* run's first event. `endedSeq` is set by
-    // `#listRuns` when it finds the following marker, and a non-current run
-    // always has one.
-    await this.#log.archiveBefore(run.endedSeq ?? run.firstSeq, dest);
+
+    /**
+     * Everything up to and including the run asked for, oldest first, each to
+     * its own file.
+     *
+     * Not a nicety — without it, archiving a run that has an older run beneath
+     * it destroyed that older run's identity. `archiveBefore` moves a *prefix*
+     * of the log, so a single call for the newer run swept the older one's
+     * events into the newer one's file: the older run vanished from
+     * `/runs` and its id became unreachable, with no error and no sign
+     * anything had happened. Measured, on a three-run log: archiving the
+     * middle run left one archive of 7 events where there should have been two
+     * of 3 and 4, and the first run was simply gone.
+     *
+     * A prefix structure means "put this one away" *has* to mean "and the ones
+     * before it" — they cannot stay in a live log the prefix has been cut out
+     * of. So the loop does what the operator asked and keeps each run's events
+     * in the file named after it, rather than refusing and making them archive
+     * in an order the UI never told them about.
+     */
+    const older = runs
+      .filter((entry) => !entry.current && !entry.archived && entry.firstSeq <= run.firstSeq)
+      .sort((left, right) => left.firstSeq - right.firstSeq);
+
+    for (const entry of older) {
+      // `endedSeq` is set by `#listRuns` when it finds the following marker,
+      // and a non-current run always has one.
+      await this.#log.archiveBefore(entry.endedSeq ?? entry.firstSeq, this.#archivePath(entry.id));
+    }
   }
 
   /**

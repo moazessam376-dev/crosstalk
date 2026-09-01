@@ -1,4 +1,4 @@
-import { createElement } from 'react';
+import { type ReactNode, createElement } from 'react';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Dock } from './Dock.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -46,6 +46,8 @@ export interface LayoutProps {
   onCloseSession?: () => void;
   /** Point the mirror at a repository. Passed through to the rail. */
   onConfigureMirror?: (url: string) => Promise<{ ok: boolean; reason?: string }>;
+  /** The run picker, rendered into the sidebar head. Absent without a daemon. */
+  runPicker?: ReactNode;
 }
 
 export function Layout({
@@ -68,6 +70,7 @@ export function Layout({
   onOpenSession,
   onCloseSession,
   onConfigureMirror,
+  runPicker,
 }: LayoutProps) {
   const seat = sessions?.seats.find((candidate) => candidate.id === openSeat);
   const showingSeat = seat !== undefined && onCloseSession !== undefined;
@@ -96,7 +99,7 @@ export function Layout({
       // collapse for a narrow screen — and watching a run from a phone is the
       // reason the interactive seats exist.
     },
-    createElement(Sidebar, { rooms: state.rooms, activeRoom, self, operator, onSetOperator, onSelectRoom }),
+    createElement(Sidebar, { rooms: state.rooms, activeRoom, self, operator, onSetOperator, onSelectRoom, runPicker }),
     // The seat's terminal takes the centre column rather than opening beside
     // it. A mirror squeezed into a dock is a terminal you cannot read, and
     // reading it is the entire reason to open one.

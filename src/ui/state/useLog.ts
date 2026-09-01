@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CrosstalkEvent } from '../../contracts/events.js';
+import { isRunStart } from '../../core/runs.js';
 
 export type LogSource =
   | { kind: 'fixture'; path: string }
@@ -60,7 +61,18 @@ export function useLog(source: LogSource): UseLogResult {
       if (cancelled) return;
       try {
         const event = JSON.parse(message.data) as CrosstalkEvent;
-        setEvents((current) => sortBySequence([...current, event]));
+        // A run beginning empties the buffer instead of adding to it.
+        //
+        // Clamping the daemon's reads fixes a fresh page load and nothing more:
+        // this socket stays open across a launch, so a hub that was already
+        // watching keeps every event it had. The stale `dm:` rooms in the
+        // sidebar come from exactly that — `projectRooms` derives the room list
+        // from whatever this buffer holds — and so does every other projection,
+        // which is why the reset belongs here and not in any one of them.
+        //
+        // The marker itself is kept: it is the run's first event and the floor
+        // everything else is projected from.
+        setEvents((current) => (isRunStart(event) ? [event] : sortBySequence([...current, event])));
       } catch {
         // A malformed stream item must not tear down the live subscription.
       }

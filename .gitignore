@@ -12,6 +12,9 @@ coverage/
 .crosstalk/state.json
 .crosstalk/tokens/
 .crosstalk/worktrees/
+# Archived runs. Kept, not scratch — but never committed: they are somebody's
+# transcript, and this repo lists .crosstalk/ subpaths rather than the directory.
+.crosstalk/runs/
 .crosstalk/inbox/
 .crosstalk/outbox/
 

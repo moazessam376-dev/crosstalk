@@ -1,4 +1,4 @@
-import { createElement, useState } from 'react';
+import { createElement, useState, type ReactNode } from 'react';
 import type { ChannelKind, ChannelRoom } from '../state/derive.js';
 
 export interface SidebarProps {
@@ -10,6 +10,13 @@ export interface SidebarProps {
   operator?: string;
   onSetOperator?: (name: string) => void;
   onSelectRoom?: (roomId: string) => void;
+  /**
+   * The run picker, when there is a daemon to ask.
+   *
+   * Passed in rather than built here: the sidebar knows about rooms, and which
+   * run those rooms belong to is a question for whoever owns the connection.
+   */
+  runPicker?: ReactNode;
 }
 
 /**
@@ -55,7 +62,7 @@ function sortRooms(rooms: ChannelRoom[]): ChannelRoom[] {
  * behind them. Rendering a control that cannot work is the defect CT-10 is
  * about, and the brief cuts the last two for the same reason.
  */
-export function Sidebar({ rooms, activeRoom, self, operator, onSetOperator, onSelectRoom }: SidebarProps) {
+export function Sidebar({ rooms, activeRoom, self, operator, onSetOperator, onSelectRoom, runPicker }: SidebarProps) {
   const groups = GROUPS.map((group) => ({
     ...group,
     rooms: sortRooms(rooms.filter((room) => room.kind === group.kind)),
@@ -76,6 +83,9 @@ export function Sidebar({ rooms, activeRoom, self, operator, onSetOperator, onSe
       'div',
       { className: 'sidebar-head' },
       createElement('span', { className: 'sidebar-wordmark' }, 'Crosstalk'),
+      // Above the rooms, because it is navigation of the same kind: which
+      // conversation you are in, before what is in it.
+      runPicker ?? null,
     ),
     createElement(
       'div',

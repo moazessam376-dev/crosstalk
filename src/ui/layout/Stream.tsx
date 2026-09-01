@@ -2,6 +2,7 @@ import { createElement, useLayoutEffect, useRef } from 'react';
 import type { Claim } from '../../contracts/claim.js';
 import type { CrosstalkEvent } from '../../contracts/events.js';
 import { HUMAN_ID } from '../../contracts/room.js';
+import { isRunStart } from '../../core/runs.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { ClaimCard } from '../cards/ClaimCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -177,6 +178,24 @@ export function Stream({
   const isDispute = Boolean(activeRoom && activeRoom.startsWith('dispute:'));
 
   const cards = visibleEvents.map((event) => {
+    // The run marker is a message on the wire and a divider on screen.
+    //
+    // It has to be an event — the boundary is durable or it is nothing — but
+    // rendering it as a card puts `run r-20260902-0100-2fc0dd` at the top of
+    // every board as though somebody said it. This project has already measured
+    // what machine chatter on the floor costs: 622 of one run's 1187 events.
+    // One rule, one date, no author.
+    if (isRunStart(event)) {
+      return createElement(
+        'div',
+        { key: String(event.seq) + '-run', className: 'run-divider', 'data-testid': 'run-divider' },
+        createElement('span', { className: 'run-divider-label' }, 'run started'),
+        // `slice(11, 16)` is how every other timestamp on the board is cut
+        // (MessageCard:145). One convention, even where a helper would be tidier.
+        createElement('time', { className: 'run-divider-when', dateTime: event.ts }, event.ts.slice(11, 16)),
+      );
+    }
+
     if (event.kind === 'message') {
       const author = roster.get(event.from);
       return createElement(MessageCard, {

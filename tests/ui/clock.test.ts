@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { clockTime } from '../../src/ui/clock.js';
+// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { runLabel } from '../../src/ui/layout/RunPicker.js';
 
 /**

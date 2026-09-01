@@ -61,7 +61,96 @@ export interface ScreenSnapshot {
   rows: ScreenRun[][];
   cursor: { row: number; col: number };
   cols: number;
+  /** What the seat has asked its terminal to send. */
+  modes?: ScreenModes;
+  /** How many lines have scrolled off and are still held. */
+  scrollback?: number;
+  /**
+   * Whether the seat is drawing on the alternate screen.
+   *
+   * Both agent CLIs are: they take the whole terminal and repaint it. It
+   * matters to a reader because an alt-screen app owns its own history — there
+   * is nothing above the top row to scroll to, in the hub or in a real
+   * terminal, and the way up is the app's own scrolling, which is why the
+   * mirror forwards the wheel.
+   */
+  alt?: boolean;
 }
+
+/**
+ * The input modes the seat has asked for.
+ *
+ * A terminal is a duplex device: what it should *send* depends on what the
+ * application has said it wants, and an application says so with the same
+ * escape sequences it uses to draw. The parser was reading those sequences and
+ * dropping them, so the hub had no way to know that Claude Code had asked for
+ * mouse reporting and bracketed paste — and encoded every key as though a bare
+ * VT100 were on the other end.
+ *
+ * Keeping them is what makes the mirror a terminal rather than a picture of
+ * one. Measured off a real `claude --remote-control` session, it asks for
+ * `?1049h ?1004h ?2004h ?1000h ?1002h ?1003h ?1006h` before it draws anything.
+ */
+export interface ScreenModes {
+  /** DECCKM. Arrows are `ESC O A`, not `ESC [ A`. */
+  applicationCursor: boolean;
+  /** `?1004`. The app wants to be told when the operator looks at it. */
+  focusReporting: boolean;
+  /** `?2004`. Pasted text is wrapped, so it is never read as typing. */
+  bracketedPaste: boolean;
+  /** `?1000`/`?1002`/`?1003`. The app handles its own scrolling and clicks. */
+  mouse: boolean;
+  /** `?1006`. Report mouse in SGR form rather than the 223-column legacy one. */
+  sgrMouse: boolean;
+  /** `?1049`/`?47`/`?1047`. The app owns the screen and its own history. */
+  alt: boolean;
+  /** `?25`. Drawn only when the app wants a cursor drawn. */
+  cursorVisible: boolean;
+}
+
+function defaultModes(): ScreenModes {
+  return {
+    applicationCursor: false,
+    focusReporting: false,
+    bracketedPaste: false,
+    mouse: false,
+    sgrMouse: false,
+    alt: false,
+    cursorVisible: true,
+  };
+}
+
+/** A window onto the lines that have scrolled off. */
+export interface ScrollbackPage {
+  /** Total lines held, so a reader can size its scrollbar. */
+  total: number;
+  /** Index of the first line returned, counting from the oldest held line. */
+  from: number;
+  rows: ScreenRun[][];
+}
+
+/**
+ * How many scrolled-off lines to keep.
+ *
+ * The grid was originally the whole memory: a line that scrolled off was
+ * dropped, so a session that had printed two hundred lines could be asked for
+ * thirty-one of them and the other hundred and sixty-nine did not exist
+ * anywhere. That was not a UI limit — no front end could reach them.
+ *
+ * Keeping them is affordable in the packed run form, and only in that form.
+ * Measured, ten thousand lines at 110 columns:
+ *
+ *   - as `Cell[][]`, the shape the live grid uses .......... 110 MB
+ *   - as `ScreenRun[]`, the shape `snapshot()` already emits .. 17 MB
+ *
+ * so history costs about a tenth of what the obvious implementation costs, and
+ * packing a row on its way out costs 1.1 microseconds — one percent of the
+ * parse already being paid for it. Five thousand lines is ~9 MB for a seat
+ * somebody is watching, which is the trade this number encodes: enough history
+ * to find what an agent did an hour ago, not so much that four seats own a
+ * gigabyte.
+ */
+export const DEFAULT_SCROLLBACK = 5_000;
 
 export const DEFAULT_ROWS = 32;
 export const DEFAULT_COLS = 110;
@@ -81,14 +170,30 @@ function sameAttrs(left: Attrs, right: Attrs): boolean {
 }
 
 export class Screen {
-  readonly rows: number;
-  readonly cols: number;
-  readonly #grid: Cell[][];
+  rows: number;
+  cols: number;
+  #grid: Cell[][];
   #row = 0;
   #col = 0;
   #attrs: Attrs = {};
   #saved: { row: number; col: number } | undefined;
   #version = 0;
+  #modes = defaultModes();
+  /**
+   * Lines that have scrolled off the top, oldest first, already packed.
+   *
+   * A plain array with a shift-when-full rule rather than a ring: the buffer is
+   * read far more often than it wraps, and every read wants oldest-first order,
+   * which a ring has to rebuild each time.
+   */
+  #scrollback: ScreenRun[][] = [];
+  readonly #scrollbackLimit: number;
+  /**
+   * The scrolling region, `DECSTBM`. Lines outside it hold still — which is how
+   * a TUI keeps a status bar pinned while its transcript moves under it.
+   */
+  #top = 0;
+  #bottom: number;
   /** Set by any write that touched a cell, the cursor, or the scroll position. */
   #dirty = false;
   /** The fingerprint `#version` was last bumped for. */
@@ -96,14 +201,101 @@ export class Screen {
   /** Bytes of an escape sequence split across two chunks. */
   #pending = '';
 
-  constructor(rows: number = DEFAULT_ROWS, cols: number = DEFAULT_COLS) {
+  constructor(
+    rows: number = DEFAULT_ROWS,
+    cols: number = DEFAULT_COLS,
+    scrollbackLimit: number = DEFAULT_SCROLLBACK,
+  ) {
     this.rows = rows;
     this.cols = cols;
+    this.#bottom = rows - 1;
+    this.#scrollbackLimit = Math.max(0, scrollbackLimit);
     this.#grid = Array.from({ length: rows }, () => Array.from({ length: cols }, () => blank()));
   }
 
   get version(): number {
     return this.#version;
+  }
+
+  get modes(): ScreenModes {
+    return { ...this.#modes };
+  }
+
+  /** How many scrolled-off lines are held. */
+  get held(): number {
+    return this.#scrollback.length;
+  }
+
+  /**
+   * A window onto the history, oldest line at index 0.
+   *
+   * Windowed rather than whole: ten thousand held lines are a megabyte of JSON,
+   * and a reader scrolling up wants the screenful it is about to show, not the
+   * session. `from` is clamped so a reader that asks past either end gets the
+   * nearest real page instead of an error.
+   */
+  scrollback(from: number, count: number): ScrollbackPage {
+    const total = this.#scrollback.length;
+    const size = Math.max(0, Math.min(count, total));
+    const start = Math.max(0, Math.min(Math.trunc(from), total - size));
+    return { total, from: start, rows: this.#scrollback.slice(start, start + size) };
+  }
+
+  /**
+   * Re-shape the grid to the geometry the operator is actually looking at.
+   *
+   * The pty and the mirror must agree — one constant used to guarantee that by
+   * never changing, at the cost of every seat being 32×110 whatever the window
+   * did. Now they agree because the same call resizes both, and this half
+   * refuses a change it cannot honour rather than half-applying it.
+   *
+   * Rows are kept from the bottom, because the bottom is where the prompt is:
+   * a shrink drops the oldest rows into scrollback rather than the newest onto
+   * the floor. Columns do not reflow — a mirror that rewrapped would stop being
+   * a mirror — so the application is left to repaint, which is what it does on
+   * `SIGWINCH` anyway.
+   */
+  resize(rows: number, cols: number): void {
+    const nextRows = Math.max(1, Math.trunc(rows));
+    const nextCols = Math.max(1, Math.trunc(cols));
+    if (nextRows === this.rows && nextCols === this.cols) return;
+
+    const resizedRow = (row: Cell[] | undefined): Cell[] => {
+      const next = Array.from({ length: nextCols }, () => blank());
+      if (row !== undefined) {
+        for (let col = 0; col < Math.min(nextCols, row.length); col += 1) next[col] = row[col]!;
+      }
+      return next;
+    };
+
+    if (nextRows < this.rows) {
+      // Anchored on the cursor, not on the physical bottom. A session that has
+      // written five lines into a thirty-two row grid has twenty-seven blank
+      // rows underneath the prompt, and keeping "the bottom" would keep the
+      // blanks and scroll the prompt away.
+      const end = Math.max(this.#row, nextRows - 1);
+      const start = end - nextRows + 1;
+      // Off the top, and into history — not deleted. A shrink is the one resize
+      // that would otherwise lose content silently.
+      for (const row of this.#grid.slice(0, start)) this.#remember(row);
+      this.#grid = this.#grid.slice(start, start + nextRows).map(resizedRow);
+      this.#row -= start;
+    } else {
+      this.#grid = this.#grid.map(resizedRow);
+      while (this.#grid.length < nextRows) this.#grid.push(Array.from({ length: nextCols }, () => blank()));
+    }
+
+    this.rows = nextRows;
+    this.cols = nextCols;
+    this.#top = 0;
+    this.#bottom = nextRows - 1;
+    this.#row = Math.min(this.#row, nextRows - 1);
+    this.#col = Math.min(this.#col, nextCols - 1);
+    this.#dirty = true;
+    // Straight to a bump: a resize changes what a watcher sees even when every
+    // surviving cell is identical, and the fingerprint alone would not say so.
+    this.#fingerprinted = this.#fingerprint();
+    this.#version += 1;
   }
 
   /**
@@ -211,6 +403,9 @@ export class Screen {
       rows: this.#grid.map((row) => pack(row)),
       cursor: { row: this.#row, col: this.#col },
       cols: this.cols,
+      modes: this.modes,
+      scrollback: this.#scrollback.length,
+      ...(this.#modes.alt ? { alt: true } : {}),
     };
   }
 
@@ -234,14 +429,36 @@ export class Screen {
     this.#col += 1;
   }
 
+  /**
+   * Keep a line that is leaving the grid.
+   *
+   * Packed on the way in, not on the way out: the run form is what a reader is
+   * served and what a diff compares, so doing it once here costs 1.1µs and
+   * saves both. Alt-screen lines are dropped, exactly as a real terminal drops
+   * them — an application that took the whole screen owns its own history, and
+   * filling the operator's scrollback with a repainting TUI's intermediate
+   * frames would bury the shell output that scrollback is for.
+   */
+  #remember(row: readonly Cell[]): void {
+    if (this.#scrollbackLimit === 0 || this.#modes.alt) return;
+    this.#scrollback.push(pack(row));
+    if (this.#scrollback.length > this.#scrollbackLimit) {
+      this.#scrollback.splice(0, this.#scrollback.length - this.#scrollbackLimit);
+    }
+  }
+
   #lineFeed(): void {
     this.#dirty = true;
-    if (this.#row < this.rows - 1) {
+    if (this.#row < this.#bottom) {
       this.#row += 1;
       return;
     }
-    this.#grid.shift();
-    this.#grid.push(Array.from({ length: this.cols }, () => blank()));
+    // At the bottom of the *region*, which is the whole screen unless the app
+    // pinned a status bar. Only the top line of a full-height region is history
+    // — a line scrolled out of a two-row region never left the screen.
+    const evicted = this.#grid.splice(this.#top, 1)[0]!;
+    if (this.#top === 0 && this.#bottom === this.rows - 1) this.#remember(evicted);
+    this.#grid.splice(this.#bottom, 0, Array.from({ length: this.cols }, () => blank()));
   }
 
   #moveTo(row: number, col: number): void {
@@ -293,10 +510,10 @@ export class Screen {
       return 2;
     }
     if (next === 'M') {
-      // Reverse index: up one line, scrolling down at the top.
-      if (this.#row === 0) {
-        this.#grid.pop();
-        this.#grid.unshift(Array.from({ length: this.cols }, () => blank()));
+      // Reverse index: up one line, scrolling down at the top of the region.
+      if (this.#row === this.#top) {
+        this.#grid.splice(this.#bottom, 1);
+        this.#grid.splice(this.#top, 0, Array.from({ length: this.cols }, () => blank()));
         this.#dirty = true;
       } else {
         this.#moveTo(this.#row - 1, this.#col);
@@ -321,9 +538,24 @@ export class Screen {
     const first = params[0];
 
     if (priv) {
-      if ((first === 1049 || first === 47 || first === 1047) && (final === 'h' || final === 'l')) {
-        this.#clearAll();
-        this.#moveTo(0, 0);
+      if (final !== 'h' && final !== 'l') return;
+      const on = final === 'h';
+      // Every parameter of a private-mode set, not just the first: an app that
+      // writes `ESC [ ? 1000 ; 1006 h` is asking for two things, and reading
+      // only the first is how mouse reporting ends up half-enabled.
+      for (const mode of params) {
+        if (mode === undefined) continue;
+        if (mode === 1) this.#modes.applicationCursor = on;
+        else if (mode === 25) this.#modes.cursorVisible = on;
+        else if (mode === 1004) this.#modes.focusReporting = on;
+        else if (mode === 2004) this.#modes.bracketedPaste = on;
+        else if (mode === 1000 || mode === 1002 || mode === 1003) this.#modes.mouse = on;
+        else if (mode === 1006) this.#modes.sgrMouse = on;
+        else if (mode === 1049 || mode === 47 || mode === 1047) {
+          this.#modes.alt = on;
+          this.#clearAll();
+          this.#moveTo(0, 0);
+        }
       }
       return;
     }
@@ -384,11 +616,27 @@ export class Screen {
       case 'm':
         this.#sgr(params);
         return;
+      case 'r':
+        // DECSTBM. Measured coming out of a real Claude Code session before it
+        // draws anything, and previously dropped — so a status bar the app had
+        // pinned scrolled away with the transcript.
+        this.#setRegion((first ?? 1) - 1, (params[1] ?? this.rows) - 1);
+        return;
       default:
-        // Device status reports, scroll regions, window ops: no visible effect
-        // on a screen nobody is typing into.
+        // Device status reports, window ops: no visible effect on a screen
+        // nobody is typing into.
         return;
     }
+  }
+
+  #setRegion(top: number, bottom: number): void {
+    const nextTop = Math.max(0, Math.min(this.rows - 1, top));
+    const nextBottom = Math.max(nextTop, Math.min(this.rows - 1, bottom));
+    this.#top = nextTop;
+    this.#bottom = nextBottom;
+    // Setting a region homes the cursor, which is the half of DECSTBM that
+    // applications actually rely on.
+    this.#moveTo(nextTop, 0);
   }
 
   #sgr(params: readonly (number | undefined)[]): void {
@@ -488,19 +736,23 @@ export class Screen {
     while (row.length < this.cols) row.push(blank());
   }
 
+  // Both of these move lines within the scrolling region: a line pushed off the
+  // bottom of a pinned region has not left the screen, so it is not history.
   #insertLines(count: number): void {
     this.#dirty = true;
+    if (this.#row < this.#top || this.#row > this.#bottom) return;
     for (let index = 0; index < count; index += 1) {
+      this.#grid.splice(this.#bottom, 1);
       this.#grid.splice(this.#row, 0, Array.from({ length: this.cols }, () => blank()));
-      this.#grid.splice(this.rows, 1);
     }
   }
 
   #deleteLines(count: number): void {
     this.#dirty = true;
+    if (this.#row < this.#top || this.#row > this.#bottom) return;
     for (let index = 0; index < count; index += 1) {
       this.#grid.splice(this.#row, 1);
-      this.#grid.splice(this.rows - 1, 0, Array.from({ length: this.cols }, () => blank()));
+      this.#grid.splice(this.#bottom, 0, Array.from({ length: this.cols }, () => blank()));
     }
   }
 }

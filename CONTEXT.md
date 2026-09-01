@@ -56,6 +56,22 @@ Two runtime dependencies. No native modules. Append-only log. Order by `seq`. Wi
 
 **Two join modes.** Supervised = Crosstalk spawns `claude` / `codex` / `cursor-agent`. Attached = operator opens a desktop app and joins. Spawn cannot drive Claude.app or Cursor the IDE. T3 works the same way: its desktop app is a control surface over CLIs, not a puppeteer of other GUIs.
 
+**Harness facts live in the registry.** What a harness is called is a naming convention; what it *does* is a contract, and the contract is `harnesses.yaml`. Three readers had been pattern-matching the key — `startsWith('claude-code')` to write settings, `endsWith('-live')` to decide a seat was watchable, a second hand-written binary list — so a harness named outside the convention got nothing, silently. Ask the registry: `settings`, `turnFormat`, `spawn`.
+
+**Models are asked for, not written down.** A hand-written list goes stale in the one direction that matters: it offered `gpt-5.3-codex` to an operator whose Codex runs luna, terra and sol at 5.6, and none of it could be picked. `codex app-server` answers `model/list` with the catalogue and each model's efforts; Claude Code names its aliases in `--help`. What cannot be probed falls back to the registry, marked as such, and **every model and effort field is free text** — the contract says so, and a closed list is how a correct answer becomes unreachable.
+
+## The mirrored terminal
+
+**A terminal is duplex.** What it sends depends on what the application asked for, in the same escape sequences it uses to draw: application cursor keys, bracketed paste, focus events, mouse reporting. `Screen` keeps them and the key encoder reads them. Sending `ESC [ A` to an application that asked for `ESC O A` is a key that does nothing.
+
+**An agent CLI owns its own history.** Both run on the alternate screen, so there is nothing above the top row to scroll to — in the hub or in a real terminal. The wheel is how their transcripts scroll, and it is forwarded. Scrollback is the *other* answer, for output that really did leave the screen; alt-screen frames never enter it, exactly as a real terminal drops them.
+
+**Pushed, not polled.** The panel asked for a frame every 800ms and the browser gave it 1000 — a hidden tab has its timers clamped, and the hub tab is hidden whenever it is not frontmost. Measured: keystroke to pixel 1009ms, on a path whose POST was 2.8ms and pty echo 3.2ms. The reconstruction streams at ~3 KB/sec for the one open seat; the old objection was pricing raw pty bytes, which is a different thing.
+
+**One ordered channel per seat.** Each keystroke used to be its own request and browsers run six at once, so fast typing arrived transposed. This is a correctness rule, not a performance one.
+
+**A measurement must not feed what it measures.** Cell width was taken from a rendered row, so a wider terminal made wider rows made a wider cell made a wider terminal — it resized the pty continuously and killed the daemon at a 2 GB heap. Measure against a fixed gauge, and bound the result.
+
 ## Protocol
 
 **Facade.** Agent-facing tools write today’s event kinds. **No new event kinds.** Two named contract amendments:
@@ -76,6 +92,12 @@ Two runtime dependencies. No native modules. Append-only log. Order by `seq`. Wi
 **Compose.** Hub posts the job to `#floor`. The leader’s first inbox item is that message. The leader cuts tasks. Crosstalk does not invent the task graph.
 
 **SPOC stamps.** Accept `submitted` → `accepted`; reject to `in_progress` with a reason; ask for evidence; sit on the old human ladder rung with the operator as timeout override. SPOC does not close a court case they did not open. Operator still merges.
+
+## Measurement
+
+**The ledger is a projection, not a counter.** `crosstalk ledger` derives what a run cost from the log it already wrote — machine noise, median head and body, tag histogram, floor-versus-DM split, quiet tail. A counter kept during a run can be wrong, can be lost on restart, and cannot be applied to a run that already happened. Validated by independently reproducing every figure the vault run was measured by with `jq`.
+
+**Model tokens are absent and said to be absent.** Only the harness knows them and only some say; a seat on a pty never does. A cost report that quietly omits cost is worse than one that admits what it cannot see.
 
 ## Build order
 

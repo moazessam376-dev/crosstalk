@@ -23,17 +23,25 @@ import { harnessKind } from '../marks/kind.js';
  * findable by the browser's own search, and readable by a screen reader.
  * Truncating the string would take all three away.
  *
- * The better fix is a `summary` field the *author* writes, on `say`,
- * `raise_claim` and `submit_task`; the report recommends it and so does this
- * comment. It changes a frozen contract and invalidates every existing log, so
- * it wants a claim rather than a unilateral edit. When it lands, the card
- * renders the summary here and this control keeps working.
+ * This is the fallback now. `head` is the field this comment asked for — "a
+ * `summary` field the *author* writes" — and where there is one, the fold is
+ * decided by whether a body exists rather than by counting characters. The
+ * count was never right on its own: it gated on 320 *characters* while the CSS
+ * clamped at four *lines*, so a 330-character body that already fitted got an
+ * expander revealing nothing.
  */
 const PREVIEW_LIMIT = 320;
 
 export interface MessageCardProps {
   from: string;
   body: string;
+  /**
+   * The author's own one line. Absent on every message written before the
+   * contract amendment, which is the whole log to date.
+   */
+  head?: string;
+  /** What the message is for — `status`, `result`, `ask`. */
+  tag?: string;
   ts?: string;
   seq?: number;
   /** From the roster, when the log has told us who this is. */
@@ -84,10 +92,15 @@ export function MessageCard({
   colour,
   mention,
   displayName,
+  head,
+  tag,
   testId = 'message-card',
 }: MessageCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const long = body.length > PREVIEW_LIMIT;
+  // With a head, "is there more" is a fact rather than an estimate: `body`
+  // holds the head itself when the author wrote nothing else, so the two being
+  // equal means there is nothing behind the fold.
+  const long = head === undefined ? body.length > PREVIEW_LIMIT : body !== head;
   const collapsed = long && !expanded;
 
   const identity = identityFor(
@@ -124,12 +137,25 @@ export function MessageCard({
         model === undefined ? null : createElement('span', { className: 'message-model fact' }, model),
         ts ? createElement('time', { className: 'message-time fact', dateTime: ts }, ts.slice(11, 16)) : null,
         seq !== undefined ? createElement('span', { className: 'message-seq fact' }, `#${seq}`) : null,
+        tag === undefined
+          ? null
+          : createElement('span', { className: 'message-tag fact', 'data-testid': 'message-tag', 'data-tag': tag }, tag),
       ),
-      createElement(
-        'p',
-        { className: collapsed ? 'message-body is-clamped' : 'message-body' },
-        body,
-      ),
+      head === undefined
+        ? null
+        : createElement('p', { className: 'message-head', 'data-testid': 'message-head' }, head),
+      // Hidden entirely when the head is the whole message, rather than
+      // repeated under itself.
+      head !== undefined && !long
+        ? null
+        : createElement(
+            'p',
+            {
+              className: collapsed ? 'message-body is-clamped' : 'message-body',
+              'data-testid': 'message-body',
+            },
+            body,
+          ),
       long
         ? createElement(
             'button',

@@ -5,6 +5,9 @@ import { identityFor } from '../state/identity.js';
 import { HarnessMark } from '../marks/HarnessMark.js';
 import { harnessKind } from '../marks/kind.js';
 import { clockTime } from '../clock.js';
+import type { MessageAttachment } from '../../contracts/events.js';
+// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
+import { Attachments } from './Attachments.js';
 
 /**
  * How long a body may be before the stream previews it instead of pouring it out.
@@ -64,6 +67,16 @@ export interface MessageCardProps {
   displayName?: string;
   /** A handle this message addresses, when the roster knows it. */
   mention?: string;
+  /**
+   * Files sent with the message.
+   *
+   * Below the body, not above it: the text is what the author wrote and the
+   * picture is what they could not write. Reversing them makes every message
+   * with a screenshot open on the screenshot.
+   */
+  attachments?: readonly MessageAttachment[];
+  /** Where blobs live on this machine. Only a video chip uses it. */
+  blobRoot?: string;
   testId?: string;
 }
 
@@ -95,6 +108,8 @@ export function MessageCard({
   displayName,
   head,
   tag,
+  attachments,
+  blobRoot,
   testId = 'message-card',
 }: MessageCardProps) {
   const [expanded, setExpanded] = useState(false);
@@ -177,6 +192,9 @@ export function MessageCard({
             expanded ? 'Show less' : 'Show more',
           )
         : null,
+      attachments === undefined || attachments.length === 0
+        ? null
+        : createElement(Attachments, { attachments, ...(blobRoot === undefined ? {} : { blobRoot }) }),
       mention === undefined
         ? null
         : createElement('span', { className: 'message-mention', 'data-testid': 'message-mention' }, mention),

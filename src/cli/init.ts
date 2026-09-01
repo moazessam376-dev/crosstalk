@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile, access } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
@@ -394,6 +394,62 @@ export async function purgeWorkspaces(repo: string): Promise<void> {
   // Drops any administrative entry whose directory is already gone, so a later
   // `init` sees a clean list rather than a stale registration.
   await execFile('git', ['worktree', 'prune'], { cwd: root, windowsHide: true }).catch(() => undefined);
+
+  await purgeUnreferencedBlobs(root);
+}
+
+/**
+ * Remove attached files nothing in this repository still points at.
+ *
+ * `--purge` is the scratch broom, and an attachment is only scratch once no
+ * record mentions it. So this reads the live log *and* every archive, and
+ * deletes what neither names — the same mark-and-sweep the daemon runs after a
+ * run is deleted, spelled out here because `down --purge` runs with no daemon.
+ *
+ * **`runs/` is deliberately left alone.** Archives are history, and they
+ * follow the event log's rule — "the event log and tokens are kept" — not the
+ * scratch rule. Removing one stays an explicit, confirmed act: `ct runs rm`.
+ */
+async function purgeUnreferencedBlobs(root: string): Promise<void> {
+  const stateDir = join(root, '.crosstalk');
+  const keep = new Set<string>();
+  const mark = (raw: string): void => {
+    for (const line of raw.split('\n')) {
+      if (line.trim() === '') continue;
+      try {
+        const event = JSON.parse(line) as { attachments?: { sha: string }[] };
+        for (const attachment of event.attachments ?? []) keep.add(attachment.sha);
+      } catch {
+        // A half-written line is a reason to keep more, not less.
+        return;
+      }
+    }
+  };
+
+  try {
+    mark(await readFile(join(stateDir, 'events.jsonl'), 'utf8'));
+  } catch {
+    // No log, nothing referenced — but also nothing that could have been.
+  }
+  let archives: string[] = [];
+  try {
+    archives = await readdir(join(stateDir, 'runs'));
+  } catch {
+    archives = [];
+  }
+  for (const name of archives) {
+    try {
+      mark(await readFile(join(stateDir, 'runs', name), 'utf8'));
+    } catch {
+      // Unreadable archive: refuse to sweep rather than collect its blobs.
+      return;
+    }
+  }
+
+  const { BlobStore } = await import('../daemon/blobs.js');
+  // No age floor here: `down` means nobody is composing a message, so there is
+  // no just-uploaded blob waiting to be referenced.
+  await new BlobStore(stateDir).sweep(keep, Date.now(), 0);
 }
 
 async function isRegistered(root: string, worktree: string): Promise<boolean> {

@@ -86,6 +86,11 @@ function transportInstructions(tier: Tier, tags?: readonly MessageTag[]): string
       'Call `inbox()` first. If `job` is set, that is the work. If next is idle, wait.',
       ...(guide === undefined ? [] : [guide]),
       '`say({tag, head, to, ref})` — the head is the message, in one line. `to` sends it to one seat and nobody else reads it. Put depth behind `ref`.',
+      // Named because a tool property nobody knows about is one nobody uses:
+      // `to` existed for the whole vault run and twelve of 1187 messages used
+      // it. Kept to one line — the brief has a length budget, and this line
+      // cost 101 characters more than it had.
+      '`attach: ["path"]` on `say` sends files. Repo paths only.',
       '`act({kind:"ack"|"assign"|"done"|"accept"|"reject"})` for tasks. `claim({kind})` only for contradictions.',
       'Confirm `inbox()` says `you` is you before you write.',
     ].join('\n');

@@ -20,6 +20,18 @@ export interface HarnessDescriptor {
    * not of Crosstalk.
    */
   turnFormat?: TurnFormat;
+  /**
+   * The settings dialect this harness reads, when it has one crosstalk writes.
+   *
+   * Named rather than inferred from the key. `init` decided whether to write
+   * hook settings and a trust flag with `harness.startsWith('claude-code')`,
+   * the daemon decided whether a seat was watchable with
+   * `harness.endsWith('-live')`, and the hub decided which mark to draw with
+   * `startsWith('codex')` — three places pattern-matching a naming convention
+   * that is not a contract. A harness added under a name nobody anticipated
+   * gets nothing, silently, and renaming one breaks behaviour nothing mentions.
+   */
+  settings?: 'claude-code';
   /** How this harness is named in the hub. Falls back to its key. */
   label?: string;
   /**
@@ -97,6 +109,7 @@ function descriptorFrom(key: string, raw: unknown): HarnessDescriptor {
     ...(turnFormat === undefined ? {} : { turnFormat }),
     ...(label === undefined ? {} : { label }),
     ...(models === undefined ? {} : { models: [...models] as string[] }),
+    ...(typeof raw.settings === 'string' ? { settings: raw.settings as 'claude-code' } : {}),
   };
 }
 

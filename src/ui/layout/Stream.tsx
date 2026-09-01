@@ -1,4 +1,4 @@
-import { createElement } from 'react';
+import { createElement, useLayoutEffect, useRef } from 'react';
 import type { Claim } from '../../contracts/claim.js';
 import type { CrosstalkEvent } from '../../contracts/events.js';
 import { HUMAN_ID } from '../../contracts/room.js';
@@ -36,6 +36,14 @@ export interface StreamProps {
   onSend?: (body: string) => Promise<PostResult>;
   onVote?: (decisionId: string, option: string, rationale: string) => Promise<PostResult>;
   onHumanAction?: (action: HumanAction) => void;
+  /**
+   * Rendered but not shown, while a seat's terminal has the centre column.
+   *
+   * The board is hidden rather than unmounted so its scroll position, every
+   * expanded message and any half-written composer draft are still there when
+   * the operator comes back.
+   */
+  hidden?: boolean;
 }
 
 const ICONS: Record<string, string> = { floor: '#', task: '◇', dispute: '⚔', direct: '@' };
@@ -62,6 +70,69 @@ function kindOf(roomId: string | undefined): string {
   return 'direct';
 }
 
+/**
+ * How close to the bottom still counts as being at the bottom.
+ *
+ * A reader who has scrolled up by a line is still reading the end and wants the
+ * next message; one who has scrolled up by a screen is reading something and
+ * must not be yanked away from it.
+ */
+const STICK_SLACK_PX = 40;
+
+/**
+ * Remember where the operator was, per room.
+ *
+ * Nothing in the hub restored a scroll position, which had three separate
+ * symptoms and one cause. A freshly mounted stream sat at `scrollTop = 0` — the
+ * oldest event in the room, and on a run of 1187 events a very long way from
+ * anything current. Switching rooms carried the previous room's offset over and
+ * let the browser clamp it. And new events arriving over SSE never scrolled at
+ * all, so a message could land below the fold in silence.
+ *
+ * Hiding matters here too: the board is now hidden rather than unmounted while
+ * a seat's terminal has the centre column, and a `display: none` element has
+ * its `scrollTop` reset to zero by the browser. The offset is therefore kept in
+ * a ref that is written on every scroll, not read back off the element when it
+ * is time to restore.
+ */
+function useStreamScroll(room: string, hidden: boolean, depth: number) {
+  const scroller = useRef<{ scrollTop: number; scrollHeight: number; clientHeight: number } | null>(null);
+  const offsets = useRef(new Map<string, number>());
+  const shown = useRef<string | undefined>(undefined);
+  const stick = useRef(true);
+
+  const remember = (): void => {
+    const el = scroller.current;
+    if (el === null || hidden) return;
+    offsets.current.set(room, el.scrollTop);
+    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_SLACK_PX;
+  };
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el === null || hidden) {
+      // Leaving `shown` alone: coming back from a terminal has to look like
+      // arriving in the room again, so the saved offset is put back.
+      shown.current = undefined;
+      return;
+    }
+
+    if (shown.current !== room) {
+      const saved = offsets.current.get(room);
+      // A room never opened before starts at the newest message, not the
+      // oldest. That is what "open the room" means.
+      el.scrollTop = saved ?? el.scrollHeight;
+      stick.current = saved === undefined;
+      shown.current = room;
+      return;
+    }
+
+    if (stick.current) el.scrollTop = el.scrollHeight;
+  }, [room, hidden, depth]);
+
+  return { scroller, remember };
+}
+
 export function Stream({
   events,
   activeRoom,
@@ -74,10 +145,15 @@ export function Stream({
   onSend,
   onVote,
   onHumanAction,
+  hidden,
 }: StreamProps) {
   const visibleEvents = (activeRoom ? events.filter((event) => event.room === activeRoom) : events)
     .slice()
     .sort((left, right) => left.seq - right.seq);
+  // Depth, not the array: a re-render that changed nothing about the log must
+  // not move the operator, and the whole log is re-projected and re-sorted on a
+  // two-second timer.
+  const { scroller, remember } = useStreamScroll(activeRoom ?? '#floor', hidden === true, visibleEvents.length);
   const claims = new Map<string, Claim>();
   const staleShas = new Set<string>();
   const roster = new Map((participants ?? []).map((participant) => [participant.id, participant]));
@@ -154,7 +230,13 @@ export function Stream({
 
   return createElement(
     'section',
-    { className: 'hub-region hub-stream', 'aria-label': 'event stream', 'data-testid': 'hub-region' },
+    {
+      className: 'hub-region hub-stream',
+      'aria-label': 'event stream',
+      'data-testid': 'hub-region',
+      'data-region': 'stream',
+      ...(hidden === true ? { hidden: true } : {}),
+    },
     createElement(
       'header',
       { className: 'stream-head' },
@@ -170,7 +252,12 @@ export function Stream({
     ),
     createElement(
       'div',
-      { className: 'stream-scroll' },
+      {
+        className: 'stream-scroll',
+        'data-testid': 'stream-scroll',
+        ref: scroller,
+        onScroll: remember,
+      },
       // An empty room is a first run, not a fault — the design says so on the
       // screen rather than leaving a blank panel.
       visibleEvents.length === 0 && !isDispute

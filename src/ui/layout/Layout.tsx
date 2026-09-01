@@ -67,6 +67,7 @@ export function Layout({
   onCloseSession,
 }: LayoutProps) {
   const seat = sessions?.seats.find((candidate) => candidate.id === openSeat);
+  const showingSeat = seat !== undefined && onCloseSession !== undefined;
   const mirrored = new Set((sessions?.seats ?? []).filter((s) => s.mirrored === true).map((s) => s.id));
 
   return createElement(
@@ -90,9 +91,16 @@ export function Layout({
     // The seat's terminal takes the centre column rather than opening beside
     // it. A mirror squeezed into a dock is a terminal you cannot read, and
     // reading it is the entire reason to open one.
-    seat !== undefined && onCloseSession !== undefined
-      ? createElement(SessionPanel, { seat, onClose: onCloseSession })
-      : createElement(Stream, {
+    //
+    // Both are rendered, and the board is hidden rather than swapped out. These
+    // shared one slot, and React reconciles by component type: a type change at
+    // a position unmounts the whole subtree and mounts a new one. So every trip
+    // to a CLI and back destroyed `.stream-scroll` and built a fresh one at the
+    // top of the log — 1187 events from where the operator was reading — along
+    // with every expanded message and any half-written composer draft. Nothing
+    // in `src/ui/` restores a scroll position, so nothing put it back.
+    createElement(Stream, {
+      hidden: showingSeat,
       events: state.events,
       activeRoom,
       rooms: state.rooms,
@@ -105,6 +113,7 @@ export function Layout({
       onVote,
       onHumanAction,
     }),
+    showingSeat ? createElement(SessionPanel, { seat, onClose: onCloseSession! }) : null,
     createElement(Dock, {
       events: state.events,
       participants: state.participants,

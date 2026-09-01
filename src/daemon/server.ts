@@ -857,12 +857,25 @@ class Daemon {
       // Not an event: it never reaches the log, so it never reaches the
       // projection and never competes with what was decided. A harness hook
       // calls this on every tool use, which is thousands of times a run.
-      const payload = (await readJsonBody(request)) as { verb?: unknown; path?: unknown; working?: unknown };
+      const payload = (await readJsonBody(request)) as {
+        verb?: unknown;
+        path?: unknown;
+        working?: unknown;
+        blocked?: unknown;
+      };
       const verb = typeof payload.verb === 'string' ? payload.verb : 'working';
       const file = typeof payload.path === 'string' ? payload.path : undefined;
+      // An empty string clears it, so the supervisor can report recovery
+      // without inventing a reason.
+      const blocked = typeof payload.blocked === 'string' && payload.blocked !== '' ? payload.blocked : undefined;
       this.#presence.note(
         who,
-        { verb, working: payload.working !== false, ...(file === undefined ? {} : { path: file }) },
+        {
+          verb,
+          working: payload.working !== false,
+          ...(file === undefined ? {} : { path: file }),
+          ...(blocked === undefined ? {} : { blocked }),
+        },
         Date.now(),
       );
       send(response, 204, {});

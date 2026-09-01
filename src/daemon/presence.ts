@@ -43,6 +43,16 @@ export interface Activity {
   path?: string;
   /** False once the harness reports the turn finished. */
   working: boolean;
+  /**
+   * Why the seat cannot be handed the board, when it cannot.
+   *
+   * Reported by the supervisor rather than by the seat, because a seat sitting
+   * on its own confirmation dialog is by definition not running hooks. Separate
+   * from `verb` on purpose: "what it is doing" and "whether it can be reached"
+   * are different facts, and the vault-team run spent 622 board events
+   * conflating them.
+   */
+  blocked?: string;
   at: number;
 }
 

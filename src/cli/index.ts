@@ -22,6 +22,7 @@ import { HUMAN_ID } from '../contracts/room.js';
 import { SHAPES } from '../core/shape.js';
 import type { MirrorMode } from '../contracts/config.js';
 import { dmId } from '../core/rooms.js';
+import { ledgerOf, renderLedger } from '../core/ledger.js';
 
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
 import { runCompose } from './compose.js';
@@ -38,6 +39,7 @@ const USAGE = `crosstalk — multi-agent development where a finding is a claim,
   crosstalk down [--as <id>] [--purge]
   crosstalk doctor
   crosstalk github <url> [--login <gh-login>] [--mode one-way|two-way-human]
+  crosstalk ledger [--json]        what the last run cost, per seat
 
   ct inbox    [--as <id>] [--timeout 0] [--no-wait]
   ct say      --as <id> --tag <tag> --head '...' [--to <id>] [--room '#floor'] [--ref R] [--body '...']
@@ -921,6 +923,46 @@ async function cmdMine(argv: string[]): Promise<number> {
  * across regenerations now; this is the other half, so nobody has to know the
  * shape in the first place.
  */
+/**
+ * What the last run cost, per seat, from the log it already wrote.
+ *
+ * Reads the file rather than the daemon, so it works on a finished run and on a
+ * repo whose daemon is down — which is when somebody actually asks.
+ */
+async function cmdLedger(argv: string[]): Promise<number> {
+  const { flags } = read(argv, { json: { type: 'boolean' } });
+  const repo = resolve(str(flags, 'repo') ?? '.');
+  const path = join(repo, '.crosstalk', 'events.jsonl');
+
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch {
+    throw new CliError(
+      `no log at ${path}`,
+      EXIT.protocol,
+      'A ledger is a projection over the log, so there has to have been a run.',
+    );
+  }
+
+  const events = raw
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as CrosstalkEvent];
+      } catch {
+        // A half-written final line is what an append-only log looks like while
+        // it is being appended to. Skip it rather than refuse the whole report.
+        return [];
+      }
+    });
+
+  const ledger = ledgerOf(events);
+  process.stdout.write(flags.json === true ? `${JSON.stringify(ledger, null, 2)}\n` : `${renderLedger(ledger)}\n`);
+  return EXIT.ok;
+}
+
 async function cmdGithub(argv: string[]): Promise<number> {
   const { flags, rest } = read(argv, {
     login: { type: 'string' },
@@ -977,6 +1019,7 @@ const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   down: cmdDown,
   doctor: cmdDoctor,
   github: cmdGithub,
+  ledger: cmdLedger,
   inbox: cmdInbox,
   say: cmdSay,
   act: cmdAct,

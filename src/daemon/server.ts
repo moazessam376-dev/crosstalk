@@ -796,6 +796,10 @@ class Daemon {
             models: discovered.models.map((model) => model.id),
             catalogue: discovered.models,
             modelSource: discovered.source,
+            // Whether a seat on this harness can be watched in the hub. The
+            // launcher was reading a `-live` suffix, which is a naming
+            // convention rather than a contract.
+            watchable: descriptor.turnFormat === 'interactive',
           };
         }),
       );
@@ -834,6 +838,7 @@ class Daemon {
       // a transcript.
       const now = Date.now();
       const phase = await this.phase();
+      const registry = await loadRegistry();
       send(response, 200, {
         phase: phase ?? null,
         seats: this.#config.participants
@@ -848,8 +853,11 @@ class Daemon {
             present: this.#presence.isPresent(participant.id, now),
             activity: this.#presence.activityOf(participant.id, now) ?? null,
             // Seats launched interactive are named after themselves, so this is
-            // the handle to attach to from a phone.
-            remoteControl: participant.harness.endsWith('-live') ? participant.id : null,
+            // the handle to attach to from a phone. Which ones those are is the
+            // registry's `turnFormat`, not a suffix on the key — the suffix is
+            // a naming convention and this was reading it as a contract.
+            remoteControl:
+              registry.get(participant.harness)?.turnFormat === 'interactive' ? participant.id : null,
             // Whether this daemon holds the pipe. A seat someone started in
             // their own terminal is real and working and cannot be mirrored,
             // and the hub must say so rather than draw a dead terminal.

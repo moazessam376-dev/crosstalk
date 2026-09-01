@@ -29,6 +29,8 @@ export interface LauncherProps {
     /** Richer than `models` where the binary answered: labels and efforts. */
     catalogue?: readonly { id: string; label: string; efforts?: string[] }[];
     modelSource?: string;
+    /** Whether a seat on this harness gets a mirrored terminal. */
+    watchable?: boolean;
   }[];
   launching?: boolean;
   onLaunch: (request: { job: string; shape?: string; seats: string[] }) => Promise<PostResult>;
@@ -44,7 +46,10 @@ export interface LauncherProps {
  * `claude-fable-5` went missing.
  */
 const FALLBACK_HARNESSES: NonNullable<LauncherProps['catalog']> = [
-  { id: 'claude-code-live', label: 'Claude Code · interactive', models: [] },
+  // Watchable, because it is: this entry is the interactive Claude Code
+  // harness, and a fallback that understated what it is would make the hub
+  // claim fewer watchable seats than it has.
+  { id: 'claude-code-live', label: 'Claude Code · interactive', models: [], watchable: true },
 ];
 
 /**
@@ -223,7 +228,12 @@ export function Launcher({ shapes, launching, onLaunch, running = [], catalog }:
     else setJob('');
   };
 
-  const watchable = seats.filter((seat) => seat.harness.endsWith('-live')).length;
+  // Asked of the catalogue, not pattern-matched off the key: `-live` is a
+  // naming convention and this was reading it as a contract, so a watchable
+  // harness named anything else would have been counted as unwatchable.
+  const watchable = seats.filter(
+    (seat) => harnesses.find((entry) => entry.id === seat.harness)?.watchable === true,
+  ).length;
 
   const shapeCards = shapes.map((entry) =>
     h(

@@ -97,10 +97,17 @@ export function MessageCard({
   testId = 'message-card',
 }: MessageCardProps) {
   const [expanded, setExpanded] = useState(false);
-  // With a head, "is there more" is a fact rather than an estimate: `body`
-  // holds the head itself when the author wrote nothing else, so the two being
-  // equal means there is nothing behind the fold.
-  const long = head === undefined ? body.length > PREVIEW_LIMIT : body !== head;
+  // Two questions, and they are different. Is there a body at all — `body` holds
+  // the head itself when the author wrote nothing else, so equality means no.
+  // And is that body long enough to be worth folding, which is still a length
+  // question and still roughly the four lines the CSS clamps at.
+  //
+  // Answering only the first was the same mismatch from the other side: a
+  // two-line body under a head got an expander that revealed nothing, exactly
+  // as a 330-character body did when the JS gated on 320 characters and the CSS
+  // clamped on lines.
+  const hasBody = head === undefined || body !== head;
+  const long = hasBody && body.length > PREVIEW_LIMIT;
   const collapsed = long && !expanded;
 
   const identity = identityFor(
@@ -146,16 +153,16 @@ export function MessageCard({
         : createElement('p', { className: 'message-head', 'data-testid': 'message-head' }, head),
       // Hidden entirely when the head is the whole message, rather than
       // repeated under itself.
-      head !== undefined && !long
-        ? null
-        : createElement(
+      hasBody
+        ? createElement(
             'p',
             {
               className: collapsed ? 'message-body is-clamped' : 'message-body',
               'data-testid': 'message-body',
             },
             body,
-          ),
+          )
+        : null,
       long
         ? createElement(
             'button',

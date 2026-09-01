@@ -1076,6 +1076,16 @@ button:focus-visible {
   overflow: hidden;
 }
 
+/* The board is hidden, not unmounted, while a seat's terminal has the centre
+   column — that is what keeps its scroll position, its expanded messages and a
+   half-written composer draft alive across the round trip. `display: flex`
+   above beats the user-agent rule for `[hidden]`, so this has to be said, and
+   `display: none` rather than `visibility` so the element leaves the grid and
+   `.session-panel` takes the track it was in. */
+.hub-stream[hidden] {
+  display: none;
+}
+
 .stream-head {
   display: flex;
   align-items: center;

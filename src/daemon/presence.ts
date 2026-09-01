@@ -26,12 +26,62 @@ export const PRESENCE_TTL_MS = 5 * 60_000;
  * Presence is a fact about now. The log is the record of what was decided.
  * They do not belong in the same place.
  */
+/**
+ * What a seat is doing right now.
+ *
+ * Not an event, and deliberately. Beacon-1's board carried roughly twenty
+ * messages asking what a seat was working on, and the answers were wrong often
+ * enough that one seat spent 21 minutes rebuilding a file another had already
+ * finished. The fix is to make it *state* — one row per seat, overwritten —
+ * rather than history: a tool-call ping per edit would have buried 87 real
+ * events under thousands.
+ */
+export interface Activity {
+  /** `Edit`, `Bash`, `Read` — whatever the harness calls the thing it just did. */
+  verb: string;
+  /** The file it touched, when there was one. */
+  path?: string;
+  /** False once the harness reports the turn finished. */
+  working: boolean;
+  /**
+   * Why the seat cannot be handed the board, when it cannot.
+   *
+   * Reported by the supervisor rather than by the seat, because a seat sitting
+   * on its own confirmation dialog is by definition not running hooks. Separate
+   * from `verb` on purpose: "what it is doing" and "whether it can be reached"
+   * are different facts, and the vault-team run spent 622 board events
+   * conflating them.
+   */
+  blocked?: string;
+  at: number;
+}
+
 export class Presence {
   readonly #lastSeen = new Map<ParticipantId, number>();
+  readonly #activity = new Map<ParticipantId, Activity>();
 
   /** Called on every authenticated request. */
   touch(who: ParticipantId, now: number): void {
     this.#lastSeen.set(who, now);
+  }
+
+  /** Reported by the harness itself, through a hook. Overwrites; never appends. */
+  note(who: ParticipantId, activity: Omit<Activity, 'at'>, now: number): void {
+    this.#activity.set(who, { ...activity, at: now });
+    this.#lastSeen.set(who, now);
+  }
+
+  /**
+   * What this seat is doing, or nothing if it has not reported.
+   *
+   * Stale entries are dropped rather than aged: "editing harbor.ts, 40 minutes
+   * ago" reads as a fact about now and is the exact shape of wrong answer that
+   * caused the duplicated build.
+   */
+  activityOf(who: ParticipantId, now: number): Activity | undefined {
+    const found = this.#activity.get(who);
+    if (found === undefined || now - found.at >= PRESENCE_TTL_MS) return undefined;
+    return found;
   }
 
   /** For ranking: the ladder wants recency, not a boolean, so there is no cliff. */

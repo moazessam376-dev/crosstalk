@@ -15,7 +15,7 @@ export const TASK_TRANSITIONS = {
   // happened. The projection folds without validating, so `rebase_notice`
   // moves the task anyway — this table's job is to keep clients off that leg,
   // not to describe every move the log can make.
-  submitted: ['under_review'],
+  submitted: ['under_review', 'accepted', 'in_progress'],
   under_review: ['resolving', 'accepted'],
   resolving: ['under_review', 'accepted'],
   accepted: ['merged'],

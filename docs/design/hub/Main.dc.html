@@ -1,0 +1,248 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body {
+      margin: 0;
+      background: #0a0a0a;
+      color: #f2f2f3;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+    }
+    a { color: #5b8dee; }
+    a:hover { color: #7ea6f2; }
+    .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", monospace; }
+    button { font: inherit; cursor: pointer; }
+    ::placeholder { color: #6e6e78; }
+  </style>
+</helmet>
+
+<div style="min-height: 900px; display: flex; flex-direction: column; background: #0a0a0a;">
+
+  <!-- view switch, the shipped .hub-views -->
+  <div style="display: flex; gap: 2px; padding: 8px 14px 0; border-bottom: 1px solid #232326; background: #0a0a0a;">
+    <div style="font-size: 12.5px; color: #6e6e78; padding: 7px 13px; border-bottom: 2px solid transparent;">Board</div>
+    <div style="font-size: 12.5px; color: #f2f2f3; padding: 7px 13px; border-bottom: 2px solid #5b8dee;">Start a run</div>
+  </div>
+
+  <div style="flex-grow: 1; display: flex; flex-direction: column; align-items: center; padding: 40px 32px 64px;">
+    <div style="width: 100%; max-width: 940px; display: flex; flex-direction: column; gap: 34px;">
+
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <div style="font-size: 22px; font-weight: 600; letter-spacing: -0.01em;">Start a run</div>
+        <div style="color: #a3a3aa;">Pick how the team works, who sits in it, and what they are building.</div>
+      </div>
+
+      <!-- WHO -->
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="mono" style="font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #6e6e78;">You</div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="border: 1px solid #2a2a2e; border-radius: 8px; background: #121212; padding: 10px 14px; min-width: 260px; color: #f2f2f3;" class="mono">{{name}}</div>
+          <div style="font-size: 12.5px; color: #6e6e78;">{{nameNote}}</div>
+        </div>
+      </div>
+
+      <!-- SHAPE -->
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="mono" style="font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #6e6e78;">Shape</div>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+          <sc-for list="{{shapes}}" as="shape" hint-placeholder-count="2">
+            <div style="{{shape.cardStyle}}">
+              <div class="mono" style="font-size: 13px; font-weight: 500; color: #f2f2f3;">{{shape.name}}</div>
+              <div style="font-size: 12.5px; color: #a3a3aa; line-height: 1.45;">{{shape.summary}}</div>
+              <div class="mono" style="font-size: 11px; color: #6e6e78;">{{shape.rail}}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <!-- HOW MANY -->
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="mono" style="font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #6e6e78;">How many sessions</div>
+        <div style="display: flex; align-items: center; gap: 14px;">
+          <div style="display: flex; align-items: center; border: 1px solid #232326; border-radius: 8px; background: #121212; overflow: hidden;">
+            <div style="padding: 9px 15px; color: #a3a3aa; border-right: 1px solid #232326;">&minus;</div>
+            <div class="mono" style="padding: 9px 22px; font-size: 15px; color: #f2f2f3; min-width: 58px; text-align: center;">{{count}}</div>
+            <div style="padding: 9px 15px; color: #a3a3aa; border-left: 1px solid #232326;">+</div>
+          </div>
+          <div style="font-size: 12.5px; color: #a3a3aa;">{{countNote}}</div>
+        </div>
+      </div>
+
+      <!-- DEFAULTS: harness / model / effort -->
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="mono" style="font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #6e6e78;">Every seat starts as</div>
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;">
+
+          <div style="display: flex; flex-direction: column; gap: 7px;">
+            <div style="font-size: 12px; color: #a3a3aa;">Harness</div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <sc-for list="{{harnesses}}" as="h" hint-placeholder-count="4">
+                <div style="{{h.rowStyle}}">
+                  <span class="mono" style="font-size: 12px;">{{h.label}}</span>
+                  <span class="mono" style="{{h.tagStyle}}">{{h.tag}}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 7px;">
+            <div style="font-size: 12px; color: #a3a3aa;">Model</div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <sc-for list="{{models}}" as="m" hint-placeholder-count="3">
+                <div style="{{m.rowStyle}}"><span class="mono" style="font-size: 12px;">{{m.label}}</span></div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 7px;">
+            <div style="font-size: 12px; color: #a3a3aa;">Effort</div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <sc-for list="{{efforts}}" as="e" hint-placeholder-count="3">
+                <div style="{{e.rowStyle}}"><span class="mono" style="font-size: 12px;">{{e.label}}</span></div>
+              </sc-for>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ROSTER -->
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="mono" style="font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #6e6e78; display: flex; gap: 12px; align-items: baseline;">
+          <span>Seats</span>
+          <span style="letter-spacing: 0; text-transform: none; color: #4a9d5f;">{{watchNote}}</span>
+        </div>
+        <div style="border: 1px solid #232326; border-radius: 8px; background: #121212; overflow: hidden;">
+          <div style="display: grid; grid-template-columns: 1.1fr 0.8fr 1.5fr 1.4fr 0.7fr; gap: 8px; padding: 7px 12px; background: #171717; border-bottom: 1px solid #232326;">
+            <div class="mono" style="font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: #6e6e78;">Name</div>
+            <div class="mono" style="font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: #6e6e78;">Role</div>
+            <div class="mono" style="font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: #6e6e78;">Harness</div>
+            <div class="mono" style="font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: #6e6e78;">Model</div>
+            <div class="mono" style="font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: #6e6e78;">Effort</div>
+          </div>
+          <sc-for list="{{seats}}" as="seat" hint-placeholder-count="3">
+            <div style="display: grid; grid-template-columns: 1.1fr 0.8fr 1.5fr 1.4fr 0.7fr; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #232326; align-items: center;">
+              <div class="mono" style="font-size: 12px; color: #f2f2f3;">{{seat.id}}</div>
+              <div class="mono" style="font-size: 12px; color: #a3a3aa;">{{seat.role}}</div>
+              <div class="mono" style="font-size: 12px; color: #a3a3aa;">{{seat.harness}}</div>
+              <div class="mono" style="font-size: 12px; color: #a3a3aa;">{{seat.model}}</div>
+              <div class="mono" style="font-size: 12px; color: #a3a3aa;">{{seat.effort}}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <!-- PROMPT -->
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="mono" style="font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #6e6e78;">The job</div>
+        <div style="border: 1px solid #232326; border-radius: 8px; background: #121212; padding: 14px 16px; min-height: 132px; color: #6e6e78; font-size: 13px; line-height: 1.6; white-space: pre-line;">{{promptText}}</div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 16px;">
+        <div style="background: #5b8dee; color: #0a0a0a; border-radius: 8px; padding: 10px 22px; font-size: 13px; font-weight: 500;">Start the run</div>
+        <div class="mono" style="font-size: 11.5px; color: #6e6e78;">{{footNote}}</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "name": {"editor": "text", "default": "moaz", "section": "Run"},
+  "shape": {"editor": "enum", "options": ["trio-contract", "solo"], "default": "trio-contract", "section": "Run"},
+  "count": {"editor": "int", "min": 1, "max": 6, "default": 3, "section": "Run"},
+  "harness": {"editor": "enum", "options": ["claude-code-live", "claude-code-cli", "codex-cli", "cursor-cli"], "default": "claude-code-live", "section": "Defaults"},
+  "model": {"editor": "enum", "options": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"], "default": "claude-opus-5", "section": "Defaults"},
+  "effort": {"editor": "enum", "options": ["high", "medium", "low"], "default": "high", "section": "Defaults"},
+  "$preview": {"width": 1440, "height": 900}
+}'>
+class Component extends DCLogic {
+  renderVals() {
+    const name = (this.props.name ?? '').trim() === '' ? 'you' : this.props.name.trim();
+    const shape = this.props.shape ?? 'trio-contract';
+    const count = Math.max(1, Math.min(6, this.props.count ?? 3));
+    const harness = this.props.harness ?? 'claude-code-live';
+    const model = this.props.model ?? 'claude-opus-5';
+    const effort = this.props.effort ?? 'high';
+
+    const card = (on) =>
+      'display: flex; flex-direction: column; gap: 7px; padding: 15px 16px; border-radius: 8px;'
+      + (on
+        ? ' background: #171717; border: 1px solid #5b8dee;'
+        : ' background: #121212; border: 1px solid #232326;');
+
+    const row = (on) =>
+      'display: flex; align-items: center; justify-content: space-between; gap: 8px;'
+      + ' padding: 8px 11px; border-radius: 8px;'
+      + (on
+        ? ' background: #171717; border: 1px solid #5b8dee; color: #f2f2f3;'
+        : ' background: #121212; border: 1px solid #232326; color: #a3a3aa;');
+
+    const shapes = [
+      {
+        name: 'trio-contract',
+        summary: 'Three peers, one frozen contract, one of them integrates and repairs.',
+        rail: 'plan → build → verify → repair',
+      },
+      { name: 'solo', summary: 'One builder, verifying its own work.', rail: 'build → verify' },
+    ].map((s) => ({ ...s, cardStyle: card(s.name === shape) }));
+
+    const harnesses = [
+      { id: 'claude-code-live', label: 'Claude Code · interactive', tag: 'watchable' },
+      { id: 'claude-code-cli', label: 'Claude Code · headless', tag: '' },
+      { id: 'codex-cli', label: 'Codex', tag: '' },
+      { id: 'cursor-cli', label: 'Cursor', tag: '' },
+    ].map((h) => ({
+      ...h,
+      rowStyle: row(h.id === harness),
+      tagStyle: h.tag === '' ? 'display: none;' : 'font-size: 11px; color: #4a9d5f;',
+    }));
+
+    const models = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5']
+      .map((label) => ({ label, rowStyle: row(label === model) }));
+    const efforts = ['high', 'medium', 'low']
+      .map((label) => ({ label, rowStyle: row(label === effort) }));
+
+    const seatCount = shape === 'solo' ? 1 : count;
+    const seats = [];
+    for (let i = 0; i < seatCount; i += 1) {
+      seats.push({
+        id: seatCount === 1 ? 'peer' : 'peer-' + (i + 1),
+        role: 'peer',
+        harness,
+        model,
+        effort,
+      });
+    }
+
+    const watchable = harness === 'claude-code-live' ? seatCount : 0;
+
+    return {
+      name,
+      nameNote: 'Every message you post is signed ' + name + ' — on the board, and in the log for good.',
+      shapes,
+      harnesses,
+      models,
+      efforts,
+      seats,
+      count: seatCount,
+      countNote: shape === 'solo'
+        ? 'The solo shape seats one. Switch shape to add more.'
+        : 'Each session is its own git worktree, its own branch, its own CLI.',
+      watchNote: watchable > 0 ? watchable + ' watchable from your phone' : '',
+      promptText: 'Continue Vault. Fix the elevator when a dweller is already in the car — it is only\nwrong in real time, so tick() will not show it. Add drag-and-drop assignment,\nraiders and radio recruitment, and a first-run tutorial: nothing teaches the game.',
+      footNote: seatCount + (seatCount === 1 ? ' seat · ' : ' seats · ') + shape,
+    };
+  }
+}
+</script>
+</body>
+</html>

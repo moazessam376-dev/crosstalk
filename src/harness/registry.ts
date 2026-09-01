@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
 import type { Tier } from '../contracts/index.js';
+import type { TurnFormat } from './session.js';
 
 export interface HarnessDescriptor {
   key: string;
@@ -12,6 +13,25 @@ export interface HarnessDescriptor {
   mcpConfigPath?: string;
   supervisable: boolean;
   spawn?: string[];
+  /**
+   * How this harness takes a turn once it is running. Absent means it cannot:
+   * it reads its prompt once, and a supervisor must fall back to letting the
+   * seat pull. Declared per harness because it is a property of the binary,
+   * not of Crosstalk.
+   */
+  turnFormat?: TurnFormat;
+  /** How this harness is named in the hub. Falls back to its key. */
+  label?: string;
+  /**
+   * The models a seat on this harness can be put on.
+   *
+   * Declared here rather than in the hub because it is a property of the
+   * binary: Codex does not run Claude models and the launcher has no business
+   * knowing which does. The picker was a single hard-coded list, so a Codex
+   * seat was offered Claude models and `claude-fable-5` could not be chosen at
+   * all — nobody had added it to an array in a React file.
+   */
+  models?: string[];
 }
 
 const MCP_KINDS = new Set<HarnessDescriptor['mcp']>(['stdio', 'http', 'unverified', 'none']);
@@ -45,6 +65,21 @@ function descriptorFrom(key: string, raw: unknown): HarnessDescriptor {
     throw new Error(`Harness ${key} has an invalid spawn command`);
   }
 
+  const turnFormat = raw.turnFormat;
+  if (turnFormat !== undefined && turnFormat !== 'stream-json' && turnFormat !== 'interactive') {
+    throw new Error(`Harness ${key} has an invalid turnFormat`);
+  }
+
+  const label = raw.label;
+  if (label !== undefined && typeof label !== 'string') {
+    throw new Error(`Harness ${key} has an invalid label`);
+  }
+
+  const models = raw.models;
+  if (models !== undefined && (!Array.isArray(models) || !models.every((m) => typeof m === 'string'))) {
+    throw new Error(`Harness ${key} has an invalid models list`);
+  }
+
   return {
     key,
     briefFile: requiredString(raw.briefFile, 'briefFile', key),
@@ -52,6 +87,9 @@ function descriptorFrom(key: string, raw: unknown): HarnessDescriptor {
     ...(mcpConfigPath === undefined ? {} : { mcpConfigPath }),
     supervisable: raw.supervisable === true,
     ...(spawn === undefined ? {} : { spawn: [...spawn] as string[] }),
+    ...(turnFormat === undefined ? {} : { turnFormat }),
+    ...(label === undefined ? {} : { label }),
+    ...(models === undefined ? {} : { models: [...models] as string[] }),
   };
 }
 

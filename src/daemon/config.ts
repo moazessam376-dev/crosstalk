@@ -76,6 +76,12 @@ export async function loadConfig(repo: string): Promise<CrosstalkConfig> {
     project: candidate.project ?? { repo: '.', mainBranch: 'main' },
     participants: candidate.participants,
     policy: candidate.policy ?? DEFAULT_POLICY,
+    // Carried through explicitly, like `mirror`. The normaliser rebuilds the
+    // object rather than spreading the parsed yaml, so a key it does not name
+    // is silently dropped — which is how a roster with `shape:` in it reported
+    // no shape configured.
+    ...(candidate.shape === undefined ? {} : { shape: candidate.shape }),
+    ...(candidate.contractPath === undefined ? {} : { contractPath: candidate.contractPath }),
     ...(candidate.mirror === undefined ? {} : { mirror: candidate.mirror }),
   };
 }

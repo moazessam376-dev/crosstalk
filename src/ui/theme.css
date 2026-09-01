@@ -1,15 +1,22 @@
 :root {
   color-scheme: dark;
 
-  --surface-base: #0d1117;
-  --surface-panel: #111820;
-  --surface-raised: #18222d;
-  --border-hairline: #2a3542;
+  /*
+   * Neutrals are near-black rather than blue-black. The hub used GitHub's
+   * palette, which reads as "a GitHub page" no matter what is on it; this is
+   * the vocabulary the Codex and T3 Code apps use, and the point of it is that
+   * the surface recedes far enough for a terminal to sit on it without the two
+   * fighting.
+   */
+  --surface-base: #0a0a0a;
+  --surface-panel: #121212;
+  --surface-raised: #171717;
+  --border-hairline: #232326;
 
-  --text-primary: #e6edf3;
-  --text-secondary: #9da7b3;
-  --text-tertiary: #6f7c8a;
-  --accent: #58a6ff;
+  --text-primary: #f2f2f3;
+  --text-secondary: #a3a3aa;
+  --text-tertiary: #6e6e78;
+  --accent: #5b8dee;
 
   --status-fresh: #3fb950;
   --status-stale: #d29922;
@@ -17,26 +24,67 @@
   --status-blocker: #f85149;
   --status-open: #dbab79;
 
+  /*
+   * GitHub's own pull-request colours, because a PR badge that invents its own
+   * are two vocabularies for one fact. Purple for merged is the part people
+   * read without thinking — it is what GitHub, Codex and Claude Code all use,
+   * and green-for-merged would quietly mean "open" to anyone who knows the
+   * convention.
+   */
+  --pr-open: #3fb950;
+  --pr-merged: #a371f7;
+  --pr-draft: #8b949e;
+  --pr-closed: #f85149;
+
+  /* Vendor marks, used to identify the CLI behind a seat. */
+  --harness-claude: #d97757;
+  --harness-codex: #c9cbd6;
+  --harness-cursor: #b8bac0;
+
+  /*
+   * The sixteen ANSI colours a mirrored terminal folds onto. Tuned to sit on
+   * this ground rather than copied from a terminal profile: a CLI's own palette
+   * is chosen against whatever background its user picked, and dropping that
+   * into this panel is how a mirror ends up the one element on screen wearing
+   * someone else's theme.
+   */
+  --term-0: #1c1c1f;
+  --term-1: #f0665a;
+  --term-2: #5fcf80;
+  --term-3: #e0b556;
+  --term-4: #6ea8fe;
+  --term-5: #c88ef0;
+  --term-6: #55c8d4;
+  --term-7: #c6c6cd;
+  --term-8: #55555f;
+  --term-9: #ff8378;
+  --term-10: #7ce49b;
+  --term-11: #f5cd6f;
+  --term-12: #8fbdff;
+  --term-13: #dcaaff;
+  --term-14: #73e0eb;
+  --term-15: #f6f6f8;
+
   --font-ui: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
   --size-ui: 13px;
   --size-mono: 12.5px;
   --row-h: 30px;
-  --radius: 6px;
+  --radius: 8px;
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --surface-base: #f6f8fa;
+  --surface-base: #f7f7f8;
   --surface-panel: #ffffff;
-  --surface-raised: #eaeef2;
-  --border-hairline: #d0d7de;
+  --surface-raised: #f0f0f2;
+  --border-hairline: #e0e0e4;
 
-  --text-primary: #1f2328;
-  --text-secondary: #59636e;
-  --text-tertiary: #6e7781;
-  --accent: #0969da;
+  --text-primary: #16161a;
+  --text-secondary: #55555f;
+  --text-tertiary: #79798a;
+  --accent: #3563d6;
 
   --status-fresh: #1a7f37;
   --status-stale: #9a6700;
@@ -44,12 +92,38 @@
   --status-blocker: #cf222e;
   --status-open: #bc6b00;
 
+  --pr-open: #1a7f37;
+  --pr-merged: #8250df;
+  --pr-draft: #59636e;
+  --pr-closed: #cf222e;
+
+  --harness-claude: #c25a35;
+  --harness-codex: #40404a;
+  --harness-cursor: #50505a;
+
+  --term-0: #2b2b31;
+  --term-1: #c8352b;
+  --term-2: #1f7a3d;
+  --term-3: #8a6300;
+  --term-4: #2f5fc7;
+  --term-5: #7a3ec2;
+  --term-6: #0f7a86;
+  --term-7: #55555f;
+  --term-8: #8a8a95;
+  --term-9: #e04b3e;
+  --term-10: #2b9451;
+  --term-11: #a87b00;
+  --term-12: #4478e0;
+  --term-13: #9a5ada;
+  --term-14: #1795a3;
+  --term-15: #16161a;
+
   --font-ui: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
   --size-ui: 13px;
   --size-mono: 12.5px;
   --row-h: 30px;
-  --radius: 6px;
+  --radius: 8px;
 }
 
 * {
@@ -114,7 +188,11 @@ button:focus-visible {
 .card-stream {
   display: grid;
   gap: 8px;
-  padding: 0 12px 12px;
+  /* The stream's content column, matched to `.stream-head`'s 14px. The header,
+     the cards and the composer each had their own inset and landed within two
+     pixels of one another — near-alignment reads worse than either aligning or
+     visibly not, because the eye registers the wobble without finding a rule. */
+  padding: 0 14px 12px;
 }
 
 .message-card,
@@ -171,13 +249,29 @@ button:focus-visible {
   font-weight: 600;
 }
 
+/* A state is a dot and a word.
+ *
+ * These were 1px-outlined capsules, and a claim card carries two of them side
+ * by side — so the first thing the eye found on a card full of argument was a
+ * pair of empty lozenges. The colour was already carrying the meaning; the
+ * outline only added a shape competing with it. */
 .state-chip,
 .severity-chip {
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-family: var(--font-mono);
   font-size: 11px;
+}
+
+.state-chip::before,
+.severity-chip::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: currentColor;
 }
 
 .state-chip {
@@ -538,7 +632,9 @@ button:focus-visible {
 }
 
 .composer {
-  margin: 0 12px 12px;
+  /* Its border sits on the stream's column, so the box edge lines up with the
+     message marks above it and its own text insets from there. */
+  margin: 0 14px 12px;
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius);
   background: var(--surface-panel);
@@ -699,9 +795,68 @@ button:focus-visible {
 
 .hub-layout {
   display: grid;
+  /* Sidebar · stream · dock, at the design's widths. */
+  grid-template-columns: 252px minmax(0, 1fr) 316px;
   flex: 1;
   min-height: 0;
   background: var(--surface-base);
+}
+
+/*
+ * A phone.
+ *
+ * The three-region grid does not narrow — it just squeezed the stream to
+ * nothing between a full-width rail and a dock hanging off the right edge, so
+ * the one screen a phone is for was the one screen you could not read. Watching
+ * a run from a phone is why interactive seats exist, so the layout collapses to
+ * a single column: the conversation (or the open terminal) first, the roster
+ * under it, and the room list last, since on a phone you are far more often
+ * checking on a run than switching rooms.
+ */
+@media (max-width: 860px) {
+  .hub-layout {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .hub-region,
+  .hub-stream,
+  .session-panel {
+    overflow: visible;
+  }
+
+  /* Source order is sidebar · stream · dock; reading order is the reverse of
+     the first two, and the terminal outranks both. */
+  .hub-sidebar { order: 3; }
+  .hub-stream,
+  .session-panel { order: 1; }
+  .hub-dock { order: 2; }
+
+  .hub-stream,
+  .session-panel {
+    min-height: 70vh;
+    border-bottom: 1px solid var(--border-hairline);
+  }
+
+  .hub-dock,
+  .hub-sidebar {
+    border-top: 1px solid var(--border-hairline);
+  }
+
+  .sidebar-scroll { overflow-y: visible; }
+
+  /* More specific than `.hub-region`, so it needs saying: a region with its own
+     scrollbar inside a page that already scrolls clips its own cards. */
+  .hub-dock { overflow-y: visible; }
+
+  /* The rail scrolls sideways rather than wrapping: it is a strip of facts,
+     and a wrapped strip stops being one. */
+  .env-rail { gap: 18px; }
+
+  /* A mirrored terminal is a fixed grid by construction — reflowing it would
+     stop it being a mirror — so on a narrow screen it pans instead. */
+  .terminal { overflow: auto; }
 }
 
 /* `min-height: 0` is redundant beside `overflow: hidden` — either one zeroes a
@@ -740,11 +895,18 @@ button:focus-visible {
   letter-spacing: -0.01em;
 }
 
+/* The rail's content column.
+ *
+ * The wordmark, the group labels, the channel rows and the foot each carried
+ * their own inset — 12, 16, 16 and 12 — so the left edge stepped in and out
+ * four times down a 250px rail. The scroller now supplies only the difference
+ * between its children's inner padding (8px) and the column (12px), so every
+ * one of them lands on the same line. */
 .sidebar-scroll {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 0 8px 8px;
+  padding: 0 4px 8px;
 }
 
 .channel-group {
@@ -832,13 +994,21 @@ button:focus-visible {
 
 .human-badge {
   margin-left: auto;
-  border: 1px solid var(--status-open);
-  border-radius: 999px;
-  background: transparent;
-  padding: 1px 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--status-open);
   font-family: var(--font-mono);
   font-size: 10px;
+}
+
+.human-badge::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--status-open);
 }
 
 .human-badge ~ .round-counter {
@@ -906,6 +1076,16 @@ button:focus-visible {
   overflow: hidden;
 }
 
+/* The board is hidden, not unmounted, while a seat's terminal has the centre
+   column — that is what keeps its scroll position, its expanded messages and a
+   half-written composer draft alive across the round trip. `display: flex`
+   above beats the user-agent rule for `[hidden]`, so this has to be said, and
+   `display: none` rather than `visibility` so the element leaves the grid and
+   `.session-panel` takes the track it was in. */
+.hub-stream[hidden] {
+  display: none;
+}
+
 .stream-head {
   display: flex;
   align-items: center;
@@ -934,20 +1114,27 @@ button:focus-visible {
   color: var(--text-tertiary);
 }
 
+/* A dot and a word, not a capsule.
+ *
+ * "live" is the state of a healthy connection — the thing that is true nearly
+ * all the time. A pinned green pill gives the most ordinary fact on the screen
+ * the loudest shape on it, and the colour was already saying it. The dot keeps
+ * the colour; the capsule went. */
 .stream-status {
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--border-hairline);
-  border-radius: 999px;
-  padding: 3px 9px;
+  padding: 3px 0;
   font-size: 11.5px;
+  color: var(--text-secondary);
 }
 
-.stream-status[data-status="live"] { color: var(--status-fresh); }
-.stream-status[data-status="connecting"],
-.stream-status[data-status="reconnecting"] { color: var(--status-open); }
+/* The dot is in the markup already — a `::before` here drew a second one. */
+.stream-status .status-dot { background: var(--text-tertiary); }
+.stream-status[data-status="live"] .status-dot { background: var(--status-fresh); }
+.stream-status[data-status="connecting"] .status-dot,
+.stream-status[data-status="reconnecting"] .status-dot { background: var(--status-open); }
 
 .stream-scroll {
   min-height: 0;
@@ -990,7 +1177,8 @@ button:focus-visible {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
   gap: 10px;
-  padding: 7px 2px;
+  /* No horizontal padding: the column is `.card-stream`'s. */
+  padding: 7px 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1074,6 +1262,105 @@ button:focus-visible {
   margin: 3px 0 0;
   padding: 0;
   line-height: 1.6;
+  /* Agents write in paragraphs and lists. Without this every newline collapsed
+     and a structured message arrived as one unbroken block with its `-` and
+     `##` inline — which is what the operator was looking at when they called
+     the board unreadable. `pre-wrap` and not `pre`, so long lines still wrap. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The author's own line. Set above the body rather than styled as a heading:
+   it is the message, and the body is the footnote. */
+.message-row .message-head {
+  margin: 3px 0 0;
+  padding: 0;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-tag {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.72em;
+}
+
+/* --- decision card ------------------------------------------------------ */
+
+/* A question the operator answers with one click. Styled like the dispute vote
+   control it borrows from, and bordered like `needs-you`, because that banner
+   is already lit by the same `awaitsHuman` rule that produced this card. */
+.decision-card {
+  margin: 8px 0;
+  border: 1px solid var(--status-open);
+  border-radius: var(--radius);
+  background: rgba(219, 171, 121, 0.06);
+  padding: 10px 12px;
+}
+
+.decision-card[data-answered='true'] {
+  border-color: var(--border-hairline);
+  background: var(--surface-raised);
+}
+
+.decision-question {
+  margin: 4px 0 8px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.decision-outcome {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.decision-answers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.decision-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.decision-option {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  padding: 5px 11px;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.decision-option:hover:not(:disabled) {
+  border-color: var(--status-open);
+}
+
+.decision-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.decision-why {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-base);
+  padding: 6px 9px;
+  color: var(--text-primary);
+  font: inherit;
+  width: 100%;
+}
+
+.decision-error {
+  margin: 0;
+  color: var(--status-open);
+  font-size: var(--size-mono);
 }
 
 /* --- needs-you tray ----------------------------------------------------- */
@@ -1180,7 +1467,10 @@ button:focus-visible {
 
 .member-row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  /* Three children, not two: mark, body, and the side-room control. Declared
+     with two columns the button wrapped onto its own line and rendered as a
+     stray `@` under every seat. */
+  grid-template-columns: 28px minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   padding: 4px 5px;
@@ -1208,7 +1498,7 @@ button:focus-visible {
 
 /* Offline is stated by the dot; dimming the avatar says the same thing a
    second time, which is what makes a roster scannable. */
-.member-row[data-status="offline"] .avatar { opacity: 0.45; }
+.member-row[data-status="offline"] .harness-mark { opacity: 0.45; }
 .member-row[data-status="offline"] .member-id { color: var(--text-tertiary); }
 
 .member-body { min-width: 0; }
@@ -1373,12 +1663,10 @@ button:focus-visible {
   background-clip: content-box;
 }
 
-/* 2.8 — the human pill is an outline, not a fill. */
+/* 2.8 called for an outline rather than a fill, which was the right instinct
+   applied to the wrong shape: the reason a filled pill was too loud is that the
+   pill was too loud. It is a dot and a word now — see `.human-badge` above. */
 .human-badge {
-  border: 1px solid var(--status-open);
-  border-radius: 999px;
-  background: transparent;
-  padding: 1px 5px;
   font-size: 10px;
 }
 
@@ -1392,12 +1680,11 @@ button:focus-visible {
 .claim-card[data-claim-state='clarify'] { border-left-color: var(--accent); }
 .claim-card[data-claim-state='resolved'] { border-left-color: var(--status-fresh); }
 
-/* 4.14 — chips are 10.5px mono on a 1px/6px pill. */
-.state-chip,
-.severity-chip {
-  border-radius: 999px;
-  padding: 1px 6px;
-  font-family: var(--font-mono);
+/* 4.14 — chips are 10.5px mono. The pill they used to sit on is gone; see the
+   `.state-chip` rule above for why. Kept as a second declaration only because
+   the design specifies a smaller size inside a claim card than elsewhere. */
+.claim-card .state-chip,
+.claim-card .severity-chip {
   font-size: 10.5px;
 }
 
@@ -1465,6 +1752,11 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* A flex item defaults to `min-width: auto`, which refuses to shrink below
+     its content — so a long protocol line pushed the whole stream into
+     horizontal scroll instead of ellipsising, taking every message with it.
+     The body already opts into clipping; this is what lets it. */
+  min-width: 0;
   padding: 4px 2px 4px 0;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
@@ -1488,6 +1780,9 @@ button:focus-visible {
 
 .protocol-kind {
   letter-spacing: 0.04em;
+  /* The kind names the row. Shrinking it wraps two words onto two lines and
+     doubles the height of what is meant to be one quiet line. */
+  flex: none;
 }
 
 .protocol-body {
@@ -1577,4 +1872,924 @@ button:focus-visible {
   color: var(--accent);
   font-family: var(--font-mono);
   font-size: 12.5px;
+}
+
+/* ============================================================
+   Launcher — pick a shape, staff it, say what you want built.
+   Denser and quieter than the board: this screen is a control
+   panel, read once and operated, not a conversation you live in.
+   ============================================================ */
+
+/*
+ * The launcher is a page, so it scrolls like one.
+ *
+ * `.hub-root` is `height: 100dvh; overflow: hidden`, and the board's three
+ * regions each scroll inside themselves. The launcher is not one of them, so it
+ * had no scroll container: staff more than about three seats and the rest of
+ * the form — including the job box and the button that starts the run — was
+ * clipped off the bottom of the window with no way to reach it.
+ *
+ * The scroller is the full-width child so the scrollbar sits at the window edge
+ * rather than inside the centred column.
+ */
+.launcher-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.launcher {
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 40px 32px 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+}
+
+.launcher-head h1 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 6px;
+  color: var(--text-primary);
+}
+.launcher-head p { margin: 0; color: var(--text-secondary); font-size: var(--size-ui); }
+
+.launcher-section { display: flex; flex-direction: column; gap: 12px; }
+.launcher-section h2 {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.seat-note { letter-spacing: 0; text-transform: none; color: var(--status-fresh); font-size: 11px; }
+
+/* --- shape picker --- */
+.shape-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.shape-card {
+  display: flex; flex-direction: column; gap: 7px;
+  text-align: left; padding: 15px 16px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.shape-card:hover { border-color: var(--text-tertiary); }
+.shape-card.is-chosen { border-color: var(--accent); background: var(--surface-raised); }
+.shape-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.shape-name { font-family: var(--font-mono); font-size: 13px; color: var(--text-primary); font-weight: 500; }
+.shape-summary { font-size: 12.5px; color: var(--text-secondary); line-height: 1.45; }
+.shape-phases {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}
+
+/* --- what the shape enforces --- */
+.gate-list {
+  list-style: none; margin: 0; padding: 0;
+  border: 1px solid var(--border-hairline); border-radius: var(--radius);
+  background: var(--surface-panel);
+}
+.gate-list li {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) auto;
+  gap: 14px; align-items: baseline;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+.gate-list li:last-child { border-bottom: none; }
+.gate-phase { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.gate-intent { font-size: 12.5px; color: var(--text-secondary); line-height: 1.45; }
+.gate-ids { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+/* A gate is a ring and a name.
+ *
+ * Eight outlined boxes down the right of the phase table read as eight objects
+ * before they read as eight conditions, and a shape with four phases showed
+ * them all at once. The ring carries the same distinction the outline colour
+ * did, in a shape that says "condition" rather than "chip". */
+.gate-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono); font-size: 10.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.gate-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+/* A workspace gate is checked against the repo; an asserted one is a claim a
+   seat makes. Showing which is which stops a self-report reading as a check —
+   so the checked one is filled and the claimed one is hollow. */
+.gate-chip.is-workspace { color: var(--status-fresh); }
+.gate-chip.is-workspace::before { background: currentColor; box-shadow: none; }
+.gate-chip.is-asserted { color: var(--status-open); }
+
+/* --- roster --- */
+.seat-table {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface-panel);
+}
+.seat-row {
+  display: grid;
+  grid-template-columns: 1.1fr 0.8fr 1.5fr 1.5fr 0.8fr 32px;
+  gap: 8px; align-items: center;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+.seat-row:last-child { border-bottom: none; }
+.seat-head {
+  font-family: var(--font-mono); font-size: 10.5px;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-tertiary);
+  background: var(--surface-raised);
+}
+.seat-row.is-clash { background: color-mix(in srgb, var(--status-blocker) 12%, transparent); }
+.seat-row input, .seat-row select {
+  font: inherit; font-family: var(--font-mono); font-size: 12px;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border-hairline);
+  border-radius: 4px;
+  padding: 5px 7px;
+  min-width: 0;
+}
+.seat-row input:focus-visible, .seat-row select:focus-visible,
+.job-box:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.seat-drop {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-tertiary); font-size: 13px; padding: 4px;
+  border-radius: 4px;
+}
+.seat-drop:hover { color: var(--status-blocker); }
+.seat-add {
+  align-self: flex-start;
+  font: inherit; font-size: 12px;
+  background: none; border: 1px dashed var(--border-hairline);
+  color: var(--text-secondary);
+  border-radius: var(--radius); padding: 7px 13px; cursor: pointer;
+}
+.seat-add:hover { border-color: var(--text-tertiary); color: var(--text-primary); }
+
+/* --- the job --- */
+.job-box {
+  font: inherit; font-size: 13px; line-height: 1.6;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  resize: vertical;
+  width: 100%;
+}
+.job-box::placeholder { color: var(--text-tertiary); }
+
+/* --- go --- */
+.launcher-actions { display: flex; align-items: center; gap: 16px; }
+.launch-go {
+  font: inherit; font-size: 13px; font-weight: 500;
+  background: var(--accent); color: var(--surface-base);
+  border: none; border-radius: var(--radius);
+  padding: 10px 22px; cursor: pointer;
+}
+.launch-go:disabled { opacity: 0.4; cursor: not-allowed; }
+.launch-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.launch-hint { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-tertiary); }
+.launcher-error {
+  margin: 0; font-size: 12.5px; color: var(--status-blocker);
+  border-left: 2px solid var(--status-blocker); padding-left: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shape-card { transition: none; }
+}
+
+/* View switch: board vs launcher. */
+.hub-views {
+  display: flex; gap: 2px;
+  padding: 8px 14px 0;
+  border-bottom: 1px solid var(--border-hairline);
+  background: var(--surface-base);
+}
+.hub-view {
+  font: inherit; font-size: 12.5px;
+  background: none; border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-tertiary);
+  padding: 7px 13px; cursor: pointer;
+}
+.hub-view:hover { color: var(--text-primary); }
+.hub-view.is-current { color: var(--text-primary); border-bottom-color: var(--accent); }
+.hub-view:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ---------------------------------------------------------------------------
+ * Harness marks
+ *
+ * A seat used to be told apart by a colour from a rotating palette, which said
+ * only "a different participant". Which CLI is answering is the fact worth
+ * reading at a glance, so the mark carries the identity and the brand colour
+ * lives here rather than in the component — one file holds the palette, and a
+ * mark inherits the muted tone of whatever row it sits in.
+ * ------------------------------------------------------------------------- */
+
+.harness-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.harness-mark[data-harness="claude"],
+[data-harness="claude"] > .harness-mark {
+  color: var(--harness-claude);
+}
+
+.harness-mark[data-harness="codex"],
+[data-harness="codex"] > .harness-mark {
+  color: var(--harness-codex);
+}
+
+.harness-mark[data-harness="cursor"],
+[data-harness="cursor"] > .harness-mark {
+  color: var(--harness-cursor);
+}
+
+.harness-mark-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+/* ---------------------------------------------------------------------------
+ * State, without capsules
+ *
+ * Every state used to be a rounded pill with a tinted fill. Six of them in a
+ * row is a shape the eye reads before the word, so the screen looked busy in
+ * proportion to how much was going right. A 5px dot and a word carries the same
+ * fact and stops competing with the content.
+ * ------------------------------------------------------------------------- */
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.state-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-tertiary);
+}
+
+.state[data-state="running"] .state-dot,
+[data-state="running"] > .state-dot {
+  background: var(--status-fresh);
+}
+
+.state[data-state="exited"] .state-dot,
+[data-state="exited"] > .state-dot {
+  background: var(--text-tertiary);
+}
+
+.state[data-state="connecting"] .state-dot,
+[data-state="connecting"] > .state-dot {
+  background: var(--status-stale);
+}
+
+.state[data-state="unmirrored"] .state-dot,
+[data-state="unmirrored"] > .state-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--text-tertiary);
+}
+
+/*
+ * A gate is binary, so it is drawn as a ring that is either filled or not —
+ * the one place a shape says something a word would take longer to.
+ */
+.gate-ring {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: inset 0 0 0 1.5px var(--text-tertiary);
+}
+
+.gate-ring[data-met="true"] {
+  background: var(--status-fresh);
+  box-shadow: none;
+}
+
+/* A count is a number. It does not need a container. */
+.count {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Pull request state
+ *
+ * GitHub's semantics, GitHub's colours. Open was amber here, which reads as
+ * "needs attention" for what is the healthy state of a PR.
+ * ------------------------------------------------------------------------- */
+
+.pr-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.pr-state::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--pr-draft);
+}
+
+.pr-state[data-pr="open"]::before { background: var(--pr-open); }
+.pr-state[data-pr="merged"]::before { background: var(--pr-merged); }
+.pr-state[data-pr="draft"]::before { background: var(--pr-draft); }
+.pr-state[data-pr="closed"]::before { background: var(--pr-closed); }
+
+.pr-state[data-pr="merged"] { color: var(--pr-merged); }
+
+/* ---------------------------------------------------------------------------
+ * The mirrored terminal
+ * ------------------------------------------------------------------------- */
+
+.session-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--surface-panel);
+  border-left: 1px solid var(--border-hairline);
+  border-right: 1px solid var(--border-hairline);
+}
+
+.session-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  height: 44px;
+  flex: none;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.session-back {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  padding: 4px 6px;
+  line-height: 1;
+  font-size: 15px;
+}
+
+.session-back:hover {
+  color: var(--text-primary);
+}
+
+.session-mark {
+  display: inline-flex;
+}
+
+.session-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.session-id {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.session-role,
+.session-meta {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.session-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.session-empty {
+  margin: 0;
+  padding: 24px 16px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+}
+
+.session-notice {
+  margin: 0;
+  padding: 8px 14px;
+  color: var(--status-blocker);
+  font-size: 12px;
+  border-top: 1px solid var(--border-hairline);
+}
+
+/*
+ * The screen is a fixed grid: it is scaled, never reflowed. A mirror that
+ * rewrapped to the panel width would show line breaks the real terminal does
+ * not have, which is precisely the thing it exists not to do.
+ */
+.terminal {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px;
+  background: var(--surface-base);
+  font-family: var(--font-mono);
+  font-size: var(--size-mono);
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 8;
+}
+
+.terminal-row {
+  position: relative;
+  min-height: 1.45em;
+}
+
+.term-run {
+  white-space: pre;
+}
+
+.term-run.is-bold { font-weight: 600; }
+.term-run.is-dim { opacity: 0.62; }
+.term-run.is-inverse {
+  background: var(--text-primary);
+  color: var(--surface-base);
+}
+
+.term-fg-0 { color: var(--term-0); }
+.term-fg-1 { color: var(--term-1); }
+.term-fg-2 { color: var(--term-2); }
+.term-fg-3 { color: var(--term-3); }
+.term-fg-4 { color: var(--term-4); }
+.term-fg-5 { color: var(--term-5); }
+.term-fg-6 { color: var(--term-6); }
+.term-fg-7 { color: var(--term-7); }
+.term-fg-8 { color: var(--term-8); }
+.term-fg-9 { color: var(--term-9); }
+.term-fg-10 { color: var(--term-10); }
+.term-fg-11 { color: var(--term-11); }
+.term-fg-12 { color: var(--term-12); }
+.term-fg-13 { color: var(--term-13); }
+.term-fg-14 { color: var(--term-14); }
+.term-fg-15 { color: var(--term-15); }
+
+.term-bg-0 { background: var(--term-0); }
+.term-bg-1 { background: var(--term-1); }
+.term-bg-2 { background: var(--term-2); }
+.term-bg-3 { background: var(--term-3); }
+.term-bg-4 { background: var(--term-4); }
+.term-bg-5 { background: var(--term-5); }
+.term-bg-6 { background: var(--term-6); }
+.term-bg-7 { background: var(--term-7); }
+.term-bg-8 { background: var(--term-8); }
+.term-bg-9 { background: var(--term-9); }
+.term-bg-10 { background: var(--term-10); }
+.term-bg-11 { background: var(--term-11); }
+.term-bg-12 { background: var(--term-12); }
+.term-bg-13 { background: var(--term-13); }
+.term-bg-14 { background: var(--term-14); }
+.term-bg-15 { background: var(--term-15); }
+
+.terminal-cursor {
+  position: absolute;
+  top: 0.1em;
+  left: calc(var(--term-cursor-col) * 1ch);
+  width: 1ch;
+  height: 1.25em;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .terminal-cursor {
+    animation: terminal-blink 1.1s step-end infinite;
+  }
+}
+
+@keyframes terminal-blink {
+  50% { opacity: 0; }
+}
+
+.terminal[tabindex] {
+  /* It takes the keyboard, so it has to show when it holds it. */
+  cursor: text;
+}
+
+.terminal[tabindex]:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.session-keys {
+  /* Above the composer and quieter than it: keys answer a dialog the seat drew,
+     which is a smaller act than typing a turn to an agent. */
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px 0;
+  flex: none;
+}
+
+.session-key {
+  min-width: 30px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.session-key:hover {
+  color: var(--text-primary);
+  border-color: var(--text-tertiary);
+}
+
+.session-key:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.session-composer {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  flex: none;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.session-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.session-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.session-send {
+  /* The one light-on-dark control in the panel, because it is the one action. */
+  height: 32px;
+  padding: 0 14px;
+  border-color: transparent;
+  background: var(--text-primary);
+  color: var(--surface-base);
+  font-weight: 550;
+}
+
+.session-send:disabled {
+  background: var(--surface-raised);
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------------------
+ * The environment rail
+ *
+ * `.hub-shell` is the new box between `.hub-root` and `.hub-layout`: the rail
+ * is fixed height, the layout takes what is left. The height clamp on
+ * `.hub-root` only reaches the scrolling log if every box between them refuses
+ * to be sized by its content, so this one carries `min-height: 0` for the same
+ * reason `.hub-region` does.
+ * ------------------------------------------------------------------------- */
+
+.hub-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.env-rail {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  flex: none;
+  height: 46px;
+  padding: 0 16px;
+  overflow-x: auto;
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--border-hairline);
+  scrollbar-width: none;
+}
+
+.env-rail::-webkit-scrollbar { display: none; }
+
+.env-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.env-label {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  color: var(--text-tertiary);
+}
+
+.env-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 550;
+  color: var(--text-primary);
+}
+
+.env-note {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.env-error {
+  font-size: 11.5px;
+  color: var(--status-blocker);
+  max-width: 30ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.env-seat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/*
+ * A seat is a row of facts, not a capsule. The only shape is the hairline that
+ * appears when it is the one open — a border rather than a fill, so a rail of
+ * six seats does not read as six coloured objects.
+ */
+.env-seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1;
+}
+
+button.env-seat:hover {
+  border-color: var(--border-hairline);
+  color: var(--text-primary);
+}
+
+.env-seat.is-open {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.env-seat[data-present="false"] { opacity: 0.55; }
+
+.env-seat-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Marks in place of avatars
+ * ------------------------------------------------------------------------- */
+
+.message-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  flex: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Whose hub this is
+ * ------------------------------------------------------------------------- */
+
+.sidebar-foot.is-editing {
+  gap: 6px;
+}
+
+.operator-name {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  margin-left: -4px;
+  border-radius: 5px;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+
+.operator-name:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.operator-name:disabled {
+  cursor: default;
+}
+
+.operator-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.operator-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* The protocol id, kept beside the name so the display name never hides what
+   the log actually attributes a message to. */
+.sidebar-foot .sidebar-self-id {
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* A seat you can open reads as a control on hover and nowhere else — the
+   roster is mostly for reading, and six always-buttoned rows is noise. */
+button.member-body {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  min-width: 0;
+}
+
+button.member-body:hover .member-id {
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------------------
+ * The dock's compose card
+ *
+ * This shipped with no stylesheet at all: the label sat on top of the textarea,
+ * and the textarea rendered as the browser's default grey box in the middle of
+ * a dark panel. It worked and looked like a mistake.
+ * ------------------------------------------------------------------------- */
+
+.compose-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* `.dock-card` carries no padding — each card's body supplies its own, and
+     every other one uses this. Without it the form sat 11px outside the card's
+     content column, so the label and textarea ran under the card border while
+     the "Compose" title above them did not. */
+  padding: 10px 11px 12px;
+}
+
+.compose-label {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  color: var(--text-tertiary);
+}
+
+.compose-job {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.compose-job:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/*
+ * Which CLIs are on this machine. A list, not a row of capsules: three of them
+ * tinted green would read as three things that need attention, when the whole
+ * message is "these are available".
+ */
+.compose-harnesses {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.compose-harnesses li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.compose-harnesses li::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-tertiary);
+}
+
+.compose-harnesses li[data-available="true"]::before {
+  background: var(--status-fresh);
+}
+
+.compose-form button[type="submit"] {
+  align-self: flex-start;
+  height: 30px;
+  padding: 0 14px;
+  border-color: transparent;
+  background: var(--text-primary);
+  color: var(--surface-base);
+  font-weight: 550;
+}
+
+.compose-form button[type="submit"]:disabled {
+  background: var(--surface-raised);
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+/* The operator's own mark takes the amber the rest of the hub already uses for
+   "a person is needed" — the one identity that must be findable at a glance. */
+.harness-mark[data-harness="human"],
+[data-harness="human"] > .harness-mark {
+  color: var(--status-open);
 }

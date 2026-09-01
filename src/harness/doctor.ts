@@ -145,6 +145,62 @@ function duplicateParticipantIds(participants: Participant[]): Set<string> {
   return duplicates;
 }
 
+function spocPolicyFindings(config: CrosstalkConfig): Finding[] {
+  const found: Finding[] = [];
+  const spocs = config.participants.filter((participant) => participant.role === 'spoc');
+  if (spocs.length > 1) {
+    found.push(finding(
+      'reject',
+      'SPOC_COUNT',
+      `Expected at most one SPOC participant, found ${spocs.length}.`,
+      'Keep a single participant with role: spoc. Acceptance is one seat.',
+    ));
+  }
+
+  const acceptance = config.policy.taskAcceptance;
+  if (acceptance.method !== 'spoc') return found;
+
+  const delegate = acceptance.delegate;
+  if (delegate === undefined || delegate === '') {
+    found.push(finding(
+      'reject',
+      'SPOC_DELEGATE_MISSING',
+      'policy.taskAcceptance.method is "spoc" but no delegate is named.',
+      'Set taskAcceptance.delegate to the SPOC participant id.',
+    ));
+    return found;
+  }
+
+  const named = config.participants.find((participant) => participant.id === delegate);
+  if (named === undefined) {
+    found.push(finding(
+      'reject',
+      'SPOC_DELEGATE_UNKNOWN',
+      `taskAcceptance.delegate "${delegate}" is not a participant.`,
+      'Name a participant that exists on the roster.',
+    ));
+    return found;
+  }
+
+  if (named.role === 'leader') {
+    found.push(finding(
+      'reject',
+      'SPOC_IS_LEADER',
+      `taskAcceptance.delegate "${delegate}" is the leader. SPOC and leader must not be the same seat.`,
+      'Give SPOC its own participant. The leader plans; SPOC accepts.',
+    ));
+  } else if (named.role !== 'spoc') {
+    found.push(finding(
+      'reject',
+      'SPOC_DELEGATE_WRONG_ROLE',
+      `taskAcceptance.delegate "${delegate}" has role ${named.role}, not spoc.`,
+      'Set that participant\'s role to spoc, or point delegate at the SPOC.',
+    ));
+  }
+
+  return found;
+}
+
 async function writableBriefPath(filePath: string, repoRoot: string): Promise<boolean> {
   try {
     await access(filePath, constants.F_OK | constants.W_OK);
@@ -277,14 +333,12 @@ export async function checkPrerequisites(
   const repositoryFinding = await repositoryPrerequisite(repoRoot);
   if (repositoryFinding !== undefined) return repositoryFinding;
 
-  if (configuredAgentCount(config) === 0) {
-    return finding(
-      'reject',
-      'NO_HARNESS',
-      'No agent harness is configured; Crosstalk has nobody to run.',
-      'Install and sign in to at least one supported agent harness, then add it as a non-human participant.',
-    );
-  }
+  // "No agent is seated" was a blocker here, and blockers are fatal to both
+  // callers. It is no longer one: an unstaffed repo is the ordinary starting
+  // state of `crosstalk up`, since the team is picked in the hub. It is
+  // reported as a warning from `doctor`'s main pass instead — see
+  // ROSTER_UNSTAFFED — because this function is only for things that must stop
+  // the daemon from starting at all.
 
   return undefined;
 }
@@ -304,7 +358,7 @@ async function checkWorktreeFreshness(
   config: CrosstalkConfig,
   repoRoot: string,
 ): Promise<Finding[]> {
-  const workers = config.participants.filter((participant) => participant.role === 'worker');
+  const workers = config.participants.filter((participant) => participant.role === 'worker' || participant.role === 'peer');
   if (workers.length === 0) return [];
 
   let mainSha: string;
@@ -344,10 +398,11 @@ async function checkParticipant(
   policy: CrosstalkConfig['policy'],
   tier: 'mcp' | 'shell' | 'file',
   repoRoot: string,
+  shape?: string,
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
   const workspace = resolve(repoRoot, participant.workspace);
-  if (participant.role === 'worker' && workspace === repoRoot) {
+  if ((participant.role === 'worker' || participant.role === 'peer') && workspace === repoRoot) {
     // CT-20. This was an unconditional reject, and it is why every agent needed
     // its own worktree — and therefore why one Crosstalk project rendered as one
     // top-level project entry *per agent* in the harness's sidebar.
@@ -419,7 +474,7 @@ async function checkParticipant(
   // workspace absolutely, and this comparison is byte-for-byte — passing a
   // different root here would put BRIEF_STALE on every participant, on every
   // `doctor` and every `up` preflight.
-  const expected = renderBrief(participant, descriptor, policy, tier, repoRoot);
+  const expected = renderBrief(participant, descriptor, policy, tier, repoRoot, shape);
   if (actual === undefined || actual.replaceAll('\r\n', '\n') !== expected) {
     findings.push(finding(
       'warn',
@@ -458,12 +513,39 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
 
   const findings: Finding[] = [];
   const leaders = config.participants.filter((participant) => participant.role === 'leader');
-  if (leaders.length !== 1) {
+  const peers = config.participants.filter((participant) => participant.role === 'peer');
+  // Same rule `init` enforces: led (one leader, no peers) or flat (one or more
+  // peers, no leader). The generator and the validator must agree or `init`
+  // emits what `doctor` rejects.
+  const flat = leaders.length === 0 && peers.length >= 1;
+  // A roster with nobody but the operator is not a broken roster, it is a repo
+  // nobody has staffed yet. `crosstalk up` writes one so the hub can open, and
+  // the team is chosen there — rejecting it would put the picker behind the
+  // command line it exists to replace. Everything below still applies the
+  // moment a builder is added.
+  const unstaffed = config.participants.every(
+    (participant) => participant.role === 'human' || participant.role === 'observer',
+  );
+  if (unstaffed || configuredAgentCount(config) === 0) {
+    findings.push(finding(
+      'warn',
+      'ROSTER_UNSTAFFED',
+      'No agent is seated yet, so nothing will run until the team is staffed.',
+      'Staff the team in the hub, or pass --participant to `crosstalk init`.',
+    ));
+  } else if (!flat && leaders.length !== 1) {
     findings.push(finding(
       'reject',
       'LEADER_COUNT',
-      `Expected exactly one leader participant, found ${leaders.length}.`,
-      'Configure exactly one participant with role: leader; all other agents should be workers or observers.',
+      `Expected exactly one leader participant (or a flat roster of peers), found ${leaders.length} leader(s) and ${peers.length} peer(s).`,
+      'Configure exactly one participant with role: leader, or an all-peer roster with no leader.',
+    ));
+  } else if (!flat && peers.length > 0) {
+    findings.push(finding(
+      'reject',
+      'LEADER_COUNT',
+      `A roster is led or flat, not both — found ${leaders.length} leader(s) alongside ${peers.length} peer(s).`,
+      'Use worker seats under a leader, or make every builder a peer and remove the leader.',
     ));
   }
 
@@ -541,9 +623,11 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
     ));
   }
 
+  findings.push(...spocPolicyFindings(config));
+
   findings.push(...await checkInstallSkew());
 
-  const workers = config.participants.filter((participant) => participant.role === 'worker');
+  const workers = config.participants.filter((participant) => participant.role === 'worker' || participant.role === 'peer');
   if (workers.length < 2) {
     findings.push(finding(
       'warn',
@@ -627,7 +711,7 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
       }
     }
 
-    findings.push(...await checkParticipant(participant, descriptor, config.policy, tier, repoRoot));
+    findings.push(...await checkParticipant(participant, descriptor, config.policy, tier, repoRoot, config.shape));
   }
 
   // CT-17. `init` accepts `--participant id:role:harness[:model[:effort]]` and the hub
@@ -660,16 +744,17 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
   // by hand with `git merge --ff-only main`.
   findings.push(...await checkWorktreeFreshness(config, repoRoot));
 
-  // CT-19. `src/mirror/` exists and `doctor` checks it, but `init` writes no
-  // mirror key, so the only way to turn it on is hand-editing an undocumented
-  // shape. That is a legitimate not-yet-built; the defect is that nothing said
-  // so, leaving an unbuilt feature and a deliberately disabled one identical.
+  // CT-19. `src/mirror/` exists and `doctor` checks it, but `init` wrote no
+  // mirror key, so the only way to turn it on was hand-editing an undocumented
+  // shape — and the next `init --force` then threw the block away, which is why
+  // no run has ever had a mirror. Both halves are fixed; this remedy names the
+  // command rather than describing YAML nobody should have to know.
   if (config.mirror === undefined) {
     findings.push(finding(
       'warn',
       'MIRROR_UNCONFIGURED',
-      'No GitHub mirror is configured, and init does not yet write one.',
-      'Expected — v1 ships the protocol and the mirror follows. Everything works locally without it. To try it, add a mirror.github block to crosstalk.yaml by hand.',
+      'No GitHub mirror is configured.',
+      'Everything works locally without one. To mirror to GitHub: crosstalk github https://github.com/owner/repo',
     ));
   }
 

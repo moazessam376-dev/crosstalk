@@ -7,8 +7,13 @@ import { deriveState } from './state/derive.js';
 import { useLog, type LogSource } from './state/useLog.js';
 import { loadHubConfig, type HubConnection } from './state/hubConfig.js';
 import { useMirror } from './state/useMirror.js';
-import { postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
+import { postCompose, postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
 import { dmId } from '../core/rooms.js';
+import { FLOOR } from '../contracts/room.js';
+// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
+import { Launcher } from './launch/Launcher.js';
+import { useHarnessCatalog, useLaunch, useSessions, useShapes } from './state/useLaunch.js';
+import { useOperatorName } from './state/operator.js';
 
 /**
  * Used when no daemon answers `/config.json` — `vite dev`, or a static build
@@ -43,7 +48,20 @@ export default function App({ connection: injected }: AppProps = {}) {
   const [connection, setConnection] = useState<HubConnection>(injected ?? { kind: 'loading' });
   const [notice, setNotice] = useState<string | undefined>();
   const [sampleOpened, setSampleOpened] = useState(false);
+  // The board is where a run is watched; the launcher is where one starts. They
+  // are different jobs, so they are different screens rather than a panel that
+  // steals room from the conversation once the run is under way.
+  const [view, setView] = useState<'board' | 'launch'>('board');
   const mirror = useMirror(connection.kind === 'live');
+  const shapes = useShapes(connection.kind === 'live');
+  const catalog = useHarnessCatalog(connection.kind === 'live');
+  const sessions = useSessions(connection.kind === 'live');
+  const { launch, launching } = useLaunch();
+  const { name: operator, setName: setOperator } = useOperatorName();
+  // Which seat's terminal is open. Held here rather than in `Layout` so the
+  // launcher can close it: starting a new run and staring at the last run's
+  // dead terminal was the first thing that went wrong when this was local.
+  const [openSeat, setOpenSeat] = useState<string | undefined>();
 
   useEffect(() => {
     if (injected !== undefined) return;
@@ -133,7 +151,52 @@ export default function App({ connection: injected }: AppProps = {}) {
       ? createElement('p', { className: 'app-notice', role: 'alert', 'data-testid': 'human-action-notice' }, notice)
       : null,
     createElement('p', { className: 'app-status sr-only', 'aria-live': 'polite' }, status),
-    createElement(Layout, {
+    connection.kind === 'live'
+      ? createElement(
+          'nav',
+          { className: 'hub-views', 'aria-label': 'hub views' },
+          (['board', 'launch'] as const).map((name) =>
+            createElement(
+              'button',
+              {
+                key: name,
+                type: 'button',
+                className: `hub-view${view === name ? ' is-current' : ''}`,
+                'aria-current': view === name ? 'page' : undefined,
+                onClick: () => {
+                  setView(name);
+                  setOpenSeat(undefined);
+                },
+              },
+              name === 'board' ? 'Board' : 'Start a run',
+            ),
+          ),
+        )
+      : null,
+    view === 'launch' && connection.kind === 'live'
+      ? createElement(Launcher, {
+          shapes,
+          catalog,
+          launching,
+          // The roster this daemon is running. A seat's role and harness are
+          // fixed when its token is minted, so this is the roster a launch can
+          // actually name — arriving with anything else means the default
+          // action on the screen fails.
+          running: sessions?.seats ?? [],
+          // A launch that leaves you on an emptied form gives no sign anything
+          // happened. The job lands on the floor and the seats start joining
+          // there, so that is where to be — the operator asked to drop a
+          // prompt and be taken to the room.
+          onLaunch: async (request: { job: string; shape?: string; seats: string[] }) => {
+            const result = await launch(request);
+            if (result.ok) {
+              setView('board');
+              setSelectedRoom(FLOOR);
+            }
+            return result;
+          },
+        })
+      : createElement(Layout, {
       state,
       activeRoom,
       maxRounds,
@@ -154,6 +217,13 @@ export default function App({ connection: injected }: AppProps = {}) {
       onOpenSideRoom: connection.kind === 'live'
         ? (participantId: string) => setSelectedRoom(dmId(connection.config.self, participantId))
         : undefined,
+      onCompose: connection.kind === 'live' ? (job: string) => postCompose(job) : undefined,
+      ...(operator === undefined ? {} : { operator }),
+      onSetOperator: setOperator,
+      sessions,
+      ...(openSeat === undefined ? {} : { openSeat }),
+      onOpenSession: connection.kind === 'live' ? (seat: string) => setOpenSeat(seat) : undefined,
+      onCloseSession: () => setOpenSeat(undefined),
       // Only against a live daemon. The fixture hub has no `/mirror` to poll,
       // and a card there would describe a mirror that does not exist.
       mirror,

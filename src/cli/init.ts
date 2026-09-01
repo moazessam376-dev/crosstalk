@@ -14,6 +14,7 @@ import { tokenFilename } from '../daemon/server.js';
 import { localBriefFile, writeBrief } from '../harness/brief.js';
 import { checkPrerequisites, doctor, type Finding } from '../harness/doctor.js';
 import { loadRegistry, probeTier, resolveConfigPath, type HarnessDescriptor } from '../harness/registry.js';
+import { writePresenceHook, writeSeatSettings } from '../harness/hooks.js';
 import {
   branchSha,
   branchShaIfExists,
@@ -35,6 +36,13 @@ export interface InitOptions {
   /** `id:role:harness[:model[:effort]]`, repeatable. Empty means the default roster. */
   participants: string[];
   force: boolean;
+  /**
+   * How the team works, by name — see `core/shape.ts`. Omitted keeps whatever
+   * the roster on disk already names, for the same reason the roster itself is
+   * read back rather than overwritten: `init` is also how you regenerate briefs
+   * and `.mcp.json`, and doing that must not quietly demote a team to no shape.
+   */
+  shape?: string;
 }
 
 const DEFAULT_ROSTER = ['leader:leader:claude-code-app', 'codex:worker:codex-app'];
@@ -89,13 +97,47 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   // command, and `up` started it anyway. A generator that emits what the
   // validator rejects is the bug, not the validator.
   const leaders = participants.filter((participant) => participant.role === 'leader');
-  if (leaders.length !== 1) {
+  const peers = participants.filter((participant) => participant.role === 'peer');
+  // Two shapes: led (exactly one leader, no peers) or flat (one or more peers,
+  // no leader). A flat roster has no task authority on purpose — peers
+  // coordinate on the board and no assign/accept machinery operates.
+  //
+  // One peer is flat, and used to be rejected. That made the `solo` shape —
+  // one seat, no board, the control every team result is measured against —
+  // impossible to initialise: the roster the benchmark exists to compare
+  // against could not be written. Nothing about task authority needs a second
+  // peer to be absent.
+  const flat = leaders.length === 0 && peers.length >= 1;
+  // A roster of nobody but the operator is the "not staffed yet" state that
+  // `crosstalk up` writes so the hub can open on an unconfigured repo. The team
+  // is chosen in the launcher, which calls back here with the real roster and
+  // the rule below applies to it in full. `doctor` warns about it rather than
+  // rejecting, for the same reason.
+  const unstaffed = participants.every(
+    (participant) => participant.role === 'human' || participant.role === 'observer',
+  );
+  if (!unstaffed && !flat && leaders.length !== 1) {
     throw new CliError(
-      `LEADER_COUNT: Expected exactly one leader participant, found ${leaders.length}.`,
+      `LEADER_COUNT: Expected exactly one leader participant (or a flat roster of peers), found ${leaders.length} leader(s) and ${peers.length} peer(s).`,
       EXIT.protocol,
-      'Configure exactly one participant with role: leader; all other agents should be workers or observers.',
+      'Configure exactly one participant with role: leader, or an all-peer roster with no leader.',
     );
   }
+  if (!unstaffed && flat === false && peers.length > 0) {
+    throw new CliError(
+      `LEADER_COUNT: A roster is led or flat, not both — found ${leaders.length} leader(s) alongside ${peers.length} peer(s).`,
+      EXIT.protocol,
+      'Use worker seats under a leader, or make every builder a peer and remove the leader.',
+    );
+  }
+  // Preserved, not defaulted. The shape is what the phase machine reads, and it
+  // reached the config through nothing at all before this: `runCompose` passed
+  // it to `runInit`, which had no such option and dropped it, so every team the
+  // hub launched ran shapeless — no phases, no gates, and seats briefed without
+  // the one thing that tells three peers how to be a team.
+  const carried = await carriedConfig(repo);
+  const shape = options.shape ?? carried.shape;
+
   const config: CrosstalkConfig = {
     version: 1,
     // Detected, not assumed. `mainBranch` was hard-coded to `main`, so on a
@@ -106,6 +148,11 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     project: { repo: '.', mainBranch: await currentBranch(repo) },
     participants,
     policy: DEFAULT_POLICY,
+    ...(shape === undefined ? {} : { shape }),
+    ...(carried.contractPath === undefined ? {} : { contractPath: carried.contractPath }),
+    // Absent means no mirror, so an unset key is carried as unset rather than
+    // defaulted into existence.
+    ...(carried.mirror === undefined ? {} : { mirror: carried.mirror }),
   };
 
   // Issue #23. `init` was the only command that could leave a repository in a
@@ -148,7 +195,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   await ensureWorkspaces(repo, participants);
   const mcp = await writeMcpConfigs(repo, participants);
   await ensureGitignored(repo);
-  await writeBriefs(repo, participants, config.policy);
+  await writeBriefs(repo, participants, config.policy, config.shape);
 
   return { configPath, mcp, tokens, config, kickoff: await kickoffLines(repo, participants) };
 }
@@ -172,7 +219,7 @@ async function ensureWorkspaces(repo: string, participants: Participant[]): Prom
   await excludeFromEveryWorktree(root, await untrackedArtifacts());
 
   for (const participant of participants) {
-    if (participant.role !== 'worker') continue;
+    if (!needsWorktree(participant.role)) continue;
     // CT-20. A worker that shares the repository root has no worktree to build,
     // and building one anyway is not merely wasted: it puts a directory under
     // `.crosstalk/worktrees/<id>` and a `ct/<id>-base` branch in the project
@@ -233,7 +280,7 @@ async function ensureBaseBranches(
   const root = resolve(repo);
   if (!(await isRepo(root))) return;
 
-  const workers = participants.filter((participant) => participant.role === 'worker');
+  const workers = participants.filter((participant) => needsWorktree(participant.role));
   if (workers.length === 0) return;
 
   // Through `branchSha`, whose message already names the remedy. Reaching for
@@ -318,7 +365,7 @@ export async function purgeWorkspaces(repo: string): Promise<void> {
   }
 
   for (const participant of config.participants) {
-    if (participant.role !== 'worker') continue;
+    if (!needsWorktree(participant.role)) continue;
     const worktree = join(root, '.crosstalk', 'worktrees', participant.id);
     // The branch is deleted whether or not the worktree is still registered:
     // half a purge leaves exactly the CT-12 state this is here to prevent.
@@ -387,6 +434,20 @@ async function addWorktree(root: string, id: string, branch: string, worktree: s
  * per-worktree copy is silently ignored — which is convenient: one write
  * covers the primary checkout and every linked worktree at once.
  */
+/**
+ * Which seats get a checkout of their own.
+ *
+ * `peer` was missing, and the omission was invisible until three peer seats
+ * launched into directories that held nothing but their brief. They improvised
+ * — one wrote source into an ignored path and posted a stale environment note
+ * that misled the board for ten minutes — and the operator rebuilt real
+ * worktrees around the mess mid-run. A role that writes code needs somewhere to
+ * write it.
+ */
+function needsWorktree(role: string): boolean {
+  return role === 'worker' || role === 'peer';
+}
+
 async function excludeFromEveryWorktree(root: string, patterns: string[]): Promise<void> {
   let gitDir: string;
   try {
@@ -425,7 +486,14 @@ async function untrackedArtifacts(): Promise<string[]> {
   const registry = await loadRegistry().catch(() => undefined);
   if (registry === undefined) return ['.mcp.json'];
 
-  const patterns = new Set<string>(['.mcp.json']);
+  const patterns = new Set<string>([
+    '.mcp.json',
+    // The seat settings written for claude-code participants: the presence
+    // hook, the env it reads, and the MCP trust flag. Same reason as
+    // `.mcp.json` — Crosstalk wrote it into somebody's checkout, so Crosstalk
+    // has to keep it out of their next commit.
+    '.claude/settings.json',
+  ]);
   for (const descriptor of registry.values()) {
     patterns.add(basename(localBriefFile(descriptor.briefFile)));
     // CT-20. A shared-root participant's brief carries its id — `CLAUDE.md`
@@ -459,7 +527,9 @@ async function writeBriefs(
   repo: string,
   participants: Participant[],
   policy: CrosstalkConfig['policy'],
+  shape?: string,
 ): Promise<void> {
+  let hookPath: string | undefined;
   let registry: Map<string, HarnessDescriptor>;
   try {
     registry = await loadRegistry();
@@ -474,7 +544,19 @@ async function writeBriefs(
     if (descriptor === undefined) continue;
 
     const tier = participant.transport ?? (await probeTier(descriptor, resolve(repo, participant.workspace)));
-    await writeBrief(participant, descriptor, policy, tier, repo);
+    await writeBrief(participant, descriptor, policy, tier, repo, shape);
+
+    // Claude Code seats only: the hook config and the trust flag are its
+    // settings format, and writing them for a harness that ignores them would
+    // be clutter claiming to be configuration.
+    if (participant.harness.startsWith('claude-code')) {
+      await writeSeatSettings({
+        repo,
+        workspace: participant.workspace,
+        seat: participant.id,
+        scriptPath: hookPath ?? (hookPath = await writePresenceHook(repo)),
+      });
+    }
   }
 }
 
@@ -709,8 +791,8 @@ async function kickoffLines(
         // registered at <path>" points at a file holding somebody else's
         // credentials as well as yours, and the agent has no way to tell which
         // entry is its own.
-        ? `You are "${participant.id}" on Crosstalk. Open this agent in ${workspace} — your MCP server is \`crosstalk-${participant.id}\`, registered at ${resolveConfigPath(descriptor!.mcpConfigPath!, workspace)}, and its token is yours alone. Call roster() first and check that \`you\` reads "${participant.id}", then await_turn().`
-        : `You are "${participant.id}" on Crosstalk. Work in ${workspace} — that is your checkout, not the leader's. Use the CLI: \`${cli} await --repo ${root} --as ${participant.id} --timeout 50\` to receive work, \`${cli} say --repo ${root} --as ${participant.id} --room '#floor' --body '...'\` to speak.`,
+        ? `You are "${participant.id}". Call inbox(). Open this agent in ${workspace} — your MCP server is \`crosstalk-${participant.id}\`, registered at ${resolveConfigPath(descriptor!.mcpConfigPath!, workspace)}, and its token is yours alone.`
+        : `You are "${participant.id}". Work in ${workspace} — that is your checkout, not the leader's. Use the CLI: \`${cli} inbox --repo ${root} --as ${participant.id}\` to receive work, \`${cli} say --repo ${root} --as ${participant.id} --room '#floor' --body '...'\` to speak.`,
     });
   }
   return lines;
@@ -727,6 +809,33 @@ async function kickoffLines(
  * with `--force` on a config they have broken is asking to have it rebuilt, and
  * refusing would leave them with no way through except deleting the file.
  */
+/**
+ * Everything a regeneration must carry across, as one list.
+ *
+ * It was `configuredShape`, returning one field, and the omission is why the
+ * GitHub mirror is never configured on any run: the mirror is enabled by
+ * hand-editing `crosstalk.yaml` — `init` writes no mirror key and `doctor`'s
+ * remedy says to add one — and then `--force` rebuilt the file from the shape
+ * and the roster alone. The hub calls `runInit({force: true})` on every launch
+ * whose roster or shape differs, so the block was gone before the first message,
+ * every time, with nothing said about it.
+ *
+ * One function rather than one per key, so the next field added to
+ * `CrosstalkConfig` has a single obvious place to be remembered.
+ */
+async function carriedConfig(repo: string): Promise<Partial<CrosstalkConfig>> {
+  try {
+    const existing = await loadConfig(repo);
+    return {
+      ...(existing.shape === undefined ? {} : { shape: existing.shape }),
+      ...(existing.contractPath === undefined ? {} : { contractPath: existing.contractPath }),
+      ...(existing.mirror === undefined ? {} : { mirror: existing.mirror }),
+    };
+  } catch {
+    return {};
+  }
+}
+
 async function configuredRoster(repo: string): Promise<Participant[] | undefined> {
   try {
     const existing = await loadConfig(repo);
@@ -748,8 +857,8 @@ function parseParticipants(specs: string[]): Participant[] {
         'Use --participant id:role:harness[:model[:effort]], for example --participant codex:worker:codex-app:luna-5.6:high',
       );
     }
-    if (!['leader', 'worker', 'observer', 'human'].includes(role)) {
-      throw new CliError(`Unknown role "${role}" in "${spec}"`, EXIT.usage, 'Roles: leader, worker, observer, human.');
+    if (!['leader', 'worker', 'observer', 'human', 'spoc', 'peer'].includes(role)) {
+      throw new CliError(`Unknown role "${role}" in "${spec}"`, EXIT.usage, 'Roles: leader, worker, observer, human, spoc, peer.');
     }
     return {
       id,
@@ -762,7 +871,9 @@ function parseParticipants(specs: string[]): Participant[] {
       ...(effort === undefined ? {} : { effort }),
       lifecycle: 'attached' as const,
       // The primary checkout is the leader's and no worker may occupy it.
-      workspace: role === 'leader' ? '.' : join('.crosstalk', 'worktrees', id).replace(/\\/g, '/'),
+      workspace: role === 'leader' || role === 'spoc' || role === 'human' || role === 'observer'
+        ? '.'
+        : join('.crosstalk', 'worktrees', id).replace(/\\/g, '/'),
     };
   });
 

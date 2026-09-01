@@ -1,0 +1,241 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body {
+      margin: 0;
+      background: #0a0a0a;
+      color: #f2f2f3;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+    }
+    a { color: #5b8dee; }
+    a:hover { color: #7ea6f2; }
+    .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", monospace; }
+    .tile {
+      width: 22px; height: 22px; border-radius: 8px; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid #2e2e33; background: #1e1e1e;
+    }
+  </style>
+</helmet>
+
+<div style="height: 900px; display: grid; grid-template-columns: 252px minmax(0, 1fr); background: #0a0a0a;">
+
+  <!-- SESSION LIST — clicking a seat opens its mirror -->
+  <div style="background: #121212; border-right: 1px solid #232326; display: flex; flex-direction: column; min-width: 0;">
+    <div style="padding: 12px 12px 10px; border-bottom: 1px solid #232326; display: flex; align-items: center; gap: 8px;">
+      <span style="font-weight: 600;">Sessions</span>
+      <span class="mono" style="font-size: 11px; color: #6e6e78; margin-left: auto;">3 live</span>
+    </div>
+
+    <div style="padding: 8px 6px; display: flex; flex-direction: column; gap: 2px;">
+      <sc-for list="{{list}}" as="s" hint-placeholder-count="3">
+        <div style="{{s.rowStyle}}">
+          <span class="tile">
+            <sc-if value="{{s.isClaude}}" hint-placeholder-val="{{true}}">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <g stroke="#D97757" stroke-width="1.9" stroke-linecap="round"><path d="M12 12L12.0 2.6"></path><path d="M12 12L16.5 4.2"></path><path d="M12 12L20.2 7.2"></path><path d="M12 12L20.8 12.0"></path><path d="M12 12L20.0 16.6"></path><path d="M12 12L16.3 19.4"></path><path d="M12 12L12.0 21.3"></path><path d="M12 12L7.5 19.8"></path><path d="M12 12L3.8 16.8"></path><path d="M12 12L3.3 12.0"></path><path d="M12 12L4.1 7.4"></path><path d="M12 12L7.6 4.4"></path></g></svg>
+            </sc-if>
+            <sc-if value="{{s.isCodex}}" hint-placeholder-val="{{false}}">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12.0 4.6A3.2 3.2 0 0 1 17.2 6.8A3.2 3.2 0 0 1 19.4 12.0A3.2 3.2 0 0 1 17.2 17.2A3.2 3.2 0 0 1 12.0 19.4A3.2 3.2 0 0 1 6.8 17.2A3.2 3.2 0 0 1 4.6 12.0A3.2 3.2 0 0 1 6.8 6.8A3.2 3.2 0 0 1 12.0 4.6Z" stroke="#C9CBD6" stroke-width="1.7" stroke-linejoin="round"></path><path d="M9.6 9.9 12.1 12l-2.5 2.1" stroke="#C9CBD6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path><path d="M13.4 14.4h2.9" stroke="#C9CBD6" stroke-width="1.6" stroke-linecap="round"></path>
+              </svg>
+            </sc-if>
+            <sc-if value="{{s.isCursor}}" hint-placeholder-val="{{false}}">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12.0 3.6L19.3 7.8L19.3 16.2L12.0 20.4L4.7 16.2L4.7 7.8Z" stroke="#B8BAC0" stroke-width="1.6" stroke-linejoin="round"></path><path d="M12 12L12.0 3.6M12 12L19.3 16.2M12 12L4.7 16.2" stroke="#B8BAC0" stroke-width="1.5" stroke-linecap="round"></path>
+              </svg>
+            </sc-if>
+          </span>
+          <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+            <span class="mono" style="font-size: 12.5px; color: #f2f2f3;">{{s.id}}</span>
+            <span class="mono" style="font-size: 10.5px; color: #6e6e78; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{s.doing}}</span>
+          </span>
+          <span style="{{s.pipStyle}}"></span>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="margin-top: auto; padding: 12px; border-top: 1px solid #232326;">
+      <div class="mono" style="font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: #6e6e78; margin-bottom: 7px;">Run</div>
+      <div class="mono" style="font-size: 11.5px; color: #a3a3aa; line-height: 1.7;">trio-contract<br>phase &middot; build<br>main &middot; 1b31ee9</div>
+    </div>
+  </div>
+
+  <!-- THE MIRROR -->
+  <div style="display: flex; flex-direction: column; min-width: 0; background: #0a0a0a;">
+
+    <!-- header, T3-style breadcrumb + actions -->
+    <div style="display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid #232326;">
+      <span class="mono" style="font-size: 12.5px; color: #6e6e78;">vault</span>
+      <span class="mono" style="font-size: 12.5px; color: #54545c;">/</span>
+      <span class="tile">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <g stroke="#D97757" stroke-width="1.9" stroke-linecap="round"><path d="M12 12L12.0 2.6"></path><path d="M12 12L16.5 4.2"></path><path d="M12 12L20.2 7.2"></path><path d="M12 12L20.8 12.0"></path><path d="M12 12L20.0 16.6"></path><path d="M12 12L16.3 19.4"></path><path d="M12 12L12.0 21.3"></path><path d="M12 12L7.5 19.8"></path><path d="M12 12L3.8 16.8"></path><path d="M12 12L3.3 12.0"></path><path d="M12 12L4.1 7.4"></path><path d="M12 12L7.6 4.4"></path></g></svg>
+      </span>
+      <span style="font-weight: 600;">{{seat.id}}</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px;">
+        <span style="width: 5px; height: 5px; border-radius: 999px; background: #4a9d5f;"></span>
+        <span class="mono" style="font-size: 11.5px; color: #4a9d5f;">{{seat.state}}</span>
+      </span>
+
+      <span style="margin-left: auto; display: flex; align-items: center; gap: 7px;">
+        <span class="mono" style="font-size: 11.5px; color: #a3a3aa; border: 1px solid #2a2a2e; border-radius: 6px; padding: 5px 11px;">Open worktree</span>
+        <span class="mono" style="font-size: 11.5px; color: #a9c4f5; border: 1px solid #2a3346; background: #161b23; border-radius: 6px; padding: 5px 11px;">{{seat.rc}}</span>
+      </span>
+    </div>
+
+    <!-- what it is doing, one line -->
+    <div style="display: flex; align-items: center; gap: 9px; padding: 9px 16px; border-bottom: 1px solid #232326; background: #121212;">
+      <span class="mono" style="font-size: 11px; color: #6e6e78;">{{seat.spec}}</span>
+      <span class="mono" style="font-size: 11px; color: #54545c;">&middot;</span>
+      <span class="mono" style="font-size: 11px; color: #a3a3aa;">{{seat.branch}}</span>
+      <span style="margin-left: auto; display: flex; gap: 5px;">
+        <sc-for list="{{seat.gates}}" as="g" hint-placeholder-count="2">
+          <span style="display: inline-flex; align-items: center; gap: 5px; margin-left: 12px;">
+            <span style="{{g.markStyle}}"></span>
+            <span class="mono" style="{{g.style}}">{{g.id}}</span>
+          </span>
+        </sc-for>
+      </span>
+    </div>
+
+    <!-- scrollback boundary: the mirror opens on a tail, not the whole history -->
+    <div style="display: flex; align-items: center; gap: 10px; padding: 8px 18px; background: #0a0a0a;">
+      <span class="mono" style="font-size: 11px; color: #a3a3aa; background: #1c1c1c; border-radius: 5px; padding: 4px 10px;">Load earlier</span>
+      <span class="mono" style="font-size: 11px; color: #54545c;">{{scrollNote}}</span>
+      <span style="margin-left: auto; display: flex; align-items: center; gap: 6px;">
+        <span style="width: 6px; height: 6px; border-radius: 999px; background: #4a9d5f;"></span>
+        <span class="mono" style="font-size: 11px; color: #4a9d5f;">following</span>
+      </span>
+    </div>
+
+    <!-- TERMINAL -->
+    <div class="mono" style="flex-grow: 1; overflow: hidden; padding: 4px 18px 16px; font-size: 12.5px; line-height: 1.72; background: #0a0a0a; min-height: 0;">
+      <sc-for list="{{lines}}" as="l" hint-placeholder-count="14">
+        <div style="{{l.style}}">{{l.text}}</div>
+      </sc-for>
+    </div>
+
+    <!-- PROMPT THIS AGENT — Codex-style composer -->
+    <div style="padding: 0 16px 16px;">
+      <div style="border: 1px solid #2e2e33; border-radius: 10px; background: #121212; overflow: hidden;">
+        <div style="padding: 13px 15px 4px; color: #6e6e78; font-size: 13px;">{{placeholder}}</div>
+        <div style="display: flex; align-items: center; gap: 9px; padding: 9px 12px 11px;">
+          <span class="mono" style="font-size: 11.5px; color: #a3a3aa; background: #1c1c1c; border-radius: 5px; padding: 4px 9px;">{{seat.model}}</span>
+          <span class="mono" style="font-size: 11.5px; color: #a3a3aa; background: #1c1c1c; border-radius: 5px; padding: 4px 9px;">{{seat.effort}}</span>
+          <span class="mono" style="font-size: 11.5px; color: #6e6e78;">{{routeNote}}</span>
+          <span style="margin-left: auto; width: 28px; height: 28px; border-radius: 999px; background: #f2f2f3; display: inline-flex; align-items: center; justify-content: center;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 19V5M12 5l-6 6M12 5l6 6" stroke="#0a0a0a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </span>
+        </div>
+      </div>
+      <div class="mono" style="font-size: 11px; color: #6e6e78; margin-top: 8px;">{{footNote}}</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "seat": {"editor": "enum", "options": ["peer-1", "peer-2", "peer-3"], "default": "peer-2", "section": "Session"},
+  "route": {"editor": "enum", "options": ["this session only", "post to #floor"], "default": "this session only", "section": "Session"},
+  "$preview": {"width": 1440, "height": 900}
+}'>
+class Component extends DCLogic {
+  renderVals() {
+    const which = this.props.seat ?? 'peer-2';
+    const route = this.props.route ?? 'this session only';
+
+    const SEATS = {
+      'peer-1': { harness: 'claude-code-live', doing: 'Edit · src/game/hud.ts', state: 'working', branch: 'ct/peer-1' },
+      'peer-2': { harness: 'claude-code-live', doing: 'Bash · npm run verify', state: 'working', branch: 'ct/peer-2' },
+      'peer-3': { harness: 'codex-cli', doing: 'waiting on the board', state: 'idle', branch: 'ct/peer-3' },
+    };
+
+    const list = Object.keys(SEATS).map((id) => {
+      const s = SEATS[id];
+      const on = id === which;
+      return {
+        id,
+        doing: s.doing,
+        isClaude: s.harness.indexOf('claude') === 0,
+        isCodex: s.harness.indexOf('codex') === 0,
+        isCursor: s.harness.indexOf('cursor') === 0,
+        rowStyle: 'display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 8px;'
+          + (on ? ' background: #1e1e1e;' : ''),
+        pipStyle: 'margin-left: auto; width: 6px; height: 6px; border-radius: 999px; flex-shrink: 0; background: '
+          + (s.state === 'working' ? '#4a9d5f' : '#54545c') + ';',
+      };
+    });
+
+    const gate = (met) => ({
+      markStyle: 'width: 6px; height: 6px; border-radius: 999px; flex-shrink: 0; background: '
+        + (met ? '#4a9d5f' : 'transparent') + '; border: 1px solid ' + (met ? '#4a9d5f' : '#3a3a40') + ';',
+      style: 'font-size: 11px; color: ' + (met ? '#6e6e78' : '#a3a3aa') + ';',
+    });
+
+    const dim = 'color: #6e6e78;';
+    const norm = 'color: #a3a3aa;';
+    const bright = 'color: #f2f2f3;';
+
+    const lines = [
+      { text: '● Read src/contract.ts (214 lines)', style: norm },
+      { text: '● Bash npm run verify', style: norm },
+      { text: '  ⎿ typecheck   clean', style: dim },
+      { text: '  ⎿ test        54 passed', style: dim },
+      { text: '  ⎿ build       ✓ 695ms', style: dim },
+      { text: '  ⎿ verify:frame  4 viewports — 1280×720 FAILED', style: 'color: #dd6c5a;' },
+      { text: '', style: dim },
+      { text: 'The 4× speed button clips off the right edge at 1280 wide, so the', style: bright },
+      { text: 'control cannot be clicked. Meters shrink first; speed never shrinks.', style: bright },
+      { text: 'Fixing in src/game/hud.ts, then re-running the gate.', style: bright },
+      { text: '', style: dim },
+      { text: '● Edit src/game/hud.ts', style: norm },
+      { text: '  ⎿ Updated 2 additions and 1 removal', style: dim },
+      { text: '● say(#floor) — "self-verified: four viewports, one real defect fixed"', style: 'color: #5b8dee;' },
+      { text: '  ⎿ ref gate:self-verified · seq #24', style: dim },
+      { text: '', style: dim },
+      { text: '▌', style: 'color: #5b8dee;' },
+    ];
+
+    const s = SEATS[which];
+    const met = which !== 'peer-3';
+
+    return {
+      list,
+      lines,
+      seat: {
+        id: which,
+        state: s.state,
+        branch: s.branch,
+        model: 'claude-opus-5',
+        effort: 'high',
+        spec: s.harness,
+        rc: 'Remote Control · ' + which,
+        gates: [
+          { id: 'split-agreed', ...gate(true) },
+          { id: 'self-verified', ...gate(met) },
+        ],
+      },
+      scrollNote: 'showing the last 500 lines of 42,318',
+      placeholder: 'Message ' + which + '…',
+      routeNote: route === 'this session only'
+        ? 'this session only — the board will not see it'
+        : 'posts to #floor — every seat sees it',
+      footNote: 'Typed straight into this CLI. The team only learns what ' + which + ' chooses to say on the board.',
+    };
+  }
+}
+</script>
+</body>
+</html>

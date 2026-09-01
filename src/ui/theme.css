@@ -2357,44 +2357,14 @@ button:focus-visible {
 
 .term-run.is-bold { font-weight: 600; }
 .term-run.is-dim { opacity: 0.62; }
+/* Inverse with no colours of its own. A run that has colours resolves its own
+   reversal inline, because an inline `color` beats any rule written here. */
 .term-run.is-inverse {
   background: var(--text-primary);
   color: var(--surface-base);
 }
 
-.term-fg-0 { color: var(--term-0); }
-.term-fg-1 { color: var(--term-1); }
-.term-fg-2 { color: var(--term-2); }
-.term-fg-3 { color: var(--term-3); }
-.term-fg-4 { color: var(--term-4); }
-.term-fg-5 { color: var(--term-5); }
-.term-fg-6 { color: var(--term-6); }
-.term-fg-7 { color: var(--term-7); }
-.term-fg-8 { color: var(--term-8); }
-.term-fg-9 { color: var(--term-9); }
-.term-fg-10 { color: var(--term-10); }
-.term-fg-11 { color: var(--term-11); }
-.term-fg-12 { color: var(--term-12); }
-.term-fg-13 { color: var(--term-13); }
-.term-fg-14 { color: var(--term-14); }
-.term-fg-15 { color: var(--term-15); }
 
-.term-bg-0 { background: var(--term-0); }
-.term-bg-1 { background: var(--term-1); }
-.term-bg-2 { background: var(--term-2); }
-.term-bg-3 { background: var(--term-3); }
-.term-bg-4 { background: var(--term-4); }
-.term-bg-5 { background: var(--term-5); }
-.term-bg-6 { background: var(--term-6); }
-.term-bg-7 { background: var(--term-7); }
-.term-bg-8 { background: var(--term-8); }
-.term-bg-9 { background: var(--term-9); }
-.term-bg-10 { background: var(--term-10); }
-.term-bg-11 { background: var(--term-11); }
-.term-bg-12 { background: var(--term-12); }
-.term-bg-13 { background: var(--term-13); }
-.term-bg-14 { background: var(--term-14); }
-.term-bg-15 { background: var(--term-15); }
 
 .terminal-cursor {
   position: absolute;
@@ -2792,4 +2762,54 @@ button.member-body:hover .member-id {
 .harness-mark[data-harness="human"],
 [data-harness="human"] > .harness-mark {
   color: var(--status-open);
+}
+
+/* The terminal and whatever history is showing above it share one scroller, so
+   scrolling up runs continuously from the live grid into the past instead of
+   trapping the reader in a nested box. */
+.session-screen {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-base);
+}
+
+.session-screen .terminal {
+  flex: none;
+  overflow: visible;
+}
+
+.session-history {
+  padding: 12px 14px 0;
+  font-family: var(--font-mono);
+  font-size: var(--size-mono);
+  line-height: 1.45;
+  white-space: pre;
+  color: var(--text-secondary);
+  border-bottom: 1px dashed var(--border-hairline);
+}
+
+.session-history-more {
+  align-self: center;
+  margin: 10px 0 0;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: var(--size-fact);
+  color: var(--text-secondary);
+  background: var(--surface-panel);
+  border: 1px solid var(--border-hairline);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.session-history-more:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.session-history-more:disabled {
+  cursor: progress;
+  opacity: 0.6;
 }

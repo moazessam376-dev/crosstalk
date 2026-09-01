@@ -23,7 +23,7 @@ import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js
 import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
 import { workspaceWarning } from './workspace.js';
 import { Presence } from './presence.js';
-import { SessionRegistry } from '../harness/sessions.js';
+import { SessionRegistry, type SessionHandle } from '../harness/sessions.js';
 import { currentRungOf } from '../core/decisions.js';
 import { dmId, normaliseRoom } from '../core/rooms.js';
 import { refuseMessage, type MessageDraft } from '../core/says.js';
@@ -93,6 +93,32 @@ const MAX_LIMIT = 1000;
 const AWAIT_CAP_S = 50;
 /** Contract §6. Long enough to be cheap, short enough to beat an idle reaper. */
 const HEARTBEAT_MS = 15_000;
+
+/**
+ * The most scrolled-off lines one request will return.
+ *
+ * A whole 5,000-line buffer is about half a megabyte of JSON, and a reader
+ * scrolling up wants the screenful it is about to show, not the session. The
+ * page is generous enough that a fast flick does not stutter and small enough
+ * that no single response is worth streaming.
+ */
+const SCROLLBACK_PAGE = 500;
+
+/**
+ * The shortest gap between two screen frames on the wire.
+ *
+ * A TUI repaints far faster than anyone can read, and a stream with no floor
+ * would put every intermediate frame of a spinner on the socket. At 40ms the
+ * mirror is quicker than the eye and the traffic is bounded: measured against a
+ * repainting full-screen app, 3.3 KB/sec for the one seat whose panel is open.
+ *
+ * This is the number the old design was afraid of, and it was right to be — it
+ * rejected streaming *pty bytes*, which is tens of kilobytes a second of escape
+ * sequences. Streaming the reconstruction instead is an order of magnitude
+ * cheaper, and it is the difference between a keystroke landing in 3ms and in
+ * the 1,009ms that was measured through the poll.
+ */
+const SCREEN_FRAME_MS = 40;
 
 export interface DaemonHandle {
   url: string;
@@ -799,6 +825,41 @@ class Daemon {
       return;
     }
 
+    const historyParams = matchPath(path, '/sessions/:id/scrollback');
+    if (historyParams !== undefined && method === 'GET') {
+      // What scrolled off, windowed. The lines used to be destroyed at the
+      // point they left the grid — measured, 200 written and 31 reachable — so
+      // there was nothing for a route like this to serve.
+      const seat = decodeURIComponent(historyParams[0]!);
+      const session = this.#sessions.get(seat);
+      if (session === undefined) {
+        send(response, 404, wire('daemon', 'NO_MIRRORED_SESSION', `no mirrored session for ${seat}`));
+        return;
+      }
+      const from = Number(url.searchParams.get('from') ?? '0');
+      const count = Number(url.searchParams.get('count') ?? String(SCROLLBACK_PAGE));
+      const page = session.scrollback(
+        Number.isFinite(from) ? from : 0,
+        Number.isFinite(count) ? Math.min(Math.max(0, count), SCROLLBACK_PAGE) : SCROLLBACK_PAGE,
+      );
+      // A seat that was never captured has no history, which is not the same
+      // answer as a seat whose history is empty.
+      send(response, 200, page === undefined ? { seat, captured: false } : { seat, captured: true, ...page });
+      return;
+    }
+
+    const streamParams = matchPath(path, '/sessions/:id/screen/stream');
+    if (streamParams !== undefined && method === 'GET') {
+      const seat = decodeURIComponent(streamParams[0]!);
+      const session = this.#sessions.get(seat);
+      if (session === undefined) {
+        send(response, 404, wire('daemon', 'NO_MIRRORED_SESSION', `no mirrored session for ${seat}`));
+        return;
+      }
+      this.#streamScreen(response, seat, session);
+      return;
+    }
+
     if (path === '/roster' && method === 'GET') {
       const present = (id: ParticipantId): boolean => this.#presence.isPresent(id, Date.now());
       send(response, 200, {
@@ -837,7 +898,25 @@ class Daemon {
         send(response, 404, wire('daemon', 'NO_MIRRORED_SESSION', `no mirrored session for ${seat}`));
         return;
       }
-      const payload = (await readJsonBody(request)) as { turn?: unknown; keys?: unknown };
+      const payload = (await readJsonBody(request)) as {
+        turn?: unknown;
+        keys?: unknown;
+        rows?: unknown;
+        cols?: unknown;
+      };
+      // A resize is input in the same sense a keystroke is: it never reaches
+      // the log, and it is the operator's window telling the seat how much room
+      // it has. `pty.resize` existed from the first day and nothing ever called
+      // it, so every seat ran at 32×110 whatever the hub was showing.
+      if (typeof payload.rows === 'number' && typeof payload.cols === 'number') {
+        if (!Number.isFinite(payload.rows) || !Number.isFinite(payload.cols)) {
+          send(response, 400, wire('daemon', 'MALFORMED_BODY', '`rows` and `cols` must be numbers'));
+          return;
+        }
+        session.resize(payload.rows, payload.cols);
+        send(response, 200, { seat, sent: 'resize' });
+        return;
+      }
       if (typeof payload.keys === 'string') {
         await session.key(payload.keys);
         send(response, 200, { seat, sent: 'keys' });
@@ -1345,6 +1424,76 @@ class Daemon {
       clearInterval(heartbeat);
       this.#subscribers.delete(subscriber);
     });
+  }
+
+  /**
+   * One seat's screen, pushed.
+   *
+   * The panel used to poll. It asked for 800ms and the browser gave it 1,000 —
+   * hidden tabs have their timers clamped, and the hub tab is hidden whenever it
+   * is not frontmost — so a keystroke took about a second to appear on a path
+   * whose two slow halves measured 2.8ms and 3.2ms. Everything else in the
+   * mirror was already fast; the wait was the only defect.
+   *
+   * Only the open seat is ever streamed, which is the same rule the poll had:
+   * a hub with six seats must not spend six sockets to draw one terminal.
+   */
+  #streamScreen(response: ServerResponse, seat: string, session: SessionHandle): void {
+    response.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    });
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let sentAt = 0;
+    let closed = false;
+
+    const frame = (): void => {
+      if (closed) return;
+      sentAt = Date.now();
+      const snapshot = session.screen();
+      response.write(
+        `data: ${JSON.stringify({
+          seat,
+          running: session.running,
+          exitCode: session.exitCode ?? null,
+          canPush: session.canPush,
+          screen: snapshot ?? null,
+        })}\n\n`,
+      );
+    };
+
+    // Coalesced rather than debounced: a debounce would hold the last frame of
+    // a burst back until the burst stopped, which is precisely the frame the
+    // operator is waiting to see. This sends immediately when it can and
+    // schedules exactly one catch-up when it cannot.
+    const onChange = (): void => {
+      if (closed || timer !== undefined) return;
+      const wait = Math.max(0, SCREEN_FRAME_MS - (Date.now() - sentAt));
+      if (wait === 0) {
+        frame();
+        return;
+      }
+      timer = setTimeout(() => {
+        timer = undefined;
+        frame();
+      }, wait);
+    };
+
+    frame();
+    const unwatch = session.watch(onChange);
+    const heartbeat = setInterval(() => response.write(':hb\n\n'), HEARTBEAT_MS);
+
+    const done = (): void => {
+      if (closed) return;
+      closed = true;
+      unwatch();
+      clearInterval(heartbeat);
+      if (timer !== undefined) clearTimeout(timer);
+    };
+    response.on('close', done);
   }
 
   #deliver(who: ParticipantId, events: CrosstalkEvent[]): { events: CrosstalkEvent[] } {

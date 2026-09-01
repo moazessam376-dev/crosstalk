@@ -1,9 +1,16 @@
-import { createElement, useState } from 'react';
+import { createElement, useCallback, useEffect, useState } from 'react';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { HarnessMark } from '../marks/HarnessMark.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Terminal } from './Terminal.js';
-import { postSessionInput, useSessionMirror } from '../state/useSessionMirror.js';
+import {
+  postSessionInput,
+  useScrollback,
+  useSessionKeys,
+  useSessionMirror,
+  useSessionResize,
+  type MirrorRun,
+} from '../state/useSessionMirror.js';
 import type { SeatSession } from '../state/useLaunch.js';
 
 const ESC = '\u001b';
@@ -41,11 +48,40 @@ export function SessionPanel({ seat, onClose }: SessionPanelProps) {
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
+  // What has scrolled off, once the operator asks for it. Not fetched on open:
+  // most visits to a terminal are to see what it is doing now.
+  const [history, setHistory] = useState<MirrorRun[][] | undefined>();
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // One ordered channel for every byte this seat receives. Each keystroke used
+  // to be its own request, and the browser ran six at a time, so fast typing
+  // arrived transposed — measured, `0123456789…` landing as `0125634789…`.
+  const keys = useSessionKeys(seat.id);
+  const readHistory = useScrollback(seat.id);
+  const reportSize = useSessionResize(seat.id, mirror?.running === true);
+
+  const held = mirror?.screen?.scrollback ?? 0;
+
+  // A seat that exits, or a fresh one, has no history worth keeping on screen.
+  useEffect(() => setHistory(undefined), [seat.id]);
 
   const press = async (bytes: string, label: string): Promise<void> => {
-    const result = await postSessionInput(seat.id, { keys: bytes });
+    const result = await keys.write(bytes);
     setNotice(result.ok ? undefined : (result.reason ?? `the daemon refused ${label}`));
   };
+
+  const showHistory = useCallback(async (): Promise<void> => {
+    setLoadingHistory(true);
+    // The newest page first: somebody scrolling up wants the line just above
+    // the top row, not the first line of the session.
+    const page = await readHistory(Math.max(0, held - 200), 200);
+    setLoadingHistory(false);
+    if (page === undefined) {
+      setNotice('This seat has no history to show.');
+      return;
+    }
+    setHistory(page.rows);
+  }, [readHistory, held]);
 
   const send = async (): Promise<void> => {
     const turn = draft.trim();
@@ -121,13 +157,50 @@ export function SessionPanel({ seat, onClose }: SessionPanelProps) {
             { className: 'session-empty' },
             'Waiting for the first frame from this terminal.',
           )
-        : createElement(Terminal, {
-            screen: mirror.screen,
-            live: mirror.running,
-            // Only while there is a process to receive them. A dead seat that
-            // still swallowed the keyboard would be a trap.
-            ...(mirror.running === true ? { onKey: (bytes: string) => void press(bytes, 'that key') } : {}),
-          }),
+        : createElement(
+            'div',
+            { className: 'session-screen' },
+            // Above the live grid, and only once asked for. An alt-screen CLI
+            // has none — it owns its own transcript, which the wheel scrolls.
+            held > 0 && history === undefined
+              ? createElement(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'session-history-more',
+                    'data-testid': 'session-history-more',
+                    disabled: loadingHistory,
+                    onClick: () => void showHistory(),
+                  },
+                  loadingHistory ? 'Loading' : `Show ${held} earlier lines`,
+                )
+              : null,
+            history === undefined
+              ? null
+              : createElement(
+                  'div',
+                  { className: 'session-history', 'data-testid': 'session-history' },
+                  history.map((runs, index) =>
+                    createElement(
+                      'div',
+                      { key: index, className: 'terminal-row' },
+                      runs.length === 0
+                        ? ' '
+                        : runs.map((run, at) =>
+                            createElement('span', { key: at, className: 'term-run' }, run.text),
+                          ),
+                    ),
+                  ),
+                ),
+            createElement(Terminal, {
+              screen: mirror.screen,
+              live: mirror.running,
+              onGeometry: reportSize,
+              // Only while there is a process to receive them. A dead seat that
+              // still swallowed the keyboard would be a trap.
+              ...(mirror.running === true ? { onKey: (bytes: string) => void press(bytes, 'that key') } : {}),
+            }),
+          ),
     notice === undefined
       ? null
       : createElement('p', { className: 'session-notice', role: 'alert', 'data-testid': 'session-notice' }, notice),

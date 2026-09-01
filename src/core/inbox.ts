@@ -106,7 +106,7 @@ export function renderInbox(args: {
 
   const next = args.phase === undefined
     ? nextLine(unread, mine, args.role, floor, submitted, tasked)
-    : phaseLine(args.phase);
+    : phaseLine(args.phase, args.role);
   return {
     you: args.who,
     role: displayRole(args.role),
@@ -153,8 +153,21 @@ function jobFor(role: Role, floor: string | undefined, held: { id: string; title
  * without "waiting on sonnet" sends the seat to ask on the board, which is the
  * traffic the shape exists to remove.
  */
-function phaseLine(phase: PhaseStatus): string {
+/**
+ * What this seat is being asked to do, given where the team is.
+ *
+ * A phase with an owner is not everybody's phase. This handed every seat the
+ * same blocking string, so through Verify and Repair — one seat's work by
+ * definition — every builder was told about a gate it could not meet, and the
+ * wake loop wrote it a turn each time that string changed. `idle` is the word
+ * `driveSupervised` reads to mean "do not spend a turn on this", so a builder
+ * whose phase belongs to the planner now costs nothing at all until somebody
+ * addresses it directly. `phase.owner` is still in the inbox, so a seat that
+ * looks can see why.
+ */
+function phaseLine(phase: PhaseStatus, role: Role): string {
   if (phase.complete) return 'every gate is met';
+  if (phase.owner !== undefined && phase.owner !== role) return 'idle';
   if (phase.blocking.length === 0) return `${phase.id} — ready to advance`;
   return `${phase.id}: ${phase.blocking.join('; ')}`;
 }

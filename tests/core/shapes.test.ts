@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { SHAPES, type TeamShape } from '../../src/core/shape.js';
+import { MESSAGE_TAGS } from '../../src/contracts/say.js';
 import { WORKSPACE_GATES } from '../../src/workspace/gates.js';
+import { LOG_GATES } from '../../src/core/phase.js';
 
 const shapes: [string, TeamShape][] = [...SHAPES.entries()];
 
@@ -30,6 +32,35 @@ describe('every registered shape', () => {
       it('names only workspace gates that are actually implemented', () => {
         const asked = gates.filter((gate) => gate.by === 'workspace').map((gate) => gate.id);
         for (const id of asked) expect(WORKSPACE_GATES).toContain(id);
+      });
+
+      it('names only log gates that are actually derived', () => {
+        const asked = gates.filter((gate) => gate.by === 'log').map((gate) => gate.id);
+        for (const id of asked) expect(LOG_GATES).toContain(id);
+      });
+
+      it('owns every phase with a role it actually staffs', () => {
+        const staffed = shape.seats.map((seat) => seat.role);
+        for (const phase of shape.phases) {
+          if (phase.owner === undefined) continue;
+          expect(staffed, `${name} gives ${phase.id} to an unstaffed ${phase.owner}`).toContain(phase.owner);
+        }
+      });
+
+      it('can actually finish every seat', () => {
+        // A seat whose `done` gate appears in no phase can never be finished,
+        // and nothing would say so.
+        const exits = new Set(gates.map((gate) => gate.id));
+        for (const seat of shape.seats) {
+          if (seat.done === undefined) continue;
+          expect([...exits], `${name}: ${seat.role} is done on a gate no phase asks for`).toContain(seat.done);
+        }
+      });
+
+      it('gives every seat only real tags', () => {
+        for (const seat of shape.seats) {
+          for (const tag of seat.tags ?? []) expect(MESSAGE_TAGS).toContain(tag);
+        }
       });
 
       it('supplies a contract path when it gates on one', () => {

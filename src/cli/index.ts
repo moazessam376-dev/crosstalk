@@ -32,8 +32,8 @@ import { bold, dim, emit, eventLine, failureText, table } from './output.js';
 
 const USAGE = `crosstalk — multi-agent development where a finding is a claim, not a command
 
-  crosstalk init [--participant id:role:harness[:model[:effort]]]... [--shape NAME] [--force]
-  crosstalk compose --job '...' [--participant id:role:harness[:model[:effort]]]... [--force]
+  crosstalk init [--participant id:role:harness[:model[:effort[:permission-mode]]]]... [--shape NAME] [--force]
+  crosstalk compose --job '...' [--participant id:role:harness[:model[:effort[:permission-mode]]]]... [--force]
   crosstalk up   [--port N] [--host ADDR] [--no-open] [--force]
   crosstalk down [--as <id>] [--purge]
   crosstalk doctor

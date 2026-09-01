@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { promisify } from 'node:util';
 import { execFile as execFileCb } from 'node:child_process';
 
@@ -23,6 +23,18 @@ import { openSession, type HarnessSession } from '../../src/harness/session.js';
  * every machine this will ever run on, and it emits exactly the escapes we care
  * about when told to.
  */
+
+/**
+ * A budget that fits the slowest machine this runs on, not the fastest.
+ *
+ * Vitest's 5s default is a claim about how long a test may take, and every
+ * test in this file spawns a real process on a real pty and waits for it to
+ * paint. On Windows that is ConPTY plus a node start — measured at 6.9s for
+ * the file against 0.9s here — so the default failed a passing test with
+ * "timed out in 5000ms" while the code under test was fine. The hook budget
+ * moves for the same reason: teardown now *waits* for each child to die.
+ */
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 const dirs: string[] = [];
 const sessions: HarnessSession[] = [];
@@ -81,7 +93,10 @@ async function until(check: () => Promise<boolean>, ms = 4000): Promise<void> {
 
 function seat(cwd: string, script: string): HarnessSession {
   const session = openSession({
-    argv: ['sh', '-c', script],
+    // `node -e` rather than `sh -c`: a mirror is a cross-platform claim, and
+    // Windows has no `sh`, so these tests were simply absent on the platform
+    // most likely to break a pty.
+    argv: [process.execPath, '-e', script],
     cwd,
     first: '',
     turnFormat: 'interactive',
@@ -95,9 +110,19 @@ function seat(cwd: string, script: string): HarnessSession {
 }
 
 afterEach(async () => {
-  while (sessions.length > 0) sessions.pop()!.stop();
+  // Stop, then *wait* for the process to actually be gone. Windows refuses to
+  // remove a directory any process still holds a handle on, and `stop()` only
+  // sends the signal — so tearing down immediately raced the child's death and
+  // failed with EBUSY on every one of these tests.
+  const stopping = sessions.splice(0).map(async (session) => {
+    session.stop();
+    await Promise.race([session.exited, new Promise((done) => setTimeout(done, 2000))]);
+  });
+  await Promise.all(stopping);
+  // `maxRetries` for the same reason: the handle can outlive the process by a
+  // moment, and a retry is cheaper than a flake.
   while (dirs.length > 0) {
-    await rm(dirs.pop()!, { recursive: true, force: true });
+    await rm(dirs.pop()!, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -106,7 +131,7 @@ describe('mirroring a seat over HTTP', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'printf "reading harbor.ts"; sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'process.stdout.write("reading harbor.ts"); setTimeout(() => {}, 30000);'));
 
       await until(async () => {
         const response = await get(daemon, '/sessions/opus/screen');
@@ -127,7 +152,7 @@ describe('mirroring a seat over HTTP', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'printf "settled"; sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'process.stdout.write("settled"); setTimeout(() => {}, 30000);'));
 
       let version = -1;
       await until(async () => {
@@ -156,7 +181,7 @@ describe('mirroring a seat over HTTP', () => {
     try {
       // Reads one line and echoes it back, which is the whole round trip: the
       // route wrote to a pty and a real process read it.
-      daemon.sessions.register('opus', seat(dir, 'read line; printf "\\nGOT[%s]" "$line"; sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'process.stdin.once("data", (d) => process.stdout.write(`\\nGOT[${String(d).trim()}]`)); setTimeout(() => {}, 30000);'));
       await until(async () => (await get(daemon, '/sessions/opus/screen')).ok);
 
       const sent = await post(daemon, '/sessions/opus/input', { turn: 'look at the tick' });
@@ -183,7 +208,7 @@ describe('mirroring a seat over HTTP', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'setTimeout(() => {}, 30000);'));
 
       const response = await post(daemon, '/sessions/opus/input', { turn: 'do as I say' }, 'codex');
       expect(response.status).toBe(403);
@@ -218,7 +243,7 @@ describe('mirroring a seat over HTTP', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'printf "fatal: contract not frozen"; exit 3'));
+      daemon.sessions.register('opus', seat(dir, 'process.stdout.write("fatal: contract not frozen"); process.exit(3);'));
 
       await until(async () => {
         const body = (await (await get(daemon, '/sessions/opus/screen')).json()) as {

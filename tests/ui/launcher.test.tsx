@@ -220,11 +220,26 @@ const CATALOG = [
   { id: 'codex-cli', label: 'Codex', models: ['gpt-5.3-codex', 'o4-mini'] },
 ];
 
+/**
+ * The options a field offers.
+ *
+ * The model and effort fields are typeable now — a closed list offered
+ * `gpt-5.3-codex` to an operator whose Codex runs luna, terra and sol, and a
+ * model missing from the list could not be chosen at all. So the options live
+ * in the `datalist` the input names, and a `select` is still read the old way
+ * for the fields that are genuinely closed.
+ */
 function optionsOf(label: string): (string | null)[] {
   const picker = screen.getByLabelText(label) as unknown as {
+    tagName: string;
+    getAttribute(name: string): string | null;
     querySelectorAll(selector: string): { getAttribute(name: string): string | null }[];
+    parentElement: { querySelectorAll(selector: string): { getAttribute(name: string): string | null }[] } | null;
   };
-  return [...picker.querySelectorAll('option')].map((option) => option.getAttribute('value'));
+  const own = [...picker.querySelectorAll('option')];
+  if (own.length > 0) return own.map((option) => option.getAttribute('value'));
+  const suggestions = picker.parentElement?.querySelectorAll('datalist option') ?? [];
+  return [...suggestions].map((option) => option.getAttribute('value'));
 }
 
 /**

@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 
-import { Screen, type ScreenSnapshot } from './screen.js';
+import { Screen, type ScreenSnapshot, type ScrollbackPage } from './screen.js';
 import { spawnPty as defaultSpawnPty, type SpawnPty } from './pty.js';
 
 /**
@@ -43,6 +43,30 @@ export interface HarnessSession {
    * cursor and be told "nothing new" for the cost of a number.
    */
   screen(): ScreenSnapshot | undefined;
+  /**
+   * The lines that have scrolled off this seat's screen.
+   *
+   * `undefined` when the seat was never captured — a screen that does not exist
+   * has no history, which is a different answer from "no lines yet".
+   */
+  scrollback(from: number, count: number): ScrollbackPage | undefined;
+  /**
+   * Re-shape the terminal, pty and mirror together.
+   *
+   * The pty could always do this; nothing ever called it, so every seat ran at
+   * 32×110 whatever window the operator had open. Resizing only the mirror
+   * would be worse than not resizing at all: the application would keep
+   * wrapping at the old width and the reconstruction would disagree with it.
+   */
+  resize(rows: number, cols: number): void;
+  /**
+   * Called whenever the screen changes. Returns its own unsubscribe.
+   *
+   * A watcher that is told does not have to ask. The panel polled once a second
+   * — clamped by the browser from the 800ms it intended — so a keystroke took
+   * about a second to appear while the pty round trip was three milliseconds.
+   */
+  watch(onChange: () => void): () => void;
   readonly exited: Promise<number | null>;
   stop(): void;
 }
@@ -218,9 +242,35 @@ export function openSession(args: {
     ? undefined
     : new Screen(args.capture.rows ?? PTY_SIZE.rows, args.capture.cols ?? PTY_SIZE.cols);
 
+  const watchers = new Set<() => void>();
+  /** The version watchers were last told about, so a repaint that changed
+   *  nothing wakes nobody. */
+  let announced = -1;
+  const announce = (force = false): void => {
+    const version = screen?.version ?? -1;
+    if (!force && screen !== undefined && version === announced) return;
+    announced = version;
+    for (const watcher of watchers) watcher();
+  };
+
+  const sink: Sink | undefined =
+    screen === undefined
+      ? undefined
+      : {
+          write: (chunk) => {
+            screen.write(chunk);
+            announce();
+          },
+        };
+
   const transport = interactive
-    ? interactiveTransport(args, screen)
-    : pipeTransport(args, push, screen);
+    ? interactiveTransport(args, sink)
+    : pipeTransport(args, push, sink);
+
+  // Exiting is a change a watcher has to hear, and it is the one change the
+  // version cannot carry: the screen a seat died on is usually identical to the
+  // screen a moment earlier, so only `running` moved.
+  void transport.exited.then(() => announce(true));
 
   const send = async (turn: string): Promise<void> => {
     if (!push) throw new Error(`${args.argv[0]} cannot take a turn after it starts`);
@@ -290,13 +340,42 @@ export function openSession(args: {
     },
     canPush: push,
     screen: () => screen?.snapshot(),
+    scrollback: (from, count) => screen?.scrollback(from, count),
+    resize: (rows, cols) => {
+      // The pty first: it is the one that decides how the application wraps,
+      // and the reconstruction is downstream of what the application then
+      // draws. Doing it the other way round leaves a window where the mirror
+      // claims a width the seat has not been told about.
+      transport.resize?.(cols, rows);
+      screen?.resize(rows, cols);
+      announce(true);
+    },
+    watch: (onChange: () => void) => {
+      watchers.add(onChange);
+      return () => watchers.delete(onChange);
+    },
     exited: transport.exited,
     stop: transport.stop,
   };
 }
 
+/**
+ * Where a transport puts what came off the process.
+ *
+ * The transports used to hold the `Screen` itself and call `write` on it, which
+ * left nowhere to notice that a write had changed anything. A sink is the same
+ * call with a seam in it: `openSession` parses *and* tells whoever is watching,
+ * which is what turns the mirror from something a browser asks once a second
+ * into something the daemon can push.
+ */
+interface Sink {
+  write(chunk: string): void;
+}
+
 interface Transport {
   write(data: string): void;
+  /** Absent for a transport with no terminal to re-shape. */
+  resize?(cols: number, rows: number): void;
   exited: Promise<number | null>;
   stop(): void;
 }
@@ -309,7 +388,7 @@ interface Transport {
  */
 function interactiveTransport(
   args: { argv: string[]; cwd: string; env?: NodeJS.ProcessEnv; spawnPty?: SpawnPty },
-  screen: Screen | undefined,
+  sink: Sink | undefined,
 ): Transport {
   const [file, ...rest] = args.argv;
   if (file === undefined) throw new Error('session argv is empty');
@@ -323,7 +402,7 @@ function interactiveTransport(
     rows: PTY_SIZE.rows,
   });
 
-  if (screen !== undefined) child.onData((chunk) => screen.write(chunk));
+  if (sink !== undefined) child.onData((chunk) => sink.write(chunk));
 
   const exited = new Promise<number | null>((settle) => {
     child.onExit((code) => settle(code));
@@ -331,6 +410,7 @@ function interactiveTransport(
 
   return {
     write: (data) => child.write(data),
+    resize: (cols, rows) => child.resize(cols, rows),
     exited,
     stop: () => child.kill(),
   };
@@ -340,7 +420,7 @@ function interactiveTransport(
 function pipeTransport(
   args: { argv: string[]; cwd: string; first: string; env?: NodeJS.ProcessEnv; spawn?: SpawnProcess },
   push: boolean,
-  screen: Screen | undefined,
+  sink: Sink | undefined,
 ): Transport {
   const spawn = args.spawn ?? defaultSpawn;
   const [file, ...rest] = push ? args.argv : [...args.argv, args.first];
@@ -351,8 +431,8 @@ function pipeTransport(
     ...(args.env === undefined ? {} : { env: args.env }),
   });
 
-  if (screen !== undefined) {
-    const feed = (chunk: Buffer | string): void => screen.write(chunk.toString());
+  if (sink !== undefined) {
+    const feed = (chunk: Buffer | string): void => sink.write(chunk.toString());
     child.stdout?.on('data', feed);
     child.stderr?.on('data', feed);
   }

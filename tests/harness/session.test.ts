@@ -259,14 +259,23 @@ describe('an interactive seat, watchable over Remote Control', () => {
       cwd: '/tmp',
       first: 'the job',
       turnFormat: 'interactive',
-      readyDelayMs: 30,
+      readyDelayMs: 120,
       submitDelayMs: 0,
       spawnPty: pty.spawnPty,
     });
 
+    // The half about waiting: silent now, and still silent well inside the
+    // delay. 30ms was too tight to say that on a runner whose timers tick in
+    // 15.6ms steps, so the window is wide enough to be a claim.
     expect(pty.written()).toBe('');
-    await new Promise((done) => setTimeout(done, 45));
-    expect(pty.written()).toBe('the job\r');
+    await new Promise((done) => setTimeout(done, 40));
+    expect(pty.written()).toBe('');
+
+    // The half about typing, waited for as a *state*. Delivery is two writes —
+    // the text, then Return — so a stopwatch asserts against whichever half had
+    // happened when it fired. On Windows that was reliably 'the job' with the
+    // Return still in flight, which is a slow machine, not a broken session.
+    await until(() => pty.written() === 'the job\r');
   });
 
   it('settles exited when the pty closes, so a supervisor cannot hang', async () => {

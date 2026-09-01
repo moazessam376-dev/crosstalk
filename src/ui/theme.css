@@ -3181,3 +3181,198 @@ button.member-body:hover .member-id {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--text-primary);
 }
+
+/* ── Attachments ────────────────────────────────────────────────────────────
+   Two surfaces: the strip in the composer, before sending, and the block on
+   a card, after. They share the chip shape so an attached file looks like the
+   same object at both ends of the journey. */
+
+.composer.is-dropping {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Hidden, not removed: the paperclip clicks it. `display: none` on a file
+   input makes `.click()` a no-op in some browsers. */
+.composer-picker {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px 0;
+  list-style: none;
+}
+
+.composer-attachment {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 260px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  padding: 4px 6px 4px 5px;
+  color: var(--text-secondary);
+}
+
+.composer-attachment.is-uploading { opacity: 0.62; }
+.composer-attachment.is-failed { border-color: var(--danger, var(--border-hairline)); }
+.composer-attachment.is-failed .composer-attachment-sub { color: var(--danger, var(--text-tertiary)); }
+
+.composer-thumb {
+  width: 30px;
+  height: 30px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.composer-attachment-facts {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.composer-attachment-name {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment-sub {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.composer-attachment-remove {
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.composer-attachment-remove:hover { color: var(--text-primary); }
+
+.composer-attach {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: none;
+  padding: 3px 7px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.composer-attach:hover { color: var(--text-primary); }
+
+/* On the card. */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.attachment-image {
+  display: block;
+  overflow: hidden;
+  max-width: 100%;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  line-height: 0;
+}
+
+.attachment-image img {
+  display: block;
+  /* Clamped so a tall screenshot does not push the rest of the conversation
+     off the screen. Click opens it at full size. */
+  max-width: min(420px, 100%);
+  max-height: 300px;
+  object-fit: contain;
+}
+
+.attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 320px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  padding: 5px 9px 5px 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.attachment-chip:hover { border-color: var(--accent); }
+
+.attachment-chip.is-missing {
+  border-style: dashed;
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.attachment-chip.is-missing:hover { border-color: var(--border-hairline); }
+
+.attachment-facts {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.attachment-name {
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-sub {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-mark { flex: none; color: var(--text-tertiary); }
+
+.attachment-open {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Only on a video, which is the one kind whose path is worth having. */
+.attachment-copy {
+  flex: none;
+  border: 0;
+  border-left: 1px solid var(--border-hairline);
+  background: none;
+  padding: 2px 0 2px 8px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.attachment-copy:hover { color: var(--accent); }

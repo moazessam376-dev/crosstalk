@@ -19,6 +19,13 @@ export type AwaitResponse = { events: CrosstalkEvent[] } | { idle: true };
  * failure worth defending against — not a hostile agent, but a capable one that
  * found the wrong door and got an unhelpful answer. Contract §4, §8.
  */
+export interface AttachmentRecord {
+  sha: string;
+  name: string;
+  type: string;
+  bytes: number;
+}
+
 export class DaemonRequestError extends Error {
   constructor(
     readonly status: number,
@@ -58,6 +65,34 @@ export class DaemonClient {
     private readonly token: string,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
+
+  /**
+   * Send a file the seat already has on disk, and get back the record for it.
+   *
+   * The MCP server runs in the seat's own process on the same machine as the
+   * daemon, so a path is all an agent needs to spend — it never pays the
+   * tokens of a base64 blob, which for a screenshot is most of a context
+   * window for something it was not asked to look at.
+   */
+  async putFile(bytes: Uint8Array, type: string, name: string): Promise<AttachmentRecord> {
+    const response = await this.fetchImpl(`${this.url}/attachments`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${this.token}`,
+        'content-type': type,
+        // Percent-encoded for the same reason `x-crosstalk-cwd` is: header
+        // values are Latin-1 and a filename is not guaranteed to be.
+        'x-crosstalk-filename': encodeURIComponent(name),
+        'x-crosstalk-cwd': encodeURIComponent(process.cwd()),
+      },
+      // A view over the file's bytes. Typed loosely because `BodyInit` is a
+      // DOM lib type this project's tsconfig does not pull in.
+      body: bytes as unknown as Parameters<typeof fetch>[1] extends { body?: infer B } ? B : never,
+    });
+    const text = await response.text();
+    if (!response.ok) throw toError(response.status, text);
+    return (JSON.parse(text) as { attachment: AttachmentRecord }).attachment;
+  }
 
   async get<T>(path: string, query: Record<string, string | number | undefined> = {}): Promise<T> {
     return this.request<T>('GET', path + searchSuffix(query), undefined);

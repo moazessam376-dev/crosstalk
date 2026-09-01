@@ -1,6 +1,29 @@
 import type { Participant, ParticipantId } from './participant.js';
 import type { Claim, ClaimVerdict, Evidence } from './claim.js';
 import type { Task, TaskState, Acknowledgement, CritiqueRecord } from './task.js';
+
+/**
+ * A file sent with a message, addressed by content.
+ *
+ * `sha` is the sha256 of the bytes, which is also where they are stored —
+ * `.crosstalk/blobs/<sha[0:2]>/<sha><ext>` — so the same screenshot pasted
+ * twice is one file, and a record cannot point at bytes that are not the ones
+ * it was written about.
+ *
+ * `name` is the author's filename, kept for display only. It never becomes a
+ * path: the extension on disk comes from a whitelist keyed on `type`, because
+ * a filename is client input and a path built from client input is a
+ * traversal waiting to happen.
+ */
+export interface MessageAttachment {
+  /** sha256 of the bytes, lowercase hex. */
+  sha: string;
+  /** What the author called it. For display; never used to build a path. */
+  name: string;
+  /** The declared media type — `image/png`, `video/mp4`, `text/markdown`. */
+  type: string;
+  bytes: number;
+}
 import type { Decision, LadderRung } from './decision.js';
 import type { RoomId } from './room.js';
 import type { MessageTag } from './say.js';
@@ -75,6 +98,25 @@ export type CrosstalkEvent =
       head?: string;
       /** The slice or task this is about — `S-3`, `T-04`. */
       task?: string;
+      /**
+       * Files sent with the message: screenshots, mostly.
+       *
+       * The third named contract amendment, beside `spoc` and `tag`/`head`/
+       * `task`. Optional for the same reason they are — the log is append-only
+       * and every message written before this has none.
+       *
+       * **Deliberately not `ref`.** `ref` is single-valued, is *required* by
+       * `result`, `gate` and `plan`, and `assertedGates` scans it for
+       * `gate:<id>` — so an attachment put there would either displace a gate
+       * assertion or be read as one. That is a correctness collision, not a
+       * matter of taste.
+       *
+       * **The record carries the hash, never the path.** A machine-local path
+       * in a log that `src/mirror/` pushes to GitHub is useless to the next
+       * reader and leaks the author's directory layout. The absolute path is
+       * derived at delivery, from the sha, by whoever is about to open it.
+       */
+      attachments?: readonly MessageAttachment[];
     })
   | (EventBase & { kind: 'task_created'; task: Task })
   | (EventBase & { kind: 'task_state'; taskId: string; state: TaskState; reason?: string })

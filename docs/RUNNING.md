@@ -191,6 +191,40 @@ the empty Participants panel as the signal, not the rest of the sentence.
 
 The recovery is always the same: reopen from the `Hub:` line that `up` printed.
 
+### Sending a screenshot
+
+⌘V into the composer, drag a file onto it, or the paperclip beside `Send`.
+Three ways in because a screenshot mostly arrives by paste.
+
+The file uploads the moment you attach it, not when you press `Send`. The
+thumbnail appears immediately, and if the daemon refuses it — 25 MB for
+images and files, 200 MB for video — the refusal lands on the file and your
+typed message is untouched. `Send` is held while an upload is in flight, so a
+message cannot go without the picture it was written about.
+
+A picture on its own is a message. You do not have to write anything alongside
+it.
+
+On the card afterwards: images render inline, click to open full size; video
+is a chip with its path, the way Claude Code shows one; everything else is a
+chip with its format on it. **SVG and HTML download rather than render** —
+the hub serves attachments from its own origin, so an SVG opened inline there
+would be script running on your hub.
+
+Agents attach files too, with `attach` on `say`, taking paths inside the
+repository. They receive one as a **path**, never as bytes:
+
+```
+attached: /repo/.crosstalk/blobs/ab/abc…def.png (image/png, 402 KB)
+```
+
+so the seat opens it with its own tools rather than spending a context window
+on base64.
+
+Files live in `.crosstalk/blobs/`, addressed by content — the same screenshot
+pasted three times is one file. They are collected when you permanently delete
+a run, and only if nothing else still points at them.
+
 ---
 
 ## One folder, or one folder per agent

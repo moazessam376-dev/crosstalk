@@ -3,6 +3,7 @@ import { MESSAGE_TAGS } from '../contracts/say.js';
 import { renderTagTable } from '../core/says.js';
 import type { WriteResponse } from './client.js';
 import type { Inbox } from '../core/inbox.js';
+import { ATTACHMENT_EXTENSIONS, capFor, MAX_ATTACHMENTS } from '../core/attachments.js';
 
 export interface JsonSchema {
   type: 'object';
@@ -94,10 +95,19 @@ export const TOOLS: ToolDefinition[] = [
           description: 'The artifact carrying the detail — a path, a SHA, a file you wrote.',
         },
         task: { type: 'string', description: 'The slice this is about.' },
+        attach: {
+          type: 'array',
+          items: { type: 'string' },
+          // A property, not a fifth tool. `tests/mcp/schemas.test.ts` pins the
+          // tool list at four on purpose: the four verbs are the interface, and
+          // "attach a file" is a thing you do while saying something, not a
+          // fifth thing to do.
+          description: 'Files to send with this, as paths inside the repo. A screenshot, a diff, a report.',
+        },
       },
       required: ['tag', 'head'],
     },
-    invoke: (client, args) => client.post<WriteResponse>('/events', { kind: 'message', ...args }),
+    invoke: async (client, args) => invokeSay(client, args),
   },
 
   {
@@ -167,6 +177,76 @@ export const TOOLS: ToolDefinition[] = [
 ];
 
 export const TOOLS_BY_NAME = new Map(TOOLS.map((tool) => [tool.name, tool]));
+
+/**
+ * Post a message, uploading anything it attaches first.
+ *
+ * The agent spends the tokens of a path; the bytes go over a separate request
+ * from this same process, which is on the same machine as the daemon. Base64
+ * in the tool call would put a screenshot through the model's context twice —
+ * once written, once read back — for a picture nobody asked it to look at.
+ *
+ * Two refusals live here rather than at the daemon, because both are about
+ * *this* process and the daemon cannot see either:
+ *
+ * - **the path must be inside the repo.** `attach: "/etc/passwd"` on a board
+ *   that `src/mirror/` pushes to GitHub is an exfiltration path, and it is one
+ *   an agent could be talked into by a file it read.
+ * - **the cap, before reading.** The daemon enforces it too, but reading a
+ *   200 MB file into this process to be refused is a way to be killed by the
+ *   OOM killer instead of told no.
+ */
+async function invokeSay(client: DaemonClient, args: Record<string, unknown>): Promise<unknown> {
+  const { attach, ...message } = args as { attach?: unknown } & Record<string, unknown>;
+  if (attach === undefined) {
+    return client.post<WriteResponse>('/events', { kind: 'message', ...message });
+  }
+  if (!Array.isArray(attach) || attach.some((entry) => typeof entry !== 'string')) {
+    throw new Error('attach takes a list of paths');
+  }
+  if (attach.length > MAX_ATTACHMENTS) {
+    throw new Error(`attach takes at most ${MAX_ATTACHMENTS} files`);
+  }
+
+  const { readFile, stat } = await import('node:fs/promises');
+  const { basename, extname, isAbsolute, relative, resolve } = await import('node:path');
+  const repo = resolve(process.env['CROSSTALK_REPO'] ?? process.cwd());
+
+  const attachments = [];
+  for (const path of attach as string[]) {
+    const full = resolve(repo, path);
+    const inside = relative(repo, full);
+    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+      throw new Error(`${path} is outside the repository. Attach files your team can also see.`);
+    }
+    const type = typeForPath(extname(full).toLowerCase());
+    const info = await stat(full);
+    const cap = capFor(type);
+    if (info.size > cap) {
+      throw new Error(
+        `${basename(full)} is ${Math.round(info.size / (1024 * 1024))} MB; the cap for this kind of file is ${Math.round(cap / (1024 * 1024))} MB`,
+      );
+    }
+    attachments.push(await client.putFile(await readFile(full), type, basename(full)));
+  }
+
+  return client.post<WriteResponse>('/events', { kind: 'message', ...message, attachments });
+}
+
+/**
+ * The media type of a file on disk, from its extension.
+ *
+ * The reverse of the daemon's whitelist, which is keyed on type. An agent
+ * attaches a path and has no `File.type` to hand, so the extension is the only
+ * thing there is to go on — and an unknown one is refused by the daemon rather
+ * than guessed at here.
+ */
+function typeForPath(ext: string): string {
+  for (const [type, candidate] of Object.entries(ATTACHMENT_EXTENSIONS)) {
+    if (candidate === ext) return type;
+  }
+  throw new Error(`${ext === '' ? 'a file with no extension' : ext} is not a kind of file Crosstalk stores`);
+}
 
 async function invokeAct(client: DaemonClient, args: Record<string, unknown>): Promise<unknown> {
   const kind = args['kind'];

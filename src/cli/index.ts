@@ -20,11 +20,13 @@ import { startMirror } from '../mirror/index.js';
 import { resolveHubDist } from '../daemon/hub.js';
 import { HUMAN_ID } from '../contracts/room.js';
 import { SHAPES } from '../core/shape.js';
+import type { MirrorMode } from '../contracts/config.js';
 import { dmId } from '../core/rooms.js';
 
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
 import { runCompose } from './compose.js';
 import { preflight, purgeWorkspaces, runInit } from './init.js';
+import { configureGithub } from './github.js';
 import { openBrowser } from './open.js';
 import { bold, dim, emit, eventLine, failureText, table } from './output.js';
 
@@ -35,6 +37,7 @@ const USAGE = `crosstalk — multi-agent development where a finding is a claim,
   crosstalk up   [--port N] [--host ADDR] [--no-open] [--force]
   crosstalk down [--as <id>] [--purge]
   crosstalk doctor
+  crosstalk github <url> [--login <gh-login>] [--mode one-way|two-way-human]
 
   ct inbox    [--as <id>] [--timeout 0] [--no-wait]
   ct say      --as <id> --room '#floor' --body '...' [--to <id>]
@@ -879,12 +882,73 @@ async function cmdMine(argv: string[]): Promise<number> {
  * neither of which has ever existed. Exported so a test can compare the brief
  * against the real table instead of a second hand-written copy.
  */
+
+/**
+ * `crosstalk github https://github.com/owner/repo` — the mirror in one command.
+ *
+ * Turning it on was a hand-edit of a YAML shape documented nowhere: `init`
+ * writes no mirror key, and `doctor`'s remedy said to add one yourself. Then
+ * the next `init --force` — which the hub runs on every re-staffing whose
+ * roster or shape differs — rebuilt the file without it. The block is carried
+ * across regenerations now; this is the other half, so nobody has to know the
+ * shape in the first place.
+ */
+async function cmdGithub(argv: string[]): Promise<number> {
+  const { flags, rest } = read(argv, {
+    login: { type: 'string' },
+    mode: { type: 'string' },
+    remote: { type: 'string' },
+  });
+  const url = rest[0];
+  if (url === undefined) {
+    throw new CliError('crosstalk github needs a repository', EXIT.usage, 'crosstalk github https://github.com/owner/repo');
+  }
+
+  const mode = str(flags, 'mode');
+  const MODES: MirrorMode[] = ['off', 'one-way', 'two-way-human'];
+  if (mode !== undefined && !(MODES as string[]).includes(mode)) {
+    throw new CliError(`no mirror mode named ${mode}`, EXIT.usage, `Known modes: ${MODES.join(', ')}.`);
+  }
+
+  const login = str(flags, 'login');
+  const remote = str(flags, 'remote');
+  const result = await configureGithub({
+    repo: str(flags, 'repo') ?? '.',
+    url,
+    ...(login === undefined ? {} : { login }),
+    ...(mode === undefined ? {} : { mode: mode as MirrorMode }),
+    ...(remote === undefined ? {} : { remote }),
+  });
+
+  emit(result, flags['json'] === true, () => {
+    const lines = [
+      `${bold('GitHub mirror configured')} for ${result.repo.owner}/${result.repo.repo}`,
+      '',
+      `  remote ${result.remote}   ${result.repo.url}`,
+      `  config           ${result.configPath}`,
+      `  your comments    ${result.humanLogin}`,
+      '',
+    ];
+    // Said out loud because it is the one field that fails silently: without a
+    // matching login, two-way-human reads no operator comments at all on a repo
+    // owned by an organisation.
+    if (login === undefined) {
+      lines.push(`Comments from ${bold(result.humanLogin)} count as @human. If that is not you, re-run with --login <your-github-login>.`);
+      lines.push('');
+    }
+    lines.push('Then: crosstalk up');
+    return lines.join('\n');
+  });
+  return EXIT.ok;
+}
+
 const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   init: cmdInit,
   compose: cmdCompose,
   up: cmdUp,
   down: cmdDown,
   doctor: cmdDoctor,
+  github: cmdGithub,
   inbox: cmdInbox,
   say: cmdSay,
   act: cmdAct,

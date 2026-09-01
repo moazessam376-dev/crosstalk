@@ -744,16 +744,17 @@ export async function doctor(config: CrosstalkConfig, cwd: string): Promise<Find
   // by hand with `git merge --ff-only main`.
   findings.push(...await checkWorktreeFreshness(config, repoRoot));
 
-  // CT-19. `src/mirror/` exists and `doctor` checks it, but `init` writes no
-  // mirror key, so the only way to turn it on is hand-editing an undocumented
-  // shape. That is a legitimate not-yet-built; the defect is that nothing said
-  // so, leaving an unbuilt feature and a deliberately disabled one identical.
+  // CT-19. `src/mirror/` exists and `doctor` checks it, but `init` wrote no
+  // mirror key, so the only way to turn it on was hand-editing an undocumented
+  // shape — and the next `init --force` then threw the block away, which is why
+  // no run has ever had a mirror. Both halves are fixed; this remedy names the
+  // command rather than describing YAML nobody should have to know.
   if (config.mirror === undefined) {
     findings.push(finding(
       'warn',
       'MIRROR_UNCONFIGURED',
-      'No GitHub mirror is configured, and init does not yet write one.',
-      'Expected — v1 ships the protocol and the mirror follows. Everything works locally without it. To try it, add a mirror.github block to crosstalk.yaml by hand.',
+      'No GitHub mirror is configured.',
+      'Everything works locally without one. To mirror to GitHub: crosstalk github https://github.com/owner/repo',
     ));
   }
 

@@ -135,7 +135,8 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   // it to `runInit`, which had no such option and dropped it, so every team the
   // hub launched ran shapeless — no phases, no gates, and seats briefed without
   // the one thing that tells three peers how to be a team.
-  const shape = options.shape ?? (await configuredShape(repo));
+  const carried = await carriedConfig(repo);
+  const shape = options.shape ?? carried.shape;
 
   const config: CrosstalkConfig = {
     version: 1,
@@ -148,6 +149,10 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     participants,
     policy: DEFAULT_POLICY,
     ...(shape === undefined ? {} : { shape }),
+    ...(carried.contractPath === undefined ? {} : { contractPath: carried.contractPath }),
+    // Absent means no mirror, so an unset key is carried as unset rather than
+    // defaulted into existence.
+    ...(carried.mirror === undefined ? {} : { mirror: carried.mirror }),
   };
 
   // Issue #23. `init` was the only command that could leave a repository in a
@@ -804,11 +809,30 @@ async function kickoffLines(
  * with `--force` on a config they have broken is asking to have it rebuilt, and
  * refusing would leave them with no way through except deleting the file.
  */
-async function configuredShape(repo: string): Promise<string | undefined> {
+/**
+ * Everything a regeneration must carry across, as one list.
+ *
+ * It was `configuredShape`, returning one field, and the omission is why the
+ * GitHub mirror is never configured on any run: the mirror is enabled by
+ * hand-editing `crosstalk.yaml` — `init` writes no mirror key and `doctor`'s
+ * remedy says to add one — and then `--force` rebuilt the file from the shape
+ * and the roster alone. The hub calls `runInit({force: true})` on every launch
+ * whose roster or shape differs, so the block was gone before the first message,
+ * every time, with nothing said about it.
+ *
+ * One function rather than one per key, so the next field added to
+ * `CrosstalkConfig` has a single obvious place to be remembered.
+ */
+async function carriedConfig(repo: string): Promise<Partial<CrosstalkConfig>> {
   try {
-    return (await loadConfig(repo)).shape;
+    const existing = await loadConfig(repo);
+    return {
+      ...(existing.shape === undefined ? {} : { shape: existing.shape }),
+      ...(existing.contractPath === undefined ? {} : { contractPath: existing.contractPath }),
+      ...(existing.mirror === undefined ? {} : { mirror: existing.mirror }),
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 

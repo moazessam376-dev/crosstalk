@@ -1,6 +1,7 @@
 import type { CrosstalkEvent } from '../contracts/events.js';
 import type { ParticipantId, Role } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
+import type { MessageTag } from '../contracts/say.js';
 import type { HubState } from './projection.js';
 import type { PhaseStatus } from './phase.js';
 
@@ -28,6 +29,10 @@ export interface InboxCard {
   truncated?: true;
   /** The artifact the author pointed at for depth. */
   ref?: string;
+  /** What the message is for. Absent on anything written before the amendment. */
+  tag?: MessageTag;
+  /** The slice this is about. */
+  task?: string;
 }
 
 export interface InboxTask {
@@ -198,9 +203,14 @@ export function cardFor(event: CrosstalkEvent): InboxCard {
       return {
         ...base,
         kind: 'said',
-        summary: clip(event.body),
+        // The author's own line when there is one. A clip at 120 characters is
+        // a guess at what mattered, made by the reader's tooling; `head` is the
+        // same judgement made by the only party who knows.
+        summary: event.head ?? clip(event.body),
         ...carry(event.body),
         ...(event.ref === undefined ? {} : { ref: event.ref }),
+        ...(event.tag === undefined ? {} : { tag: event.tag }),
+        ...(event.task === undefined ? {} : { task: event.task }),
       };
     case 'task_created':
       return {

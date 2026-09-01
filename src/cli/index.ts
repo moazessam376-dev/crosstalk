@@ -40,10 +40,10 @@ const USAGE = `crosstalk — multi-agent development where a finding is a claim,
   crosstalk github <url> [--login <gh-login>] [--mode one-way|two-way-human]
 
   ct inbox    [--as <id>] [--timeout 0] [--no-wait]
-  ct say      --as <id> --room '#floor' --body '...' [--to <id>]
+  ct say      --as <id> --tag <tag> --head '...' [--to <id>] [--room '#floor'] [--ref R] [--body '...']
   ct act      --as <id> --kind ack|assign|done|accept|reject [--task T-01] [--restatement '...']
               [--id T-01 --title '...' --brief '...' --assignee <id> --branch <branch>]
-  ct dm       --as <id> --with <id> --body '...'      (a side room; @human is in it too)
+  ct dm       --as <id> --with <id> --head '...'      (a side room; @human is in it too)
   ct claim    --as <id> --against <id> --target <file:line> --assertion '...' --falsifier '...'
               [--severity blocker|defect|risk|nit] [--evidence-cmd '...'] [--evidence-sha <sha>]
   ct respond  <claim-id> --as <id> --verdict accept|contest|uphold|concede|amend|clarify
@@ -585,20 +585,43 @@ async function cmdAct(argv: string[]): Promise<number> {
   );
 }
 
+/**
+ * The shell tier's `say`, and it has to accept exactly what the MCP tier does.
+ *
+ * `--room` is no longer required: with `--to` and no room, the daemon opens the
+ * side room. `brief-vocabulary.test.ts` exists because these two drifted once
+ * already, and named two commands that did not exist.
+ */
 async function cmdSay(argv: string[]): Promise<number> {
-  return withClient(argv, { room: { type: 'string' }, body: { type: 'string' }, to: { type: 'string' }, ref: { type: 'string' } }, async (client, flags) => {
-    const to = str(flags, 'to');
-    const ref = str(flags, 'ref');
-    const result = await client.post<WriteResult>('/events', {
-      kind: 'message',
-      room: require_(flags, 'room'),
-      body: require_(flags, 'body'),
-      ...(to === undefined ? {} : { to }),
-      ...(ref === undefined ? {} : { ref }),
-    });
-    emit(result, flags['json'] === true, () => `posted seq ${result.events[result.events.length - 1]!.seq}`);
-    return EXIT.ok;
-  });
+  return withClient(
+    argv,
+    {
+      room: { type: 'string' },
+      body: { type: 'string' },
+      to: { type: 'string' },
+      ref: { type: 'string' },
+      tag: { type: 'string' },
+      head: { type: 'string' },
+      task: { type: 'string' },
+    },
+    async (client, flags) => {
+      const optional = ['room', 'body', 'to', 'ref', 'tag', 'task'] as const;
+      const head = str(flags, 'head') ?? str(flags, 'body');
+      if (head === undefined) {
+        throw new CliError('--head is required', EXIT.usage, 'The head is the message: one line, and usually the whole of it.');
+      }
+      const result = await client.post<WriteResult>('/events', {
+        kind: 'message',
+        head,
+        ...Object.fromEntries(optional.flatMap((name) => {
+          const value = str(flags, name);
+          return value === undefined ? [] : [[name, value]];
+        })),
+      });
+      emit(result, flags['json'] === true, () => `posted seq ${result.events[result.events.length - 1]!.seq}`);
+      return EXIT.ok;
+    },
+  );
 }
 
 /**
@@ -616,17 +639,22 @@ async function cmdSay(argv: string[]): Promise<number> {
  * than DMs.
  */
 async function cmdDm(argv: string[]): Promise<number> {
-  return withClient(argv, { with: { type: 'string' }, body: { type: 'string' }, ref: { type: 'string' } }, async (client, flags) => {
+  return withClient(argv, { with: { type: 'string' }, body: { type: 'string' }, ref: { type: 'string' }, head: { type: 'string' }, tag: { type: 'string' } }, async (client, flags) => {
     const other = require_(flags, 'with');
     const ref = str(flags, 'ref');
     const me = str(flags, 'as');
     if (me === undefined) {
       throw new CliError('--as is required to open a side room', EXIT.usage, 'The room id is built from both ids, so both have to be named.');
     }
+    const head = str(flags, 'head') ?? require_(flags, 'body');
+    const tag = str(flags, 'tag');
     const result = await client.post<WriteResult>('/events', {
       kind: 'message',
       room: dmId(me, other),
-      body: require_(flags, 'body'),
+      to: other,
+      head,
+      ...(str(flags, 'body') === undefined ? {} : { body: str(flags, 'body') }),
+      ...(tag === undefined ? {} : { tag }),
       ...(ref === undefined ? {} : { ref }),
     });
     emit(result, flags['json'] === true, () => `posted to ${bold(dmId(me, other))} (@human is in this room too)`);

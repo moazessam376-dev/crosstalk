@@ -34,6 +34,11 @@ export type DaemonErrorCode =
    * act on by compressing and moving the detail into `ref`.
    */
   | 'MESSAGE_TOO_LONG'
+  // The message schema: a missing or over-budget tag, head or body, a required
+  // `ref` or `to` absent, or a tag posted in the wrong kind of room. In-band
+  // and separate from MALFORMED_BODY, because every one of these is something
+  // the author can fix and re-send — the refusal text names the fix.
+  | 'MESSAGE_REFUSED'
   | 'EVENT_KIND_NOT_APPENDABLE';
 
 export class DaemonError extends Error {

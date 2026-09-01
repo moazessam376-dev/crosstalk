@@ -25,7 +25,9 @@ import { workspaceWarning } from './workspace.js';
 import { Presence } from './presence.js';
 import { SessionRegistry } from '../harness/sessions.js';
 import { currentRungOf } from '../core/decisions.js';
-import { normaliseRoom } from '../core/rooms.js';
+import { dmId, normaliseRoom } from '../core/rooms.js';
+import { refuseMessage, type MessageDraft } from '../core/says.js';
+import { isMessageTag } from '../contracts/say.js';
 
 import {
   DAEMON_STATUS,
@@ -1369,14 +1371,6 @@ class Daemon {
       );
     }
 
-    const room = body['room'];
-    const text = body['body'];
-    if (typeof room !== 'string' || room === '') {
-      throw new DaemonError('MALFORMED_BODY', 'message requires a room');
-    }
-    if (typeof text !== 'string') {
-      throw new DaemonError('MALFORMED_BODY', 'message requires a body');
-    }
     const to = body['to'];
     if (to !== undefined && typeof to !== 'string') {
       throw new DaemonError('MALFORMED_BODY', 'message `to` must be a participant id');
@@ -1384,6 +1378,52 @@ class Daemon {
     const ref = body['ref'];
     if (ref !== undefined && typeof ref !== 'string') {
       throw new DaemonError('MALFORMED_BODY', 'message `ref` must be a string');
+    }
+    const head = body['head'];
+    if (head !== undefined && typeof head !== 'string') {
+      throw new DaemonError('MALFORMED_BODY', 'message `head` must be a string');
+    }
+    const task = body['task'];
+    if (task !== undefined && typeof task !== 'string') {
+      throw new DaemonError('MALFORMED_BODY', 'message `task` must be a string');
+    }
+
+    // `to` with no room opens the side room. This is the whole of the fix for
+    // the 312 messages that named one seat and were read by three: `to` alone
+    // could never remove a reader, because `#floor` membership delivers to
+    // everyone and `to` only adds a wake on top. A room is what narrows it, and
+    // reaching one used to mean hand-building `dm:a~b` — which no MCP seat did,
+    // in 1187 events, having been told twice to.
+    const named = body['room'];
+    const room = typeof named === 'string' && named !== ''
+      ? named
+      : typeof to === 'string'
+        ? dmId(ctx.who, to)
+        : undefined;
+    if (room === undefined) {
+      throw new DaemonError('MALFORMED_BODY', 'message requires a room, or a `to` naming one seat');
+    }
+
+    // `body` falls back to `head`, and this is the load-bearing half of the
+    // amendment: every reader that predates it — the projection, the mirror,
+    // `boardTurn`, every card — treats `body` as the message, and an empty one
+    // would render as a blank card and an empty turn.
+    const written = body['body'];
+    const text = typeof written === 'string' ? written : typeof head === 'string' ? head : undefined;
+    if (text === undefined) {
+      throw new DaemonError('MALFORMED_BODY', 'message requires a body, or a `head`');
+    }
+
+    const refusal = this.#refuseSchema(ctx.who, {
+      room,
+      tag: body['tag'],
+      head,
+      body: written,
+      to,
+      ref,
+    });
+    if (refusal !== null) {
+      throw new DaemonError('MESSAGE_REFUSED', refusal);
     }
 
     // The cap is enforced here rather than in each tool so both tiers get it:
@@ -1407,8 +1447,34 @@ class Daemon {
         body: text,
         ...(to === undefined ? {} : { to }),
         ...(ref === undefined ? {} : { ref }),
+        ...(isMessageTag(body['tag']) ? { tag: body['tag'] } : {}),
+        ...(head === undefined ? {} : { head }),
+        ...(task === undefined ? {} : { task }),
       }),
     ];
+  }
+
+  /**
+   * Hold this seat to the message schema, or do not.
+   *
+   * Gated on the shape naming tags for the seat's role, so a project with no
+   * shape — every repository already using Crosstalk — writes exactly what it
+   * wrote before. `@human` is exempt for the same reason it is exempt from the
+   * length cap: the operator is not a seat and is not being taught anything.
+   */
+  #refuseSchema(who: ParticipantId, draft: MessageDraft): string | null {
+    if (who === HUMAN_ID) return null;
+    const shape = shapeNamed(this.#config.shape);
+    if (shape === undefined) return null;
+    const role = this.#config.participants.find((participant) => participant.id === who)?.role;
+    const allowed = shape.seats.find((seat) => seat.role === role)?.tags;
+    if (allowed === undefined) return null;
+
+    return refuseMessage(draft, {
+      from: who,
+      allowed,
+      roster: this.#config.participants.map((participant) => participant.id),
+    });
   }
 
   /**

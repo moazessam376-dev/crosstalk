@@ -3,6 +3,7 @@ import type { Claim, ClaimVerdict, Evidence } from './claim.js';
 import type { Task, TaskState, Acknowledgement, CritiqueRecord } from './task.js';
 import type { Decision, LadderRung } from './decision.js';
 import type { RoomId } from './room.js';
+import type { MessageTag } from './say.js';
 
 export type EventKind =
   | 'participant_joined'
@@ -54,6 +55,26 @@ export type CrosstalkEvent =
        * detail.
        */
       ref?: string;
+      /**
+       * What this message is for. See `core/says.ts`.
+       *
+       * The second named contract amendment, beside `spoc`. Optional, because
+       * the log is append-only and every message written before it has none —
+       * readers treat those as `note` and fall back to clipping `body`.
+       */
+      tag?: MessageTag;
+      /**
+       * The author's own one line, and the message proper.
+       *
+       * `MessageCard` has been asking for this field since it was written: a
+       * clip at 320 characters is a guess at what mattered, and the author
+       * knows. It arrives now because it is also the lever on length — a
+       * mandatory `head` with an optional `body` makes one line the default
+       * shape of a message, which a smaller cap could not.
+       */
+      head?: string;
+      /** The slice or task this is about — `S-3`, `T-04`. */
+      task?: string;
     })
   | (EventBase & { kind: 'task_created'; task: Task })
   | (EventBase & { kind: 'task_state'; taskId: string; state: TaskState; reason?: string })

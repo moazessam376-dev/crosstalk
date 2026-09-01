@@ -5,6 +5,8 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import type { PolicyConfig, Participant, Tier } from '../contracts/index.js';
 import type { HarnessDescriptor } from './registry.js';
 import { shapeNamed } from '../core/shape.js';
+import { renderTagTable } from '../core/says.js';
+import type { MessageTag } from '../contracts/say.js';
 
 const VERSION_PLACEHOLDER = '<!-- crosstalk brief version: {{briefVersion}} -->';
 const VERSION_MARKER = /<!-- crosstalk brief version: ct-brief-[0-9a-f]{8} -->/g;
@@ -52,17 +54,38 @@ function policySummary(policy: PolicyConfig): string {
   return '';
 }
 
-function transportInstructions(tier: Tier): string {
+/**
+ * The tags this seat has, from the shape, or undefined when the shape does not
+ * say. Undefined renders the whole table — which is right for a project with
+ * no shape, where the daemon enforces nothing either.
+ */
+function seatTags(participant: Participant, shape?: string): readonly MessageTag[] | undefined {
+  return shapeNamed(shape)?.seats.find((seat) => seat.role === participant.role)?.tags;
+}
+
+function transportInstructions(tier: Tier, tags?: readonly MessageTag[]): string {
   // Every name below is checked against the real CLI command table and the real
   // MCP tool list by `tests/harness/brief-vocabulary.test.ts`. This block named
   // four commands of which two did not exist — `acknowledge` and `submit` on
   // the shell tier, `acknowledge()` and `submit()` on MCP — and it survived a
   // full protocol repair because nothing compared it to the code. It is the
   // first thing every agent reads.
+  // No sizes anywhere below, and that is the point. The cap was stated as
+  // `1500` in all three of these blocks and twice more in the `say` tool
+  // schema, which a model re-reads on every call — and the median message over
+  // 1187 events landed at 1429. A budget told to the writer is a target; the
+  // sizes are enforced on the write and named only in refusals.
+  //
+  // Only when the shape names this seat's tags. With no shape the daemon
+  // enforces nothing, and a brief teaching a schema that will not be applied is
+  // context spent on a rule that is not real.
+  const guide = tags === undefined ? undefined : renderTagTable(tags);
+
   if (tier === 'mcp') {
     return [
       'Call `inbox()` first. If `job` is set, that is the work. If next is idle, wait.',
-      '`say({room, body, ref})` — body is capped at 1500 characters. Lead with the finding; put the detail in a file or a commit and name it with `ref`.',
+      ...(guide === undefined ? [] : [guide]),
+      '`say({tag, head, to, ref})` — the head is the message, in one line. `to` sends it to one seat and nobody else reads it. Put depth behind `ref`.',
       '`act({kind:"ack"|"assign"|"done"|"accept"|"reject"})` for tasks. `claim({kind})` only for contradictions.',
       'Confirm `inbox()` says `you` is you before you write.',
     ].join('\n');
@@ -72,7 +95,8 @@ function transportInstructions(tier: Tier): string {
     return [
       'Use the Crosstalk shell CLI; validation failures are reported by exit code.',
       '- `crosstalk inbox --as ID` returns cards now. Pass `--timeout 50` only to wait.',
-      '- `crosstalk say --as ID --room \'#floor\' --body "..." [--ref path-or-sha]` — body is capped at 1500 characters; lead with the finding and put detail behind `--ref`.',
+      ...(guide === undefined ? [] : [guide]),
+      '- `crosstalk say --as ID --tag TAG --head "..." [--to ID] [--ref path-or-sha]` — `--to` sends it to one seat and nobody else reads it.',
       '- `crosstalk act --as ID --kind ack --task T-01 --restatement "..."`',
       '- `crosstalk claim --as ID --against leader --target src/file.ts:1 --assertion "..." --falsifier "..."`',
     ].join('\n');
@@ -80,7 +104,7 @@ function transportInstructions(tier: Tier): string {
 
   return [
     'Use the Crosstalk file inbox/outbox format; each action is one fenced crosstalk block.',
-    'A message body is capped at 1500 characters; lead with the finding and name any detail with `ref`.',
+    ...(guide === undefined ? [] : [guide]),
     'Write the same payload fields required by the protocol validator, including a falsifier.',
     'Read the rendered inbox response after each action and correct rejected blocks there.',
   ].join('\n');
@@ -193,7 +217,7 @@ export function renderBrief(
     tier,
     lifecycle: participant.lifecycle,
     policySummary: policySummary(policy),
-    transportInstructions: transportInstructions(tier),
+    transportInstructions: transportInstructions(tier, seatTags(participant, shape)),
     workspaceRules: workspaceRules(participant),
   });
   const fragment = shapeFragment(participant, shape);

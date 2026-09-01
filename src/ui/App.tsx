@@ -7,7 +7,7 @@ import { deriveState } from './state/derive.js';
 import { useLog, type LogSource } from './state/useLog.js';
 import { loadHubConfig, type HubConnection } from './state/hubConfig.js';
 import { useMirror } from './state/useMirror.js';
-import { postCompose, postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
+import { postCompose, postMirrorRepo, postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
 import { dmId } from '../core/rooms.js';
 import { FLOOR } from '../contracts/room.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -218,6 +218,9 @@ export default function App({ connection: injected }: AppProps = {}) {
         ? (participantId: string) => setSelectedRoom(dmId(connection.config.self, participantId))
         : undefined,
       onCompose: connection.kind === 'live' ? (job: string) => postCompose(job) : undefined,
+      // Only against a live daemon: there is no config to write otherwise, and
+      // a field that silently does nothing is worse than no field.
+      onConfigureMirror: connection.kind === 'live' ? (url: string) => postMirrorRepo(url) : undefined,
       ...(operator === undefined ? {} : { operator }),
       onSetOperator: setOperator,
       sessions,

@@ -215,9 +215,21 @@ describe('the launcher as a page', () => {
  * when it was — so a seat could not be put on it from the hub at all, and the
  * operator found out by opening the dropdown and not seeing it.
  */
+/**
+ * What `GET /harnesses` serves, including which harnesses are watchable.
+ *
+ * `watchable` is a fact the registry holds — an interactive `turnFormat` — and
+ * the launcher used to guess it from a `-live` suffix on the key, which is a
+ * naming convention rather than a contract.
+ */
 const CATALOG = [
-  { id: 'claude-code-live', label: 'Claude Code · interactive', models: ['claude-opus-5', 'claude-fable-5'] },
-  { id: 'codex-cli', label: 'Codex', models: ['gpt-5.3-codex', 'o4-mini'] },
+  {
+    id: 'claude-code-live',
+    label: 'Claude Code · interactive',
+    models: ['claude-opus-5', 'claude-fable-5'],
+    watchable: true,
+  },
+  { id: 'codex-cli', label: 'Codex', models: ['gpt-5.6-luna', 'gpt-5.6-terra'], watchable: false },
 ];
 
 /**
@@ -254,7 +266,7 @@ describe('the model picker', () => {
     fireEvent.click(screen.getByText('trio-contract'));
 
     expect(optionsOf('seat 1 model')).toContain('claude-fable-5');
-    expect(optionsOf('seat 1 model')).not.toContain('gpt-5.3-codex');
+    expect(optionsOf('seat 1 model')).not.toContain('gpt-5.6-luna');
   });
 
   it('offers a different harness a different set', () => {
@@ -263,7 +275,7 @@ describe('the model picker', () => {
 
     fireEvent.change(screen.getByLabelText('seat 1 CLI'), { target: { value: 'codex-cli' } });
 
-    expect(optionsOf('seat 1 model')).toContain('gpt-5.3-codex');
+    expect(optionsOf('seat 1 model')).toContain('gpt-5.6-luna');
     expect(optionsOf('seat 1 model')).not.toContain('claude-opus-5');
   });
 

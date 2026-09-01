@@ -30,24 +30,48 @@ afterEach(async () => {
   while (dirs.length > 0) await rm(dirs.pop()!, { recursive: true, force: true });
 });
 
-/** A `gh` that records what it was asked and answers `pr list` plausibly. */
+/**
+ * A `gh` that records what it was asked and answers `pr list` plausibly.
+ *
+ * Written in the language that is actually on the machine. The first version
+ * of this was a `#!/bin/sh` script, which is not a thing Windows can execute —
+ * `spawn …\\work\\gh ENOENT` — so the one test proving the push half of the PR
+ * path did not run on the platform. `.cmd` there, shell script elsewhere; the
+ * production side already knows the difference and sets `shell` for a shim
+ * (`isWindowsShim`), so nothing under test has to change to accept one.
+ */
 async function stubGh(dir: string): Promise<{ path: string; calls: () => Promise<string> }> {
   const log = join(dir, 'gh-calls.txt');
-  const path = join(dir, 'gh');
-  await writeFile(
-    path,
-    [
-      '#!/bin/sh',
-      `echo "$@" >> ${JSON.stringify(log)}`,
-      'case "$2" in',
-      // `findPullRequestByBranch` parses this.
-      '  list) echo \'[{"number":7,"url":"https://example.invalid/pr/7","state":"OPEN","isDraft":true}]\' ;;',
-      '  *) echo "https://example.invalid/pr/7" ;;',
-      'esac',
-      'exit 0',
-    ].join('\n'),
-    'utf8',
-  );
+  const listed = '[{"number":7,"url":"https://example.invalid/pr/7","state":"OPEN","isDraft":true}]';
+  const path = join(dir, process.platform === 'win32' ? 'gh.cmd' : 'gh');
+  const script =
+    process.platform === 'win32'
+      ? [
+          '@echo off',
+          // Redirect first: `echo %* >> file` lets cmd read a trailing digit in
+          // the arguments as a stream handle, so the log silently goes nowhere.
+          // Plain quotes, not `JSON.stringify` — that doubles the backslashes
+          // in a Windows path, and cmd would take them literally.
+          `>>"${log}" echo %*`,
+          'if "%2"=="list" (',
+          //   `findPullRequestByBranch` parses this. `^` escapes cmd's
+          //   metacharacters; the quotes have to survive into the JSON.
+          `  echo ${listed.replace(/[&|<>^]/g, (c) => `^${c}`)}`,
+          ') else (',
+          '  echo https://example.invalid/pr/7',
+          ')',
+          'exit /b 0',
+        ]
+      : [
+          '#!/bin/sh',
+          `echo "$@" >> ${JSON.stringify(log)}`,
+          'case "$2" in',
+          `  list) echo '${listed}' ;;`,
+          '  *) echo "https://example.invalid/pr/7" ;;',
+          'esac',
+          'exit 0',
+        ];
+  await writeFile(path, script.join('\n'), 'utf8');
   await chmod(path, 0o755);
   return { path, calls: () => readFile(log, 'utf8').catch(() => '') };
 }

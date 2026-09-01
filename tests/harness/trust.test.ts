@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { trustWorkspaces, untrusted, TRUST_KEY } from '../../src/harness/trust.js';
+
+/**
+ * A workspace path in this platform's own spelling.
+ *
+ * `trustWorkspaces` resolves what it is given, because a trust entry has to
+ * match the absolute path the harness will look up. The tests wrote `/tmp/…`
+ * literals, which resolve to `D:\tmp\…` on Windows — so they asserted a POSIX
+ * string against a correctly-resolved Windows one and failed on a platform the
+ * code was right about.
+ */
+function seat(name: string): string {
+  return resolve(tmpdir(), name);
+}
 
 async function configWith(body: unknown): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'ct-trust-'));
@@ -16,11 +29,11 @@ describe('pre-accepting folder trust', () => {
   it('marks a workspace trusted', async () => {
     const path = await configWith({ projects: {} });
 
-    const added = await trustWorkspaces(['/tmp/seat-a'], path);
+    const added = await trustWorkspaces([seat('seat-a')], path);
 
-    expect(added).toEqual(['/tmp/seat-a']);
+    expect(added).toEqual([seat('seat-a')]);
     const after = JSON.parse(await readFile(path, 'utf8'));
-    expect(after.projects['/tmp/seat-a'][TRUST_KEY]).toBe(true);
+    expect(after.projects[seat('seat-a')][TRUST_KEY]).toBe(true);
   });
 
   it('keeps every other key in the operator’s config', async () => {
@@ -32,7 +45,7 @@ describe('pre-accepting folder trust', () => {
       projects: { '/tmp/other': { mcpServers: {}, [TRUST_KEY]: false, lastCost: 3 } },
     });
 
-    await trustWorkspaces(['/tmp/seat-a'], path);
+    await trustWorkspaces([seat('seat-a')], path);
 
     const after = JSON.parse(await readFile(path, 'utf8'));
     expect(after.numStartups).toBe(41);
@@ -42,21 +55,21 @@ describe('pre-accepting folder trust', () => {
 
   it('keeps a project’s own settings when flipping its trust', async () => {
     const path = await configWith({
-      projects: { '/tmp/seat-a': { allowedTools: ['Read'], [TRUST_KEY]: false } },
+      projects: { [seat('seat-a')]: { allowedTools: ['Read'], [TRUST_KEY]: false } },
     });
 
-    await trustWorkspaces(['/tmp/seat-a'], path);
+    await trustWorkspaces([seat('seat-a')], path);
 
     const after = JSON.parse(await readFile(path, 'utf8'));
-    expect(after.projects['/tmp/seat-a'].allowedTools).toEqual(['Read']);
-    expect(after.projects['/tmp/seat-a'][TRUST_KEY]).toBe(true);
+    expect(after.projects[seat('seat-a')].allowedTools).toEqual(['Read']);
+    expect(after.projects[seat('seat-a')][TRUST_KEY]).toBe(true);
   });
 
   it('does not rewrite the file when every path is already trusted', async () => {
-    const path = await configWith({ projects: { '/tmp/seat-a': { [TRUST_KEY]: true } } });
+    const path = await configWith({ projects: { [seat('seat-a')]: { [TRUST_KEY]: true } } });
     const before = await readFile(path, 'utf8');
 
-    expect(await trustWorkspaces(['/tmp/seat-a'], path)).toEqual([]);
+    expect(await trustWorkspaces([seat('seat-a')], path)).toEqual([]);
     expect(await readFile(path, 'utf8')).toBe(before);
   });
 
@@ -64,19 +77,19 @@ describe('pre-accepting folder trust', () => {
     const dir = await mkdtemp(join(tmpdir(), 'ct-trust-none-'));
     const path = join(dir, '.claude.json');
 
-    await trustWorkspaces(['/tmp/seat-a'], path);
+    await trustWorkspaces([seat('seat-a')], path);
 
-    expect(JSON.parse(await readFile(path, 'utf8')).projects['/tmp/seat-a'][TRUST_KEY]).toBe(true);
+    expect(JSON.parse(await readFile(path, 'utf8')).projects[seat('seat-a')][TRUST_KEY]).toBe(true);
   });
 
   it('reports which seats would stall, so a launch can refuse early', async () => {
     const path = await configWith({
-      projects: { '/tmp/seat-a': { [TRUST_KEY]: true }, '/tmp/seat-b': { [TRUST_KEY]: false } },
+      projects: { [seat('seat-a')]: { [TRUST_KEY]: true }, [seat('seat-b')]: { [TRUST_KEY]: false } },
     });
 
-    expect(await untrusted(['/tmp/seat-a', '/tmp/seat-b', '/tmp/seat-c'], path)).toEqual([
-      '/tmp/seat-b',
-      '/tmp/seat-c',
+    expect(await untrusted([seat('seat-a'), seat('seat-b'), seat('seat-c')], path)).toEqual([
+      seat('seat-b'),
+      seat('seat-c'),
     ]);
   });
 });

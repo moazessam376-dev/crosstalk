@@ -70,7 +70,10 @@ async function until(check: () => Promise<boolean>, ms = 6000): Promise<void> {
 
 function seat(cwd: string, script: string): HarnessSession {
   const session = openSession({
-    argv: ['sh', '-c', script],
+    // `node -e` rather than `sh -c`: a mirror is a cross-platform claim, and
+    // Windows has no `sh`, so these tests were simply absent on the platform
+    // most likely to break a pty.
+    argv: [process.execPath, '-e', script],
     cwd,
     first: '',
     turnFormat: 'interactive',
@@ -91,7 +94,7 @@ describe('scrolling back through a seat', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'for i in $(seq 1 200); do echo "line-$i"; done; sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'for (let i = 1; i <= 200; i++) console.log(`line-${i}`); setTimeout(() => {}, 30000);'));
 
       await until(async () => {
         const body = (await (await get(daemon, '/sessions/opus/screen')).json()) as {
@@ -124,7 +127,7 @@ describe('scrolling back through a seat', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'for i in $(seq 1 2000); do echo "line-$i"; done; sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'for (let i = 1; i <= 2000; i++) console.log(`line-${i}`); setTimeout(() => {}, 30000);'));
       await until(async () => {
         const body = (await (await get(daemon, '/sessions/opus/scrollback?from=0&count=1')).json()) as {
           total?: number;
@@ -159,7 +162,7 @@ describe('streaming a seat', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'printf "first"; sleep 0.6; printf "\\nsecond"; sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'process.stdout.write("first"); setTimeout(() => process.stdout.write("\\nsecond"), 600); setTimeout(() => {}, 30000);'));
 
       const response = await get(daemon, '/sessions/opus/screen/stream');
       expect(response.headers.get('content-type')).toContain('text/event-stream');
@@ -201,7 +204,7 @@ describe('resizing a seat', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'setTimeout(() => {}, 30000);'));
       await until(async () => (await get(daemon, '/sessions/opus/screen')).ok);
 
       const answer = await post(daemon, '/sessions/opus/input', { rows: 44, cols: 160 });
@@ -228,7 +231,13 @@ describe('resizing a seat', () => {
       // is on what the pty told the process, not on what the mirror believes.
       daemon.sessions.register(
         'opus',
-        seat(dir, 'while true; do printf "\\rSIZE:$(stty size | tr " " "x")   "; sleep 0.1; done'),
+        // The process asks the kernel what its terminal measures, over and
+        // over — node reports the pty's own idea of it, which is the half that
+        // has to change for a resize to have been real.
+        seat(
+          dir,
+          'setInterval(() => process.stdout.write(`\\rSIZE:${process.stdout.rows}x${process.stdout.columns}   `), 100);',
+        ),
       );
       await until(async () => {
         const body = (await (await get(daemon, '/sessions/opus/screen')).json()) as {
@@ -254,7 +263,7 @@ describe('resizing a seat', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'setTimeout(() => {}, 30000);'));
       const answer = await post(daemon, '/sessions/opus/input', { rows: Number.NaN, cols: 100 });
       expect(answer.status).toBe(400);
     } finally {
@@ -266,7 +275,7 @@ describe('resizing a seat', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'setTimeout(() => {}, 30000);'));
       const response = await fetch(`${daemon.url}/sessions/opus/input`, {
         method: 'POST',
         headers: { authorization: `Bearer ${daemon.tokens.get('opus')!}`, 'content-type': 'application/json' },

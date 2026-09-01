@@ -69,7 +69,11 @@ describe('init gives every seat that writes code a checkout', { timeout: 90_000 
       cwd: repo,
       windowsHide: true,
     });
-    expect(stdout).toContain(join('.crosstalk', 'worktrees', 'opus'));
-    expect(stdout).toContain(join('.crosstalk', 'worktrees', 'sonnet'));
+    // `git worktree list` prints forward slashes on every platform, including
+    // Windows, where `join` would give backslashes. Comparing in git's spelling
+    // rather than the platform's is what the assertion is actually about.
+    const listed = stdout.replace(/\\/g, '/');
+    expect(listed).toContain('.crosstalk/worktrees/opus');
+    expect(listed).toContain('.crosstalk/worktrees/sonnet');
   });
 });

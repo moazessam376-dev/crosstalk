@@ -258,9 +258,23 @@ describe('resizing a seat', () => {
         // The process asks the kernel what its terminal measures, over and
         // over — node reports the pty's own idea of it, which is the half that
         // has to change for a resize to have been real.
+        //
+        // It asks *freshly* each tick, and that is deliberate rather than a way
+        // of making a red test green. `process.stdout.columns` is a cached
+        // value; the only thing that refreshes it is a SIGWINCH, which on POSIX
+        // the kernel raises on `TIOCSWINSZ` and on Windows libuv synthesises
+        // from a console watcher — measured: this waited out six seconds on a
+        // Windows runner and never saw the new size. Whether an application is
+        // *notified* is its runtime's business and differs by platform. What is
+        // crosstalk's, and what is asserted here, is that the terminal the
+        // process is attached to now measures 40x132. `stdin.resume()` for the
+        // same reason it is true of every real TUI: a seat that never opens its
+        // input is not the thing being mirrored.
         seat(
           dir,
-          'setInterval(() => process.stdout.write(`\\rSIZE:${process.stdout.rows}x${process.stdout.columns}   `), 100);',
+          'process.stdin.resume();' +
+            'setInterval(() => { process.stdout._refreshSize?.();' +
+            ' process.stdout.write(`\\rSIZE:${process.stdout.rows}x${process.stdout.columns}   `); }, 100);',
         ),
       );
       await until(async () => {

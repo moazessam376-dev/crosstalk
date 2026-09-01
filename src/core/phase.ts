@@ -1,6 +1,7 @@
 import type { CrosstalkEvent } from '../contracts/events.js';
 import type { ParticipantId, Role } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
+import type { Decision } from '../contracts/decision.js';
 import { gateOfRef, type GateId, type Phase, type PhaseId, type TeamShape, type WriteScope } from './shape.js';
 
 export interface GateStatus {
@@ -48,6 +49,9 @@ export function assertedGates(events: readonly CrosstalkEvent[]): Map<GateId, Se
   return asserted;
 }
 
+/** The gates this module derives, so a shape naming an unimplemented one fails a test. */
+export const LOG_GATES: readonly GateId[] = ['operator-questioned'];
+
 /**
  * Has the planner put a real choice to the operator and had it answered?
  *
@@ -56,23 +60,21 @@ export function assertedGates(events: readonly CrosstalkEvent[]): Map<GateId, Se
  * protocol since v1 and filed under a tool described as "Court only", so nobody
  * ever reached for it to plan with.
  *
- * Derived from the log rather than self-reported, because "plan with the
- * operator first" is exactly the kind of instruction that reads well in a brief
- * and changes nothing: the vault-team brief told every seat to use side rooms,
- * twice, and none did.
+ * Read off the projected decisions rather than by scanning the log. The first
+ * version scanned events and could never be met through the daemon, because
+ * `phase()` hands `phaseStatus` `state.messages` — messages only, since the
+ * only other thing it needed was `ref: gate:*`. The unit test hand-built an
+ * array with decision events in it and passed; the running daemon could not.
+ * That seam is the one AGENTS.md names: a test that supplies its own props
+ * proves the function works *given* data, never that anything hands it any.
  */
-export const LOG_GATES: readonly GateId[] = ['operator-questioned'];
-
-export function operatorWasAsked(events: readonly CrosstalkEvent[]): boolean {
-  const asked = new Set<string>();
-  for (const event of events) {
-    if (event.kind === 'decision_opened' && event.decision.method === 'human') {
-      asked.add(event.decision.id);
-    }
+export function operatorWasAsked(decisions: Iterable<Decision>): boolean {
+  for (const decision of decisions) {
+    if (decision.method !== 'human') continue;
     // Answered, not merely posed. A question nobody replied to has not been a
     // conversation with anybody.
-    if (event.kind === 'decision_resolved' && asked.has(event.decisionId)) return true;
-    if (event.kind === 'vote_cast' && asked.has(event.decisionId) && event.from === HUMAN_ID) return true;
+    if (decision.outcome !== undefined) return true;
+    if (Object.keys(decision.votes).some((voter) => voter === HUMAN_ID)) return true;
   }
   return false;
 }
@@ -84,6 +86,8 @@ function statusOf(
     seats: readonly ParticipantId[];
     workspace: WorkspaceGates;
     log: ReadonlySet<GateId>;
+    /** For an all-quorum gate: the seats that actually owe this one. */
+    owes: (gate: GateId) => readonly ParticipantId[];
   },
 ): GateStatus {
   if (gate.by === 'log') {
@@ -107,7 +111,7 @@ function statusOf(
 
   const said = args.asserted.get(gate.id) ?? new Set<ParticipantId>();
   if (gate.quorum === 'all') {
-    const silent = args.seats.filter((seat) => !said.has(seat));
+    const silent = args.owes(gate.id).filter((seat) => !said.has(seat));
     return silent.length === 0
       ? { id: gate.id, need: gate.need, met: true }
       : { id: gate.id, need: gate.need, met: false, missing: `waiting on ${silent.join(', ')}` };
@@ -132,16 +136,35 @@ export function phaseStatus(
     events: readonly CrosstalkEvent[];
     participants: readonly ParticipantId[];
     workspace?: WorkspaceGates;
+    /** The projected decisions. Absent means none have been opened. */
+    decisions?: Iterable<Decision>;
+    /** Each seat's role, so a gate can be owed by some seats and not others. */
+    roles?: ReadonlyMap<ParticipantId, Role>;
   },
 ): PhaseStatus {
   const asserted = assertedGates(args.events);
   const seats = args.participants.filter((id) => id !== HUMAN_ID);
   const workspace = args.workspace ?? new Map();
   const log = new Set<GateId>();
-  if (operatorWasAsked(args.events)) log.add('operator-questioned');
+  if (operatorWasAsked(args.decisions ?? [])) log.add('operator-questioned');
+
+  /**
+   * Who an all-quorum gate is actually waiting on.
+   *
+   * `slice-done` is the builders' gate — `SeatSpec.done` says so — and the
+   * quorum counted every seat, so build waited forever on a planner that never
+   * builds a slice. A shape that declares no `done` anywhere keeps counting
+   * everyone, which is what `trio-contract` means by `tests-green`.
+   */
+  const owes = (gate: GateId): readonly ParticipantId[] => {
+    const owners = shape.seats.filter((seat) => seat.done === gate).map((seat) => seat.role);
+    if (owners.length === 0 || args.roles === undefined) return seats;
+    const owing = seats.filter((seat) => owners.includes(args.roles!.get(seat)!));
+    return owing.length === 0 ? seats : owing;
+  };
 
   for (const phase of shape.phases) {
-    const gates = phase.exit.map((gate) => statusOf(gate, { asserted, seats, workspace, log }));
+    const gates = phase.exit.map((gate) => statusOf(gate, { asserted, seats, workspace, log, owes }));
     // Name the gate, not just the reason. A phase can hold on two gates with
     // the same quorum — `tests-green` and `self-verified` both wait on every
     // seat — and "waiting on opus, sonnet, luna" twice over tells a seat
@@ -167,7 +190,7 @@ export function phaseStatus(
     id: last.id,
     intent: 'Every gate is met.',
     writes: last.writes,
-    gates: last.exit.map((gate) => statusOf(gate, { asserted, seats, workspace, log })),
+    gates: last.exit.map((gate) => statusOf(gate, { asserted, seats, workspace, log, owes })),
     blocking: [],
     complete: true,
   };

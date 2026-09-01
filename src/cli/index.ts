@@ -44,6 +44,8 @@ const USAGE = `crosstalk — multi-agent development where a finding is a claim,
   ct act      --as <id> --kind ack|assign|done|accept|reject [--task T-01] [--restatement '...']
               [--id T-01 --title '...' --brief '...' --assignee <id> --branch <branch>]
   ct dm       --as <id> --with <id> --head '...'      (a side room; @human is in it too)
+  ct ask      --as <id> --question '...' --option A --option B   (puts a choice to @human)
+  ct answer   <decision-id> --as <id> --option '...' [--why '...']
   ct claim    --as <id> --against <id> --target <file:line> --assertion '...' --falsifier '...'
               [--severity blocker|defect|risk|nit] [--evidence-cmd '...'] [--evidence-sha <sha>]
   ct respond  <claim-id> --as <id> --verdict accept|contest|uphold|concede|amend|clarify
@@ -970,6 +972,80 @@ async function cmdGithub(argv: string[]): Promise<number> {
   return EXIT.ok;
 }
 
+/**
+ * `ct ask --as planner --question '...' --option A --option B` — put a real
+ * choice to the operator.
+ *
+ * `/decisions` had no CLI path at all, for opening or for voting, so the only
+ * way to ask the operator anything was `claim({kind:"open"})` on the MCP tier.
+ * `operator-questioned` gates the plan phase, so a planner on `codex-cli` —
+ * shell tier until somebody hand-pastes `~/.codex/config.toml` — would have sat
+ * in plan forever with no way out. That is the `contract-exists` bug again: a
+ * gate one transport cannot satisfy, failing silently.
+ *
+ * Named `ask` rather than folded into `claim`, because the CLI is a
+ * command-per-action surface — `ct task create`, `ct dm`, `ct phase` — and
+ * burying the operator's own question under a verb the brief calls "court only"
+ * is how it stayed invisible on the MCP tier for this long.
+ */
+async function cmdAsk(argv: string[]): Promise<number> {
+  return withClient(
+    argv,
+    {
+      question: { type: 'string' },
+      option: { type: 'string', multiple: true },
+      voter: { type: 'string', multiple: true },
+      method: { type: 'string' },
+    },
+    async (client, flags) => {
+      const options = (flags['option'] as string[] | undefined) ?? [];
+      if (options.length < 2) {
+        throw new CliError(
+          'a question needs at least two options',
+          EXIT.usage,
+          "Pass --option twice or more. The operator can still answer with something else.",
+        );
+      }
+      const voters = (flags['voter'] as string[] | undefined) ?? [HUMAN_ID];
+      const result = await client.post<WriteResult>('/decisions', {
+        question: require_(flags, 'question'),
+        options,
+        voters,
+        method: str(flags, 'method') ?? 'human',
+      });
+      const opened = result.events.find((event) => event.kind === 'decision_opened');
+      emit(result, flags['json'] === true, () =>
+        opened?.kind === 'decision_opened'
+          ? `asked ${voters.join(', ')} — ${bold(opened.decision.id)} is on the board with a button per option`
+          : `posted seq ${result.events[result.events.length - 1]!.seq}`,
+      );
+      return EXIT.ok;
+    },
+  );
+}
+
+/**
+ * `ct answer D-01 --as @human --option 'sim first' --why '...'` — the other
+ * half. The operator normally clicks in the hub; this is for the terminal, and
+ * for any seat that is a voter.
+ */
+async function cmdAnswer(argv: string[]): Promise<number> {
+  return withClient(argv, { option: { type: 'string' }, why: { type: 'string' } }, async (client, flags, rest) => {
+    const decisionId = rest[0];
+    if (decisionId === undefined) {
+      throw new CliError('which decision?', EXIT.usage, "ct answer D-01 --as '@human' --option '...'");
+    }
+    // `option` is a free string on the wire, so an answer that is not on the
+    // list is legal and always has been.
+    const result = await client.post<WriteResult>(`/decisions/${encodeURIComponent(decisionId)}/vote`, {
+      option: require_(flags, 'option'),
+      rationale: str(flags, 'why') ?? 'answered from the command line',
+    });
+    emit(result, flags['json'] === true, () => `answered ${bold(decisionId)}`);
+    return EXIT.ok;
+  });
+}
+
 const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   init: cmdInit,
   compose: cmdCompose,
@@ -981,6 +1057,8 @@ const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   say: cmdSay,
   act: cmdAct,
   claim: cmdClaim,
+  ask: cmdAsk,
+  answer: cmdAnswer,
   respond: cmdRespond,
   events: cmdEvents,
   await: cmdAwait,

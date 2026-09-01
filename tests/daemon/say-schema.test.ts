@@ -175,3 +175,34 @@ describe('a project with no shape', () => {
     expect(events[0]!.tag).toBeUndefined();
   });
 });
+
+describe('where a message goes when nobody says', () => {
+  it('lands on the floor, so the common case is the short one', async () => {
+    // Requiring `room: '#floor'` on every floor message made saying something
+    // the verbose case, and `refuseMessage` already read an absent room as the
+    // floor — so a seat posting a `status` got a transport complaint instead of
+    // the tag rule it was actually breaking.
+    const dir = await repo('trio-contract');
+    const daemon = await startDaemon({ repo: dir });
+    daemons.push(daemon);
+    await inboxOf(daemon, 'peer-1');
+
+    const posted = await say(daemon, 'peer-1', { tag: 'status', head: 'taking the water and the boat' });
+
+    expect(posted.status).toBe(201);
+    expect((posted.json['events'] as { room: string }[])[0]!.room).toBe('#floor');
+  });
+
+  it('still refuses a tag that belongs in a side room', async () => {
+    // The default must not smuggle an `ask` onto the board.
+    const dir = await repo('trio-contract');
+    const daemon = await startDaemon({ repo: dir });
+    daemons.push(daemon);
+    await inboxOf(daemon, 'peer-1');
+
+    const refused = await say(daemon, 'peer-1', { tag: 'ask', head: 'who owns the HUD?' });
+
+    expect(refused.status).toBe(422);
+    expect(refused.refusal).toContain('names one seat');
+  });
+});

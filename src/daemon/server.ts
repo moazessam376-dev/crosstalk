@@ -24,6 +24,7 @@ import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
 import { workspaceWarning } from './workspace.js';
 import { Presence } from './presence.js';
 import { SessionRegistry, type SessionHandle } from '../harness/sessions.js';
+import { discoverModels } from '../harness/models.js';
 import { currentRungOf } from '../core/decisions.js';
 import { dmId, normaliseRoom } from '../core/rooms.js';
 import { refuseMessage, type MessageDraft } from '../core/says.js';
@@ -728,16 +729,26 @@ class Daemon {
       // Claude models and a model nobody had added to a React array could not
       // be chosen at all.
       const registry = await loadRegistry();
-      send(response, 200, {
-        harnesses: await probeCliHarnesses(),
-        catalog: [...registry.values()]
-          .filter((descriptor) => descriptor.spawn !== undefined)
-          .map((descriptor) => ({
+      const spawnable = [...registry.values()].filter((descriptor) => descriptor.spawn !== undefined);
+      // Asked, not assumed. A hand-written list goes stale in the one direction
+      // that matters: the operator's Codex offers luna, terra and sol, and the
+      // registry offered `gpt-5.3-codex`, which does not exist for them. Codex
+      // answers `model/list` over its app server; Claude Code names its aliases
+      // in its own `--help`. Whatever cannot be discovered falls back to the
+      // registry, marked as such, and every field stays free text either way.
+      const catalog = await Promise.all(
+        spawnable.map(async (descriptor) => {
+          const discovered = await discoverModels(descriptor.key, descriptor);
+          return {
             id: descriptor.key,
             label: descriptor.label ?? descriptor.key,
-            models: descriptor.models ?? [],
-          })),
-      });
+            models: discovered.models.map((model) => model.id),
+            catalogue: discovered.models,
+            modelSource: discovered.source,
+          };
+        }),
+      );
+      send(response, 200, { harnesses: await probeCliHarnesses(), catalog });
       return;
     }
     if (path === '/phase' && method === 'GET') {

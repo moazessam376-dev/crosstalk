@@ -167,7 +167,7 @@ describe('an interactive seat, watchable over Remote Control', () => {
   it('runs the harness on a pty rather than wrapping it in a shell', async () => {
     const pty = fakePty();
     openSession({
-      argv: ['claude', '--remote-control', 'opus', '--permission-mode', 'bypassPermissions'],
+      argv: ['claude', '--remote-control', 'opus', '--permission-mode', 'auto'],
       cwd: '/tmp',
       first: 'the job',
       turnFormat: 'interactive',
@@ -176,7 +176,7 @@ describe('an interactive seat, watchable over Remote Control', () => {
     });
 
     expect(pty.spec().file).toBe('claude');
-    expect(pty.spec().args).toEqual(['--remote-control', 'opus', '--permission-mode', 'bypassPermissions']);
+    expect(pty.spec().args).toEqual(['--remote-control', 'opus', '--permission-mode', 'auto']);
   });
 
   /**

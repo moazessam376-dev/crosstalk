@@ -33,7 +33,7 @@ const execFile = promisify(execFileCallback);
 
 export interface InitOptions {
   repo: string;
-  /** `id:role:harness[:model[:effort]]`, repeatable. Empty means the default roster. */
+  /** `id:role:harness[:model[:effort[:permission-mode]]]`, repeatable. Empty means the default roster. */
   participants: string[];
   force: boolean;
   /**
@@ -847,14 +847,14 @@ async function configuredRoster(repo: string): Promise<Participant[] | undefined
 
 function parseParticipants(specs: string[]): Participant[] {
   const participants: Participant[] = specs.map((spec) => {
-    // `effort` is fifth and last, so every four-field spec ever written keeps
-    // parsing to exactly what it parsed to before (claim CT-A).
-    const [id, role, harness, model, effort] = spec.split(':');
+    // Fields are only ever appended, so every spec ever written keeps parsing
+    // to exactly what it parsed to before (claim CT-A).
+    const [id, role, harness, model, effort, permissionMode] = spec.split(':');
     if (!id || !role || !harness) {
       throw new CliError(
         `Cannot read participant "${spec}"`,
         EXIT.usage,
-        'Use --participant id:role:harness[:model[:effort]], for example --participant codex:worker:codex-app:luna-5.6:high',
+        'Use --participant id:role:harness[:model[:effort[:permission-mode]]], for example --participant codex:worker:codex-cli:gpt-5.6-luna:max',
       );
     }
     if (!['leader', 'worker', 'observer', 'human', 'spoc', 'peer'].includes(role)) {
@@ -869,6 +869,7 @@ function parseParticipants(specs: string[]): Participant[] {
       // beside the model and reads as a configured value rather than as
       // "nobody said".
       ...(effort === undefined ? {} : { effort }),
+      ...(permissionMode === undefined ? {} : { permissionMode }),
       lifecycle: 'attached' as const,
       // The primary checkout is the leader's and no worker may occupy it.
       workspace: role === 'leader' || role === 'spoc' || role === 'human' || role === 'observer'

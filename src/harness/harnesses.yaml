@@ -18,7 +18,10 @@ harnesses:
     supervisable: false
   codex-cli:
     label: Codex
-    models: [gpt-5.3-codex, gpt-5.3-codex-mini, gpt-5.1-codex, o4-mini]
+    # Fallback only: `codex app-server` answers `model/list` with the real
+    # catalogue and its efforts, and that is what the hub shows when the
+    # binary is present. This list is what to say when it is not.
+    models: [gpt-5.6-luna, gpt-5.6-terra, gpt-5.6-sol]
     briefFile: AGENTS.md
     mcp: stdio
     mcpConfigPath: "~/.codex/config.toml"
@@ -31,7 +34,8 @@ harnesses:
     supervisable: false
   cursor-cli:
     label: Cursor
-    models: [claude-opus-5, claude-sonnet-5, gpt-5.3, auto]
+    # Fallback only; see `codex-cli`.
+    models: [claude-opus-5, claude-sonnet-5, auto]
     briefFile: .cursor/rules/crosstalk.mdc
     mcp: stdio
     mcpConfigPath: .cursor/mcp.json
@@ -57,7 +61,10 @@ harnesses:
     # The pty is node-pty rather than `script`, which cannot be given a writable
     # stdin from a daemon — measured: `tcgetattr/ioctl: Operation not supported
     # on socket`. See src/harness/pty.ts.
-    # `bypassPermissions` because an interactive session that asks is a session
-    # that stalls, and nobody is at the keyboard at 4am.
-    spawn: [claude, --remote-control, --permission-mode, bypassPermissions]
+    # `auto` because a mirrored seat is one somebody is looking at: the hub
+    # draws its terminal and takes its keyboard, so a question it asks is a
+    # question that can be answered. `bypassPermissions` was chosen back when
+    # nobody was at the keyboard at 4am; a seat that needs it still gets it,
+    # per seat, with `permissionMode` in the roster.
+    spawn: [claude, --remote-control, --permission-mode, auto]
     turnFormat: interactive

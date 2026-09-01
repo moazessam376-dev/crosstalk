@@ -35,6 +35,22 @@ function aScreen(overrides: Partial<MirrorScreen> = {}): MirrorScreen {
   };
 }
 
+/**
+ * A run's inline colours.
+ *
+ * Read off the `style` attribute rather than through `HTMLElement`: the frozen
+ * test config omits the DOM lib, so the element's own typed properties are not
+ * available here.
+ */
+function styleOf(element: { getAttribute(name: string): string | null }): { color: string; background: string } {
+  const declarations = (element.getAttribute('style') ?? '').split(';');
+  const read = (property: string): string => {
+    const found = declarations.find((entry) => entry.trim().startsWith(`${property}:`));
+    return found === undefined ? '' : found.slice(found.indexOf(':') + 1).trim();
+  };
+  return { color: read('color'), background: read('background') };
+}
+
 afterEach(cleanup);
 
 describe('the mirrored terminal takes what a terminal takes', () => {
@@ -116,8 +132,8 @@ describe('the mirrored terminal takes what a terminal takes', () => {
   it('is still a picture of a terminal when nothing can receive input', () => {
     render(createElement(Terminal, { screen: aScreen() }));
     const terminal = screen.getByTestId('terminal');
-    expect(terminal.getAttribute('role')).toBe('log');
-    expect(terminal.getAttribute('tabindex')).toBeNull();
+    expect(terminal).toHaveAttribute('role', 'log');
+    expect(terminal).not.toHaveAttribute('tabindex');
   });
 });
 
@@ -139,16 +155,14 @@ describe('colour fidelity', () => {
         }),
       }),
     );
-    const runs = [...screen.getByTestId('terminal').querySelectorAll('.term-run')];
-    const colours = runs.map((run) => (run as HTMLElement).style.color);
+    const colours = ['a', 'b', 'c'].map((text) => styleOf(screen.getByText(text)).color);
     expect(new Set(colours).size).toBe(3);
     expect(colours.every((colour) => colour !== '')).toBe(true);
   });
 
   it('still takes the first sixteen from the theme', () => {
     render(createElement(Terminal, { screen: aScreen({ rows: [[{ text: 'x', fg: 3 }]] }) }));
-    const run = screen.getByTestId('terminal').querySelector('.term-run') as HTMLElement;
-    expect(run.style.color).toContain('--term-3');
+    expect(styleOf(screen.getByText('x')).color).toContain('--term-3');
   });
 
   it('swaps a reversed run rather than letting its own colour win', () => {
@@ -157,10 +171,10 @@ describe('colour fidelity', () => {
         screen: aScreen({ rows: [[{ text: 'sel', fg: 114, bg: 17, inverse: true }]] }),
       }),
     );
-    const run = screen.getByTestId('terminal').querySelector('.term-run') as HTMLElement;
     // Foreground and background have traded places; neither is empty.
-    expect(run.style.color).not.toBe('');
-    expect(run.style.background).not.toBe('');
-    expect(run.style.color).not.toBe(run.style.background);
+    const style = styleOf(screen.getByText('sel'));
+    expect(style.color).not.toBe('');
+    expect(style.background).not.toBe('');
+    expect(style.color).not.toBe(style.background);
   });
 });

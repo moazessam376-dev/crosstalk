@@ -30,6 +30,13 @@ export interface HarnessDescriptor {
    * knowing which does. The picker was a single hard-coded list, so a Codex
    * seat was offered Claude models and `claude-fable-5` could not be chosen at
    * all — nobody had added it to an array in a React file.
+   *
+   * **A fallback, not the answer.** Moving the list here fixed the wrong
+   * harness offering the wrong models and left the deeper problem: a list
+   * written by hand goes stale, and this one said `gpt-5.3-codex` to an
+   * operator whose Codex offers luna, terra and sol. `discoverModels` asks the
+   * binary — Codex answers `model/list`, Claude Code names its aliases in
+   * `--help` — and this is what to show when the binary is not installed.
    */
   models?: string[];
 }

@@ -22,7 +22,14 @@ export interface LauncherProps {
   running?: readonly SeatSession[];
   shapes: ShapeSummary[];
   /** From `GET /harnesses`: what exists, and what each one runs. */
-  catalog?: readonly { id: string; label: string; models: string[] }[];
+  catalog?: readonly {
+    id: string;
+    label: string;
+    models: string[];
+    /** Richer than `models` where the binary answered: labels and efforts. */
+    catalogue?: readonly { id: string; label: string; efforts?: string[] }[];
+    modelSource?: string;
+  }[];
   launching?: boolean;
   onLaunch: (request: { job: string; shape?: string; seats: string[] }) => Promise<PostResult>;
 }
@@ -36,7 +43,17 @@ export interface LauncherProps {
  * model nobody had added to this array could not be chosen at all: that is how
  * `claude-fable-5` went missing.
  */
-const FALLBACK_HARNESSES = [{ id: 'claude-code-live', label: 'Claude Code · interactive', models: [] as string[] }];
+const FALLBACK_HARNESSES: NonNullable<LauncherProps['catalog']> = [
+  { id: 'claude-code-live', label: 'Claude Code · interactive', models: [] },
+];
+
+/**
+ * Efforts to offer when the harness did not say which it takes.
+ *
+ * Codex names its own — and names more than these: `xhigh`, `max`, `ultra`.
+ * Anything discovered replaces this list, and the field is typeable either way,
+ * because a fixed vocabulary is the same mistake as a fixed model list.
+ */
 const EFFORTS = ['high', 'medium', 'low'];
 
 /**
@@ -92,6 +109,43 @@ export function clashingIds(seats: readonly SeatDraft[]): string[] {
   return [...clashes];
 }
 
+/**
+ * A text field with suggestions, rather than a closed list.
+ *
+ * `datalist` is the whole mechanism: the operator gets the discovered models as
+ * a dropdown and can still type one that is not there. No React state, no
+ * combobox to keep open, and it degrades to a plain text input in anything that
+ * does not support it — which is the correct failure for a field whose contract
+ * is "free text".
+ */
+function suggested(
+  label: string,
+  listId: string,
+  value: string,
+  options: readonly string[],
+  onChange: (value: string) => void,
+): ReturnType<typeof h> {
+  return h(
+    'span',
+    { className: 'seat-suggest' },
+    h('input', {
+      'aria-label': label,
+      list: options.length > 0 ? listId : undefined,
+      value,
+      autoComplete: 'off',
+      spellCheck: false,
+      onChange: (event: { target: { value: string } }) => onChange(event.target.value),
+    }),
+    options.length === 0
+      ? null
+      : h(
+          'datalist',
+          { id: listId },
+          options.map((option) => h('option', { key: option, value: option })),
+        ),
+  );
+}
+
 function field(
   kind: 'input' | 'select',
   props: Record<string, unknown>,
@@ -114,6 +168,13 @@ export function Launcher({ shapes, launching, onLaunch, running = [], catalog }:
   /** The models the harness this seat is on can actually run. */
   const modelsFor = (harness: string): string[] =>
     harnesses.find((entry) => entry.id === harness)?.models ?? [];
+
+  /** The efforts the chosen model accepts, when the binary said. */
+  const effortsFor = (harness: string, model: string): string[] => {
+    const entry = harnesses.find((candidate) => candidate.id === harness);
+    const found = entry?.catalogue?.find((candidate) => candidate.id === model);
+    return found?.efforts !== undefined && found.efforts.length > 0 ? [...found.efforts] : EFFORTS;
+  };
   const [shapeName, setShapeName] = useState<string | undefined>();
   const [job, setJob] = useState('');
   const [seats, setSeats] = useState<SeatDraft[]>([]);
@@ -223,30 +284,30 @@ export function Launcher({ shapes, launching, onLaunch, running = [], catalog }:
             const harness = event.target.value;
             // A model belongs to the harness it runs on, so switching CLI drops
             // a model the new one cannot run rather than sending a Codex seat
-            // to claude-opus-5.
-            const keep = modelsFor(harness).includes(seat.model) ? seat.model : '';
+            // to claude-opus-5. A model the list has never heard of is kept:
+            // the list is a suggestion now, and discarding what the operator
+            // typed because we do not recognise it is the old bug wearing new
+            // clothes.
+            const known = modelsFor(seat.harness).includes(seat.model);
+            const keep = !known || modelsFor(harness).includes(seat.model) ? seat.model : '';
             editSeat(index, { harness, model: keep });
           },
         },
         harnesses,
       ),
-      field(
-        'select',
-        {
-          'aria-label': `seat ${index + 1} model`,
-          value: seat.model,
-          onChange: (event: { target: { value: string } }) => editSeat(index, { model: event.target.value }),
-        },
-        modelsFor(seat.harness),
+      // Typeable, with the discovered list as suggestions. A hard-coded list
+      // offered `gpt-5.3-codex` to an operator whose Codex runs luna, terra and
+      // sol — and a model missing from the list could not be chosen at all.
+      // `model` is free text by contract; this is the field agreeing with it.
+      suggested(`seat ${index + 1} model`, `models-${index}`, seat.model, modelsFor(seat.harness), (value) =>
+        editSeat(index, { model: value }),
       ),
-      field(
-        'select',
-        {
-          'aria-label': `seat ${index + 1} effort`,
-          value: seat.effort,
-          onChange: (event: { target: { value: string } }) => editSeat(index, { effort: event.target.value }),
-        },
-        EFFORTS,
+      suggested(
+        `seat ${index + 1} effort`,
+        `efforts-${index}`,
+        seat.effort,
+        effortsFor(seat.harness, seat.model),
+        (value) => editSeat(index, { effort: value }),
       ),
       h(
         'button',

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
 import type { CrosstalkEvent } from '../../src/contracts/events.js';
+import type { RunSummary } from '../../src/core/runs.js';
 
 /**
  * Opening a finished run.
@@ -70,9 +71,9 @@ async function newRun(daemon: DaemonHandle): Promise<void> {
   await fetch(`${daemon.url}/runs`, { method: 'POST', headers: auth(daemon), body: '{}' });
 }
 
-async function runIds(daemon: DaemonHandle): Promise<{ id: string; current: boolean }[]> {
+async function runIds(daemon: DaemonHandle): Promise<RunSummary[]> {
   const response = await fetch(`${daemon.url}/runs`, { headers: auth(daemon) });
-  return ((await response.json()) as { runs: { id: string; current: boolean }[] }).runs;
+  return ((await response.json()) as { runs: RunSummary[] }).runs;
 }
 
 async function eventsOf(daemon: DaemonHandle, runId: string, who = '@human'): Promise<Response> {
@@ -162,5 +163,81 @@ describe('reading one finished run', () => {
     const response = await eventsOf(daemon, current.id, 'peer-1');
 
     expect(response.status).toBe(403);
+  }, 30_000);
+});
+
+describe('archiving a run that has older runs beneath it', () => {
+  it('keeps each run in its own file, and loses none of them', async () => {
+    /**
+     * The defect this exists for, measured before the fix:
+     *
+     * `archiveBefore` moves a *prefix* of the log, so archiving the middle run
+     * of three swept the first run's events into the middle run's file. The
+     * first run vanished from `/runs`, its id became unreachable, and nothing
+     * said so — one archive of 7 events where there should have been two, of 3
+     * and 4. Silent, and it destroys the operator's ability to find a run.
+     *
+     * A prefix structure means "put this one away" has to mean "and the ones
+     * before it": they cannot stay in a live log the prefix has been cut out
+     * of. So they all go, each into the file named after it.
+     */
+    const daemon = await open();
+    await say(daemon, 'run one');
+    await newRun(daemon);
+    await say(daemon, 'run two');
+    await newRun(daemon);
+    await say(daemon, 'run three');
+
+    const before = await runIds(daemon);
+    expect(before).toHaveLength(3);
+    // The *newest* finished run — the one an operator reaches for first,
+    // because the picker lists newest first.
+    const middle = before.filter((run) => !run.current)[0]!;
+    const oldest = before.filter((run) => !run.current).at(-1)!;
+
+    const response = await fetch(`${daemon.url}/runs/${middle.id}/archive`, {
+      method: 'POST',
+      headers: auth(daemon),
+    });
+    expect(response.status).toBe(200);
+
+    // Still three runs. The older one is archived too — it had to be, since
+    // its events are below the prefix that moved — but it is still itself.
+    const after = await runIds(daemon);
+    expect(after).toHaveLength(3);
+    expect(after.map((run) => run.id).sort()).toEqual(before.map((run) => run.id).sort());
+
+    // And each file holds its own run, not both.
+    const middleEvents = ((await (await eventsOf(daemon, middle.id)).json()) as { events: CrosstalkEvent[] }).events;
+    const oldestEvents = ((await (await eventsOf(daemon, oldest.id)).json()) as { events: CrosstalkEvent[] }).events;
+    expect(bodies(middleEvents)).toContain('run two');
+    expect(bodies(middleEvents)).not.toContain('run one');
+    expect(bodies(oldestEvents)).toContain('run one');
+    expect(bodies(oldestEvents)).not.toContain('run two');
+  }, 30_000);
+
+  it('leaves the current run alone', async () => {
+    // The neighbouring case: "and the ones before it" must not become "and
+    // everything", or archiving would take the run being written to.
+    //
+    // Honest about what this pins: no single-line mutation kills it. Dropping
+    // `!entry.current` from the filter is a no-op, because a current run has no
+    // `endedSeq` and falls back to its own `firstSeq` — which archives
+    // everything *below* it, exactly as before. The current run is protected by
+    // the refusal at the top of `#archiveRun` and by that fallback, and the
+    // filter is defence in depth. This is here as a behaviour check on the
+    // outcome, not as a test of one line.
+    const daemon = await open();
+    await say(daemon, 'run one');
+    await newRun(daemon);
+    await say(daemon, 'still going');
+
+    const older = (await runIds(daemon)).find((run) => !run.current)!;
+    await fetch(`${daemon.url}/runs/${older.id}/archive`, { method: 'POST', headers: auth(daemon) });
+
+    const current = (await runIds(daemon)).find((run) => run.current)!;
+    expect(current.archived).toBe(false);
+    const live = await fetch(`${daemon.url}/events?since=0`, { headers: auth(daemon) });
+    expect(JSON.stringify(await live.json())).toContain('still going');
   }, 30_000);
 });

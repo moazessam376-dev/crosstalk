@@ -1,4 +1,5 @@
 import type { Role } from '../contracts/participant.js';
+import type { MessageTag } from '../contracts/say.js';
 
 /**
  * A team's way of working, as data.
@@ -67,6 +68,16 @@ export interface SeatSpec {
   count: number;
   /** Where this seat's work comes from. */
   job: 'floor' | 'assigned';
+  /**
+   * The board verbs this seat has.
+   *
+   * Absent means the daemon does not hold this seat to the message schema, so
+   * every project that predates it keeps working unchanged. Present, it is also
+   * how a shape says what a seat is *for*: a builder without `plan` has no verb
+   * for reviewing another seat's work, which is a stronger statement than a
+   * brief line telling it not to.
+   */
+  tags?: readonly MessageTag[];
   /** Appended to this seat's brief. The shape's own voice, not the role's. */
   brief: string;
 }
@@ -189,6 +200,10 @@ const TRIO_CONTRACT: TeamShape = {
       role: 'peer',
       count: 3,
       job: 'floor',
+      // Every verb: three peers with no leader plan together, so `plan` is
+      // theirs too. What the schema buys here is not authority but shape — an
+      // `ask` has to name a seat and leave the room, and a `status` is one line.
+      tags: ['status', 'result', 'ask', 'answer', 'blocked', 'gate', 'plan', 'note'],
       brief: [
         'You are one of three peers. There is no leader.',
         '',
@@ -225,6 +240,9 @@ const SOLO: TeamShape = {
       role: 'peer',
       count: 1,
       job: 'floor',
+      // Deliberately none. There is one seat and no room, so there is nobody to
+      // spare from reading and no `to` for an `ask` to name. Enforcing a board
+      // schema on a seat with no board is ceremony for its own sake.
       brief: [
         'You are the only seat. Build it, then verify it yourself.',
         '',

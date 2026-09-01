@@ -1,4 +1,6 @@
 import { DaemonClient } from './client.js';
+import { MESSAGE_TAGS } from '../contracts/say.js';
+import { renderTagTable } from '../core/says.js';
 import type { WriteResponse } from './client.js';
 import type { Inbox } from '../core/inbox.js';
 
@@ -59,23 +61,41 @@ export const TOOLS: ToolDefinition[] = [
 
   {
     name: 'say',
-    description:
-      'Post to a room. Use to for a directed wake, ref to point at detail. Not a claim. Body is capped at 1500 characters.',
+    // No number in here, and none in `head` or `body` below. The cap read
+    // `1500` in this description and again in `body`'s, which is in context on
+    // every call — and the median message across 1187 events came in at 1429.
+    // A budget stated to the writer is a target. Sizes live in refusals now.
+    description: 'Post to the board. tag says what it is for, head is the message, to sends it to one seat. Not a claim.',
     inputSchema: {
       type: 'object',
       properties: {
-        room: { type: 'string', description: 'Room id, e.g. #floor, dm:a~b, or task:T-04.' },
+        tag: {
+          type: 'string',
+          enum: [...MESSAGE_TAGS],
+          description: renderTagTable(),
+        },
+        head: {
+          type: 'string',
+          description: 'The message, in one line. Most messages need nothing else.',
+        },
+        to: {
+          type: 'string',
+          // Named for what it does. It read "Optional participant id", which
+          // says nothing about the effect, and twelve of 1187 messages used it.
+          description: 'Send this to one seat. Leave room off and Crosstalk opens the side room, so nobody else has to read it.',
+        },
+        room: { type: 'string', description: 'Room id, e.g. #floor or task:T-04. Leave off when you pass to.' },
         body: {
           type: 'string',
-          description: 'What you want to say, 1500 characters max. Lead with the finding.',
+          description: 'Detail the head cannot carry. Usually unnecessary — put depth behind ref instead.',
         },
-        to: { type: 'string', description: 'Optional participant id.' },
         ref: {
           type: 'string',
-          description: 'Optional artifact carrying the detail — a path, a SHA, a file you wrote.',
+          description: 'The artifact carrying the detail — a path, a SHA, a file you wrote.',
         },
+        task: { type: 'string', description: 'The slice this is about.' },
       },
-      required: ['room', 'body'],
+      required: ['tag', 'head'],
     },
     invoke: (client, args) => client.post<WriteResponse>('/events', { kind: 'message', ...args }),
   },

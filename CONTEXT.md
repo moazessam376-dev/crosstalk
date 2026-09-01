@@ -58,7 +58,14 @@ Two runtime dependencies. No native modules. Append-only log. Order by `seq`. Wi
 
 ## Protocol
 
-**Facade.** Agent-facing tools write today’s event kinds. One named contract amendment: add `spoc` and let `taskAcceptance` name that participant. No new event kinds. Do not jam SPOC into `observer` or `@human`.
+**Facade.** Agent-facing tools write today’s event kinds. **No new event kinds.** Two named contract amendments:
+
+1. Add `spoc` and let `taskAcceptance` name that participant. Do not jam SPOC into `observer` or `@human`.
+2. A `message` may carry `tag`, `head` and `task`. All optional — the log is append-only and every message written before the amendment has none, so readers fall back to clipping `body`. `head` is the message and `body` is what the head cannot carry; a message sent with only a head stores `body: head`, because every reader that predates this treats `body` as the message.
+
+**Message tags.** `status` · `result` · `ask` · `answer` · `blocked` · `gate` · `plan` · `note`. Authored once in `src/core/says.ts`; the brief, the tool schema and every refusal render from that record. A shape's `SeatSpec.tags` decides which a seat has, and whether the daemon enforces the schema at all — a project with no shape writes what it always wrote.
+
+**Sizes are never stated to the writer.** The cap read `1500` in three brief templates and twice in the `say` schema, and the median message over 1187 events was 1429 characters. Refusals name the overage — "312 characters too long" — never the budget.
 
 **Coordination interface.** Four tools: `inbox` (compact unread + wake), `say` (board), `act` (ack / assign / done), `claim` (court).
 

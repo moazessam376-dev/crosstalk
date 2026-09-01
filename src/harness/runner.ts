@@ -133,7 +133,12 @@ export function boardTurn(inbox: Inbox): string {
 
   for (const card of inbox.unread) {
     const where = card.room === undefined ? '' : ` in ${card.room}`;
-    lines.push('', `[${card.seq}] ${card.from}${where} — ${card.kind}`);
+    const what = card.tag ?? card.kind;
+    lines.push('', `[${card.seq}] ${card.from}${where} — ${what}`);
+    // The head first and on its own line: it is the author's own summary, and
+    // a seat deciding what to read should not have to parse a paragraph to
+    // find out what it is about.
+    if (card.body !== undefined && card.body !== card.summary) lines.push(card.summary);
     lines.push(card.body ?? card.summary);
     if (card.truncated === true) lines.push('(cut — read the log for the rest)');
     if (card.ref !== undefined) lines.push(`ref: ${card.ref}`);

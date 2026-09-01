@@ -3,7 +3,9 @@ import type { PolicyConfig, Participant, Tier } from '../../src/contracts/index.
 import type { HarnessDescriptor } from '../../src/harness/registry.js';
 import { renderBrief } from '../../src/harness/brief.js';
 import { CLI_COMMANDS } from '../../src/cli/index.js';
-import { TOOLS_BY_NAME } from '../../src/mcp/tools.js';
+import { TOOLS_BY_NAME, TOOLS } from '../../src/mcp/tools.js';
+import { MESSAGE_TAGS, HEAD_LIMIT } from '../../src/contracts/say.js';
+import { TAGS } from '../../src/core/says.js';
 
 /**
  * The brief is the first thing every agent reads, and it named commands that do
@@ -141,5 +143,61 @@ describe('a brief only names commands that exist', () => {
     expect(brief).toContain('claim(');
     expect(brief).not.toContain('ack_task(');
     expect(brief).not.toContain('submit_task(');
+  });
+});
+
+/**
+ * No size, anywhere a model reads before writing.
+ *
+ * `1500` appeared three times in these templates and twice in the `say` tool
+ * schema, which is in context on every call. Over 1187 events the median peer
+ * message came in at 1429 characters — 95% of the allowance, from every seat,
+ * every time. That is not verbosity; it is a target being hit. The budgets are
+ * enforced on the write and named only in refusals, after the fact, and only as
+ * an amount to cut.
+ */
+describe('the prompt surface names no budget', () => {
+  const budgets = [String(HEAD_LIMIT), ...MESSAGE_TAGS.map((tag) => String(TAGS[tag].body))]
+    .filter((size) => size !== '0');
+
+  it('has budgets to look for, so this is not vacuous', () => {
+    expect(budgets.length).toBeGreaterThan(0);
+    expect(budgets).toContain('1500');
+  });
+
+  for (const tier of ['mcp', 'shell', 'file'] as Tier[]) {
+    it(`keeps them out of the ${tier} brief`, () => {
+      const content = renderBrief(participant(), descriptor(), policy, tier, '/repo', 'trio-contract');
+      for (const size of budgets) expect(content, `${tier} brief names ${size}`).not.toContain(size);
+    });
+  }
+
+  it('keeps them out of every tool description and property', () => {
+    const rendered = JSON.stringify(TOOLS.map((tool) => ({ d: tool.description, s: tool.inputSchema })));
+    for (const size of budgets) expect(rendered, `a tool schema names ${size}`).not.toContain(size);
+  });
+});
+
+describe('the brief and the tag table agree', () => {
+  it('names every tag the seat has, and invents none', () => {
+    const content = renderBrief(
+      participant({ role: 'peer' }),
+      descriptor(),
+      policy,
+      'mcp',
+      '/repo',
+      'trio-contract',
+    );
+
+    for (const tag of MESSAGE_TAGS) expect(content, `brief omits ${tag}`).toContain(`\`${tag}\``);
+  });
+
+  it('says nothing about tags when the shape does not enforce them', () => {
+    // A brief teaching a schema the daemon will not apply is a rule that is not
+    // real, and this repo has measured what agents do with those.
+    const content = renderBrief(participant(), descriptor(), policy, 'mcp', '/repo');
+
+    expect(content).not.toContain('`status`');
+    expect(content).not.toContain('`blocked`');
   });
 });

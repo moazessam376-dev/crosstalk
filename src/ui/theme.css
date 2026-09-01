@@ -1262,6 +1262,29 @@ button:focus-visible {
   margin: 3px 0 0;
   padding: 0;
   line-height: 1.6;
+  /* Agents write in paragraphs and lists. Without this every newline collapsed
+     and a structured message arrived as one unbroken block with its `-` and
+     `##` inline — which is what the operator was looking at when they called
+     the board unreadable. `pre-wrap` and not `pre`, so long lines still wrap. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The author's own line. Set above the body rather than styled as a heading:
+   it is the message, and the body is the footnote. */
+.message-row .message-head {
+  margin: 3px 0 0;
+  padding: 0;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-tag {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.72em;
 }
 
 /* --- needs-you tray ----------------------------------------------------- */

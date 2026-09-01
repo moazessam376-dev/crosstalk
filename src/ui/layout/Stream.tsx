@@ -175,6 +175,8 @@ export function Stream({
         key: String(event.seq) + '-' + event.kind,
         from: event.from,
         body: event.body,
+        ...(event.head === undefined ? {} : { head: event.head }),
+        ...(event.tag === undefined ? {} : { tag: event.tag }),
         ts: event.ts,
         seq: event.seq,
         role: author?.role,

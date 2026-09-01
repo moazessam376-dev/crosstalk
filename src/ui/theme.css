@@ -2882,3 +2882,250 @@ button.member-body:hover .member-id {
 .env-seat.is-blocked .env-seat-id {
   color: var(--warn, var(--text-primary));
 }
+
+/* --- the run picker ---
+ *
+ * In the sidebar head, above the rooms: which conversation you are in, before
+ * what is in it. The menu is absolutely positioned so opening it does not push
+ * the room list down — the sidebar is the one column with no spare height.
+ */
+.run-picker {
+  position: relative;
+  margin-left: auto;
+}
+
+.run-current {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.run-current:hover {
+  border-color: var(--text-tertiary);
+  color: var(--text-primary);
+}
+
+.run-current-label {
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 9px;
+}
+
+.run-current-when {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Reading an archived run is a mode, and a mode that is not announced is a bug
+ * report waiting to happen: the composer is gone and nothing says why. */
+.run-current-tag {
+  color: var(--status-stale);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.run-menu {
+  /* `fixed`, not `absolute`: `.hub-sidebar` is `overflow: hidden` so the hub
+   * clamps to the viewport, and an absolute child of it is clipped at the
+   * sidebar's edge — measured by looking, with half the run list behind it.
+   * `top`/`left` come from the button's own rect at click time. */
+  position: fixed;
+  z-index: 20;
+  min-width: 260px;
+  padding: 4px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+.run-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 6px;
+}
+
+.run-row:hover {
+  background: var(--surface-raised);
+}
+
+.run-row.is-viewing {
+  background: var(--surface-raised);
+}
+
+.run-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.run-when {
+  font-variant-numeric: tabular-nums;
+}
+
+.run-facts {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.run-live {
+  align-self: flex-start;
+  color: var(--status-fresh);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.run-action {
+  flex: none;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.run-action:hover {
+  border-color: var(--border-hairline);
+  color: var(--text-primary);
+}
+
+.run-action.is-danger:hover {
+  border-color: var(--status-blocker);
+  color: var(--status-blocker);
+}
+
+.run-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* The confirm state replaces the row rather than opening a dialog over it: the
+ * thing being deleted stays on screen, in place, while its id is typed. */
+.run-row.is-confirming {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--status-blocker);
+}
+
+.run-confirm-ask {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.run-confirm-id {
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  user-select: all;
+}
+
+.run-confirm-input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 5px;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+}
+
+.run-confirm-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.run-new {
+  width: 100%;
+  margin-top: 4px;
+  padding: 7px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.run-new:hover {
+  border-color: var(--accent);
+}
+
+/* --- the run divider ---
+ *
+ * The run marker is a message on the wire, because a durable boundary has to be
+ * an event. On screen it is a rule: rendering it as a card would put a run id
+ * at the top of every board as though somebody had said it, and this project
+ * has measured what machine chatter on the floor costs.
+ */
+.run-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 10px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.run-divider::before,
+.run-divider::after {
+  content: '';
+  height: 1px;
+  background: var(--border-hairline);
+}
+
+.run-divider::before {
+  width: 18px;
+  flex: none;
+}
+
+.run-divider::after {
+  flex: 1;
+}
+
+.run-divider-when {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}

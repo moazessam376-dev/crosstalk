@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -284,5 +284,134 @@ describe('a run boundary that outlives the daemon', () => {
     await parked;
     // Elapsed, not just the value: the assertion is that it came back promptly.
     expect(Date.now() - started).toBeLessThan(5000);
+  }, 30_000);
+});
+
+describe('putting a run away', () => {
+  async function runs(daemon: DaemonHandle): Promise<{ id: string; archived: boolean; current: boolean; events: number }[]> {
+    const response = await fetch(`${daemon.url}/runs`, { headers: auth(daemon) });
+    return ((await response.json()) as { runs: never[] }).runs;
+  }
+
+  it('lists what is there, including the log that predates any boundary', async () => {
+    // Every repository that existed before runs did is one long unnamed run.
+    // Hiding it would be a worse answer than naming it: it is exactly the 1187
+    // events the operator wanted to put away.
+    const daemon = await open(await repo());
+    await say(daemon, 'from before there were runs');
+    expect((await runs(daemon)).map((run) => run.current)).toEqual([true]);
+
+    await beginRun(daemon);
+    const listed = await runs(daemon);
+    expect(listed).toHaveLength(2);
+    // Newest first.
+    expect(listed[0]!.current).toBe(true);
+    expect(listed[1]!.current).toBe(false);
+  }, 30_000);
+
+  it('moves a finished run out of the live log and keeps serving the current one', async () => {
+    const dir = await repo();
+    const daemon = await open(dir);
+    await say(daemon, 'the previous run said this');
+    await beginRun(daemon);
+    await say(daemon, 'and this run says that');
+
+    const older = (await runs(daemon)).find((run) => !run.current)!;
+    const response = await fetch(`${daemon.url}/runs/${older.id}/archive`, {
+      method: 'POST',
+      headers: auth(daemon),
+    });
+    expect(response.status).toBe(200);
+
+    // Off the live log...
+    const live = await readFile(join(dir, '.crosstalk', 'events.jsonl'), 'utf8');
+    expect(live).not.toContain('the previous run said this');
+    expect(live).toContain('and this run says that');
+    // ...and into its own file, still listed, still readable.
+    const archived = await readFile(join(dir, '.crosstalk', 'runs', `${older.id}.jsonl`), 'utf8');
+    expect(archived).toContain('the previous run said this');
+    expect((await runs(daemon)).find((run) => run.id === older.id)?.archived).toBe(true);
+
+    // And the board did not lose the run it is in.
+    expect(JSON.stringify(await eventsSince(daemon, 0))).toContain('and this run says that');
+  }, 30_000);
+
+  it('refuses to archive the run being written to', async () => {
+    const daemon = await open(await repo());
+    await say(daemon, 'live');
+    const current = (await runs(daemon)).find((run) => run.current)!;
+    const response = await fetch(`${daemon.url}/runs/${current.id}/archive`, {
+      method: 'POST',
+      headers: auth(daemon),
+    });
+    expect(response.status).toBe(409);
+  }, 30_000);
+
+  it('will not delete without the id typed back, and will not delete what is not archived', async () => {
+    const dir = await repo();
+    const daemon = await open(dir);
+    await say(daemon, 'the previous run said this');
+    await beginRun(daemon);
+    const older = (await runs(daemon)).find((run) => !run.current)!;
+
+    // Not archived yet: there is nothing to delete, and the live log is not it.
+    expect(
+      (
+        await fetch(`${daemon.url}/runs/${older.id}`, {
+          method: 'DELETE',
+          headers: auth(daemon),
+          body: JSON.stringify({ confirm: older.id }),
+        })
+      ).status,
+    ).toBe(409);
+
+    await fetch(`${daemon.url}/runs/${older.id}/archive`, { method: 'POST', headers: auth(daemon) });
+
+    // Archived, but unconfirmed — and `true` is not a confirmation.
+    //
+    // Not `r-00000000-0000-000000` in this list: that is the id the log before
+    // the first boundary is given, so on this fixture it is the *right* answer.
+    // It deleted the archive and the assertion caught it.
+    for (const confirm of [undefined, true, 'yes', 'r-20990101-0000-abcdef']) {
+      const response = await fetch(`${daemon.url}/runs/${older.id}`, {
+        method: 'DELETE',
+        headers: auth(daemon),
+        body: JSON.stringify({ confirm }),
+      });
+      expect(response.status, JSON.stringify(confirm)).toBe(409);
+    }
+    expect(await readFile(join(dir, '.crosstalk', 'runs', `${older.id}.jsonl`), 'utf8')).toContain('previous run');
+
+    const done = await fetch(`${daemon.url}/runs/${older.id}`, {
+      method: 'DELETE',
+      headers: auth(daemon),
+      body: JSON.stringify({ confirm: older.id }),
+    });
+    expect(done.status).toBe(200);
+    await expect(readFile(join(dir, '.crosstalk', 'runs', `${older.id}.jsonl`), 'utf8')).rejects.toThrow();
+  }, 30_000);
+
+  it('refuses a run id that is really a path', async () => {
+    // The id reaches `join`, so it is validated as an id first. Encoded and
+    // bare, because the router decodes.
+    const daemon = await open(await repo());
+    for (const hostile of ['..%2F..%2Fpackage.json', '..', '%2Fetc%2Fpasswd']) {
+      const response = await fetch(`${daemon.url}/runs/${hostile}/archive`, {
+        method: 'POST',
+        headers: auth(daemon),
+      });
+      expect([404, 400], hostile).toContain(response.status);
+    }
+  }, 30_000);
+
+  it('is the operator\'s to do, not a seat\'s', async () => {
+    const daemon = await open(await repo());
+    await beginRun(daemon);
+    const older = (await runs(daemon)).find((run) => !run.current);
+    const response = await fetch(`${daemon.url}/runs/${older?.id ?? 'x'}/archive`, {
+      method: 'POST',
+      headers: auth(daemon, 'peer-1'),
+    });
+    expect(response.status).toBe(403);
   }, 30_000);
 });

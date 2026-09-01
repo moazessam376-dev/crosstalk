@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { mkdir, writeFile, unlink, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, unlink, readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { resolveHubDist, sendHubMissing, serveAsset } from './hub.js';
@@ -28,7 +28,7 @@ import { discoverModels } from '../harness/models.js';
 import { configureGithub } from '../cli/github.js';
 import { currentRungOf } from '../core/decisions.js';
 import { dmId, normaliseRoom } from '../core/rooms.js';
-import { isRunStart, newRunId, runIdOf, runMarker, type RunSummary } from '../core/runs.js';
+import { RUN_ID_PATTERN, isRunStart, newRunId, runIdOf, runMarker, type RunSummary } from '../core/runs.js';
 import { refuseMessage, type MessageDraft } from '../core/says.js';
 import { isMessageTag } from '../contracts/say.js';
 
@@ -840,6 +840,23 @@ class Daemon {
       return;
     }
 
+    const archiveRun = /^\/runs\/([^/]+)\/archive$/.exec(path);
+    if (archiveRun !== null && method === 'POST') {
+      this.#requireOperator(ctx, 'POST /runs/:id/archive');
+      await this.#enqueueWrite(() => this.#archiveRun(decodeURIComponent(archiveRun[1]!)));
+      send(response, 200, { runs: await this.#listRuns() });
+      return;
+    }
+
+    const oneRun = /^\/runs\/([^/]+)$/.exec(path);
+    if (oneRun !== null && method === 'DELETE') {
+      this.#requireOperator(ctx, 'DELETE /runs/:id');
+      const body = await readJsonBody(request);
+      await this.#enqueueWrite(() => this.#deleteRun(decodeURIComponent(oneRun[1]!), body['confirm']));
+      send(response, 200, { runs: await this.#listRuns() });
+      return;
+    }
+
     if (path === '/shapes' && method === 'GET') {
       // The launcher's picker. Seats and phases come out with it so the hub can
       // show what a shape will actually do before anyone commits tokens to it.
@@ -1388,7 +1405,7 @@ class Daemon {
    */
   async #listRuns(): Promise<RunSummary[]> {
     const log = await this.#log.read();
-    const runs: RunSummary[] = [];
+    const runs: RunSummary[] = [...(await this.#archivedRuns())];
     let open: RunSummary | undefined;
 
     for (const event of log) {
@@ -1427,6 +1444,109 @@ class Daemon {
 
     if (open !== undefined) open.current = true;
     return runs.reverse();
+  }
+
+  /**
+   * The runs that have been moved out of the live log.
+   *
+   * Read from the directory rather than remembered, for the same reason the
+   * live ones are read from the log: a list kept beside the files is a list
+   * that can disagree with them, and the operator can move a `.jsonl` in or out
+   * by hand — which is the whole of "restorable" here.
+   */
+  async #archivedRuns(): Promise<RunSummary[]> {
+    const dir = join(resolve(this.#repo), '.crosstalk', 'runs');
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch {
+      return [];
+    }
+
+    const runs: RunSummary[] = [];
+    for (const name of names.sort()) {
+      const id = name.endsWith('.jsonl') ? name.slice(0, -'.jsonl'.length) : undefined;
+      // Anything else in the directory is somebody else's file, not a run.
+      if (id === undefined || !RUN_ID_PATTERN.test(id)) continue;
+      try {
+        const lines = (await readFile(join(dir, name), 'utf8')).split('\n').filter((line) => line.trim() !== '');
+        const first = lines[0] === undefined ? undefined : (JSON.parse(lines[0]) as CrosstalkEvent);
+        runs.push({
+          id,
+          startedAt: first?.ts ?? '',
+          firstSeq: first?.seq ?? 0,
+          events: lines.length,
+          archived: true,
+          current: false,
+        });
+      } catch {
+        // A truncated or hand-edited archive is still a run the operator can
+        // see and delete; it just cannot be summarised.
+        runs.push({ id, startedAt: '', firstSeq: 0, events: 0, archived: true, current: false });
+      }
+    }
+    return runs;
+  }
+
+  /** `.crosstalk/runs/<id>.jsonl`, built from a validated id and never from raw input. */
+  #archivePath(runId: string): string {
+    if (!RUN_ID_PATTERN.test(runId)) {
+      // Refused as an id, before anything treats it as a path. Cheaper to get
+      // right than escaping, and there is no second place to forget it.
+      throw new DaemonError('UNKNOWN_RUN', `no run named ${runId}`);
+    }
+    return join(resolve(this.#repo), '.crosstalk', 'runs', `${runId}.jsonl`);
+  }
+
+  /**
+   * Move a finished run out of the live log.
+   *
+   * Refused for the current run: it is the one being appended to, and the
+   * boundary that would mark its end has not been written yet.
+   */
+  async #archiveRun(runId: string): Promise<void> {
+    const runs = await this.#listRuns();
+    const run = runs.find((entry) => entry.id === runId);
+    if (run === undefined) throw new DaemonError('UNKNOWN_RUN', `no run named ${runId}`);
+    if (run.current) {
+      throw new DaemonError(
+        'RUN_NOT_ARCHIVABLE',
+        'that run is the one being written to. Start a new run first, then archive this one.',
+      );
+    }
+    if (run.archived) return;
+
+    const dest = this.#archivePath(runId);
+    await mkdir(join(resolve(this.#repo), '.crosstalk', 'runs'), { recursive: true });
+    // Everything below the *next* run's first event. `endedSeq` is set by
+    // `#listRuns` when it finds the following marker, and a non-current run
+    // always has one.
+    await this.#log.archiveBefore(run.endedSeq ?? run.firstSeq, dest);
+  }
+
+  /**
+   * Remove an archive. The only irreversible act the daemon offers.
+   *
+   * Asks for the run's own id back rather than a boolean: a `confirm: true`
+   * that a client sets by default is not a confirmation, and this is the one
+   * request where being wrong cannot be undone.
+   */
+  async #deleteRun(runId: string, confirm: unknown): Promise<void> {
+    if (confirm !== runId) {
+      throw new DaemonError(
+        'RUN_NOT_CONFIRMED',
+        `deleting a run permanently needs its id back: send { "confirm": "${runId}" }`,
+      );
+    }
+    const path = this.#archivePath(runId);
+    try {
+      await unlink(path);
+    } catch {
+      throw new DaemonError(
+        'RUN_NOT_ARCHIVABLE',
+        `${runId} has no archive to delete. Archive it first — a run still in the live log is not deletable.`,
+      );
+    }
   }
 
   /**

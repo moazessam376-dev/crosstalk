@@ -9,6 +9,10 @@ import { loadHubConfig, type HubConnection } from './state/hubConfig.js';
 import { useMirror } from './state/useMirror.js';
 import { postCompose, postMirrorRepo, postHumanAction, postMessage, postVote, type HumanAction } from './state/humanAction.js';
 import { dmId } from '../core/rooms.js';
+import { isRunStart } from '../core/runs.js';
+import { useRuns } from './state/useRuns.js';
+// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
+import { RunPicker } from './layout/RunPicker.js';
 import { FLOOR } from '../contracts/room.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Launcher } from './launch/Launcher.js';
@@ -58,6 +62,7 @@ export default function App({ connection: injected }: AppProps = {}) {
   const sessions = useSessions(connection.kind === 'live');
   const { launch, launching } = useLaunch();
   const { name: operator, setName: setOperator } = useOperatorName();
+  const runsView = useRuns(connection.kind === 'live');
   // Which seat's terminal is open. Held here rather than in `Layout` so the
   // launcher can close it: starting a new run and staring at the last run's
   // dead terminal was the first thing that went wrong when this was local.
@@ -76,6 +81,25 @@ export default function App({ connection: injected }: AppProps = {}) {
 
   const { events, connected } = useLog(sourceFor(connection));
   const [selectedRoom, setSelectedRoom] = useState<string | undefined>();
+
+  // A run boundary can select a room out of existence.
+  //
+  // `selectedRoom` holds an id, and a `dm:` room from the run that just ended
+  // is not a room any more: the sidebar stops listing it and the stream has
+  // nothing for it, so the hub sits on a blank pane with no route back except
+  // guessing that #floor is still there. `openSeat` is the same defect one
+  // layer up — a terminal belonging to a team that has stopped.
+  //
+  // `useLog` empties its buffer on the marker, so it is the first event held
+  // whenever a run is current; its seq is what changes.
+  const runSeq = events.length > 0 && isRunStart(events[0]!) ? events[0]!.seq : 0;
+  useEffect(() => {
+    if (runSeq === 0) return;
+    setSelectedRoom(undefined);
+    setOpenSeat(undefined);
+    // The run that just ended is a run the picker does not know about yet.
+    void runsView.refresh();
+  }, [runSeq]);
   const maxRounds = connection.kind === 'live' ? connection.config.maxRounds : undefined;
   const state = deriveState(events, maxRounds);
   const defaultRoom = connection.kind === 'live'
@@ -209,6 +233,16 @@ export default function App({ connection: injected }: AppProps = {}) {
         ? (decisionId: string, option: string, rationale: string) => postVote(decisionId, option, rationale)
         : undefined,
       onSelectRoom: (roomId: string) => setSelectedRoom(roomId),
+      // Only with a daemon: the run list is a fact about files on disk, and a
+      // picker over a fixture would be a menu of one thing that cannot change.
+      runPicker: connection.kind === 'live'
+        ? createElement(RunPicker, {
+            runs: runsView.runs,
+            onArchive: (runId: string) => void runsView.archive(runId),
+            onDelete: (runId: string) => void runsView.remove(runId),
+            onStartNew: () => void runsView.startNew(),
+          })
+        : undefined,
       onHumanAction,
       // Selecting the room is the whole action: the room becomes real when
       // something is said in it, and the composer is already there. Posting an

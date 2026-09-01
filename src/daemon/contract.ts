@@ -80,6 +80,9 @@ export const DAEMON_STATUS: Record<DaemonErrorCode, number> = {
   // HTTP. Mapped because the map is total over DaemonErrorCode on purpose.
   PORT_BLOCKED: 409,
   HOST_UNAVAILABLE: 409,
+  UNKNOWN_RUN: 404,
+  RUN_NOT_ARCHIVABLE: 409,
+  RUN_NOT_CONFIRMED: 409,
   PAYLOAD_TOO_LARGE: 413,
   MESSAGE_TOO_LONG: 422,
   MESSAGE_REFUSED: 422,

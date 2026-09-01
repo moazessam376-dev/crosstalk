@@ -1,5 +1,3 @@
-import { randomBytes } from 'node:crypto';
-
 import type { CrosstalkEvent, DraftEvent } from '../contracts/events.js';
 import { FLOOR, SYSTEM_ID } from '../contracts/room.js';
 
@@ -42,6 +40,23 @@ function twoDigit(value: number): string {
 }
 
 /**
+ * Six hex characters of randomness, from Web Crypto.
+ *
+ * Deliberately not `node:crypto`. This module is shared with the hub — the
+ * sidebar reads run ids and `useLog` recognises the marker — and a `node:`
+ * import fails the browser build outright: "randomBytes is not exported by
+ * __vite-browser-external". `npm test` was entirely green when that happened,
+ * which is why the build is its own gate and not an afterthought.
+ *
+ * `globalThis.crypto.getRandomValues` is the one spelling both runtimes have.
+ */
+function randomSuffix(): string {
+  const bytes = new Uint8Array(3);
+  globalThis.crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * A new run id, stamped with local time.
  *
  * Local rather than UTC because the operator reads these in a picker beside
@@ -53,7 +68,7 @@ export function newRunId(now: Date): string {
   const stamp =
     `${now.getFullYear()}${twoDigit(now.getMonth() + 1)}${twoDigit(now.getDate())}` +
     `-${twoDigit(now.getHours())}${twoDigit(now.getMinutes())}`;
-  return `r-${stamp}-${randomBytes(3).toString('hex')}`;
+  return `r-${stamp}-${randomSuffix()}`;
 }
 
 export function runRef(id: string): string {

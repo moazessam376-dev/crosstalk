@@ -27,6 +27,12 @@ export type DaemonErrorCode =
   | 'PORT_BLOCKED'
   /** `--host` naming an address no interface on this machine has. */
   | 'HOST_UNAVAILABLE'
+  /** Asked for a run this repository has never had, live or archived. */
+  | 'UNKNOWN_RUN'
+  /** Asked to archive the run currently being written to, or delete one still live. */
+  | 'RUN_NOT_ARCHIVABLE'
+  /** Delete without the run's own id typed back. The one irreversible act. */
+  | 'RUN_NOT_CONFIRMED'
   | 'PAYLOAD_TOO_LARGE'
   /**
    * The transport was fine and the message was too long. Distinct from

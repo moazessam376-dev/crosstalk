@@ -3129,3 +3129,47 @@ button.member-body:hover .member-id {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
+
+/* --- how many builders ---
+ *
+ * Only rendered for a shape whose seat count varies, which today is
+ * `planner-integrator` alone. Sits in the Seats heading rather than in the
+ * table: it is a fact about the roster, not about any row in it.
+ */
+.seat-count {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.seat-count-label {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.seat-count-option {
+  min-width: 22px;
+  padding: 2px 0;
+  border: 1px solid var(--border-hairline);
+  border-radius: 5px;
+  background: var(--surface-base);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.seat-count-option:hover {
+  border-color: var(--text-tertiary);
+  color: var(--text-primary);
+}
+
+.seat-count-option.is-chosen {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text-primary);
+}

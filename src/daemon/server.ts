@@ -17,6 +17,7 @@ import { renderInbox, type Inbox } from '../core/inbox.js';
 import { phaseStatus, type PhaseStatus } from '../core/phase.js';
 import { SHAPES, shapeNamed } from '../core/shape.js';
 import { workspaceGates } from '../workspace/gates.js';
+import { seatBranches } from '../workspace/git.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
 import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js';
 import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
@@ -1266,14 +1267,19 @@ class Daemon {
       (participant) => participant.id !== HUMAN_ID && participant.role !== 'human',
     );
     const needed = shape.phases.flatMap((phase) => phase.exit.filter((gate) => gate.by === 'workspace').map((gate) => gate.id));
+    const contractPath = this.#config.contractPath ?? shape.contract;
 
     let workspace;
     try {
       workspace = await workspaceGates({
         repo: this.#repo,
         base: this.#config.project.mainBranch,
-        ...(this.#config.contractPath === undefined ? {} : { contractPath: this.#config.contractPath }),
-        branches: seats.map((seat) => ({ seat: seat.id, branch: `ct/${seat.id}` })),
+        // The config wins, then the shape's own default. Falling back to the
+        // shape is what stops a shape shipping a gate nothing can ever meet:
+        // `contractPath` is optional in the config and no code path has ever
+        // set it.
+        ...(contractPath === undefined ? {} : { contractPath }),
+        branches: await seatBranches(this.#repo, seats),
         needed,
       });
     } catch {

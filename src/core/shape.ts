@@ -74,6 +74,15 @@ export interface SeatSpec {
 export interface TeamShape {
   name: string;
   summary: string;
+  /**
+   * The file `contract-exists` looks for, when the config names none.
+   *
+   * A shape that gates on a contract has to be able to say which one. Without
+   * this the gate reads `config.contractPath`, which nothing writes, and the
+   * shape can never leave its first phase — which is what `trio-contract` did
+   * for every run it was ever used in.
+   */
+  contract?: string;
   seats: readonly SeatSpec[];
   phases: readonly Phase[];
 }
@@ -174,6 +183,7 @@ const CONTRACT_FIRST: Phase[] = [
 const TRIO_CONTRACT: TeamShape = {
   name: 'trio-contract',
   summary: 'Three peers, one frozen contract, one of them integrates and repairs.',
+  contract: 'src/contract.ts',
   seats: [
     {
       role: 'peer',

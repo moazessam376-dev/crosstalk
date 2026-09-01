@@ -291,21 +291,72 @@ export async function listWorktrees(repo: string): Promise<{ path: string; branc
 }
 
 /**
- * Files a branch changed relative to where it left `base`.
+ * The branch each seat is actually on, read from git rather than reconstructed.
+ *
+ * `init` creates a seat's worktree on `ct/<id>-base`; the phase machine used to
+ * ask about `ct/<id>`. Neither half looked wrong alone, and together they made
+ * `no-shared-files` unfalsifiable for the life of the feature. A worktree knows
+ * its own branch, so nothing here guesses.
+ *
+ * Seats working in the repo root are left out: they own no branch of their own
+ * and are not parties to a no-shared-files check. A seat whose worktree is
+ * missing entirely is *kept*, on the convention name, so the gate reports it as
+ * unchecked rather than quietly dropping it — which is the same failure this
+ * function exists to end.
+ */
+export async function seatBranches(
+  repo: string,
+  seats: readonly { id: string; workspace: string }[],
+): Promise<{ seat: string; branch: string }[]> {
+  const root = resolve(repo);
+  let worktrees: { path: string; branch: string }[];
+  try {
+    worktrees = await listWorktrees(root);
+  } catch {
+    worktrees = [];
+  }
+
+  const resolved: { seat: string; branch: string }[] = [];
+  for (const seat of seats) {
+    const workspace = resolve(root, seat.workspace);
+    if (await samePath(workspace, root)) continue;
+
+    let branch: string | undefined;
+    for (const entry of worktrees) {
+      if (entry.branch !== '' && (await samePath(entry.path, workspace))) {
+        branch = entry.branch;
+        break;
+      }
+    }
+    resolved.push({ seat: seat.id, branch: branch ?? `ct/${seat.id}-base` });
+  }
+  return resolved;
+}
+
+/**
+ * Files a branch changed relative to where it left `base`, or `undefined` when
+ * there is no such branch.
  *
  * Three dots on purpose: `base...branch` is the branch's own work, so a branch
  * that is merely behind `main` does not appear to have touched everything that
  * landed on `main` while it was away. Two dots would report that, and the
  * no-shared-files gate would fail every seat the moment anyone merged.
  *
- * An unknown branch is an empty change set rather than a throw: a seat that has
- * not pushed yet has not collided with anyone.
+ * `undefined` rather than `[]` for a missing branch, and the distinction is the
+ * whole point. This used to swallow the unknown ref, on the argument that a
+ * seat which has not pushed has not collided with anyone. `git diff main...x`
+ * exits 128 for a branch that is not there, so when the daemon asked about
+ * `ct/<id>` while init had created `ct/<id>-base`, every seat came back empty,
+ * the intersection of empty sets was empty, and the gate reported green
+ * forever. A caller has to be able to tell "nothing changed" from "I could not
+ * look"; an existing branch with an empty diff still returns `[]`.
  */
-export async function changedFiles(cwd: string, base: string, branch: string): Promise<string[]> {
+export async function changedFiles(cwd: string, base: string, branch: string): Promise<string[] | undefined> {
+  if ((await branchShaIfExists(cwd, branch)) === undefined) return undefined;
   try {
     const out = await runGit(cwd, ['diff', '--name-only', `${base}...${branch}`]);
     return out === '' ? [] : out.split('\n').map((line) => line.trim()).filter((line) => line !== '');
   } catch {
-    return [];
+    return undefined;
   }
 }

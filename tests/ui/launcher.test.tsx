@@ -11,6 +11,10 @@ import type { ShapeSummary } from '../../src/ui/state/useLaunch.js';
 
 afterEach(cleanup);
 
+function textOf(element: Element): string {
+  return (element as unknown as { textContent: string }).textContent;
+}
+
 const TRIO: ShapeSummary = {
   name: 'trio-contract',
   summary: 'Three peers, one frozen contract, one of them integrates and repairs.',
@@ -464,12 +468,14 @@ describe('starting a run over one that is still going', () => {
     expect(screen.getByRole('button', { name: 'End current run & start' })).toBeInTheDocument();
     // Named, not counted: "2 seats will be stopped" is not something an
     // operator can check against what they believe is running.
-    const warning = screen.getByTestId('launch-warning');
-    expect(warning.textContent).toContain('planner');
-    expect(warning.textContent).toContain('builder');
+    // The repo's tsconfig omits the `dom` lib on purpose, so `textContent` is
+    // reached through a named cast, as in `message-card.test.tsx`.
+    const warning = textOf(screen.getByTestId('launch-warning'));
+    expect(warning).toContain('planner');
+    expect(warning).toContain('builder');
     // And it says what stopping does *not* do, because that is the part they
     // would otherwise have to find out by losing a diff.
-    expect(warning.textContent).toContain('worktrees');
+    expect(warning).toContain('worktrees');
   });
 
   it('does not count a seat whose process has already exited', () => {

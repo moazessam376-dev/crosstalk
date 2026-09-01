@@ -81,7 +81,10 @@ async function until(check: () => Promise<boolean>, ms = 4000): Promise<void> {
 
 function seat(cwd: string, script: string): HarnessSession {
   const session = openSession({
-    argv: ['sh', '-c', script],
+    // `node -e` rather than `sh -c`: a mirror is a cross-platform claim, and
+    // Windows has no `sh`, so these tests were simply absent on the platform
+    // most likely to break a pty.
+    argv: [process.execPath, '-e', script],
     cwd,
     first: '',
     turnFormat: 'interactive',
@@ -106,7 +109,7 @@ describe('mirroring a seat over HTTP', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'printf "reading harbor.ts"; sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'process.stdout.write("reading harbor.ts"); setTimeout(() => {}, 30000);'));
 
       await until(async () => {
         const response = await get(daemon, '/sessions/opus/screen');
@@ -127,7 +130,7 @@ describe('mirroring a seat over HTTP', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'printf "settled"; sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'process.stdout.write("settled"); setTimeout(() => {}, 30000);'));
 
       let version = -1;
       await until(async () => {
@@ -156,7 +159,7 @@ describe('mirroring a seat over HTTP', () => {
     try {
       // Reads one line and echoes it back, which is the whole round trip: the
       // route wrote to a pty and a real process read it.
-      daemon.sessions.register('opus', seat(dir, 'read line; printf "\\nGOT[%s]" "$line"; sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'process.stdin.once("data", (d) => process.stdout.write(`\\nGOT[${String(d).trim()}]`)); setTimeout(() => {}, 30000);'));
       await until(async () => (await get(daemon, '/sessions/opus/screen')).ok);
 
       const sent = await post(daemon, '/sessions/opus/input', { turn: 'look at the tick' });
@@ -183,7 +186,7 @@ describe('mirroring a seat over HTTP', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'sleep 30'));
+      daemon.sessions.register('opus', seat(dir, 'setTimeout(() => {}, 30000);'));
 
       const response = await post(daemon, '/sessions/opus/input', { turn: 'do as I say' }, 'codex');
       expect(response.status).toBe(403);
@@ -218,7 +221,7 @@ describe('mirroring a seat over HTTP', () => {
     const dir = await tempRepo();
     const daemon = await startDaemon({ repo: dir });
     try {
-      daemon.sessions.register('opus', seat(dir, 'printf "fatal: contract not frozen"; exit 3'));
+      daemon.sessions.register('opus', seat(dir, 'process.stdout.write("fatal: contract not frozen"); process.exit(3);'));
 
       await until(async () => {
         const body = (await (await get(daemon, '/sessions/opus/screen')).json()) as {

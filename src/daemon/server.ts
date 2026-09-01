@@ -25,6 +25,7 @@ import { workspaceWarning } from './workspace.js';
 import { Presence } from './presence.js';
 import { SessionRegistry, type SessionHandle } from '../harness/sessions.js';
 import { discoverModels } from '../harness/models.js';
+import { configureGithub } from '../cli/github.js';
 import { currentRungOf } from '../core/decisions.js';
 import { dmId, normaliseRoom } from '../core/rooms.js';
 import { refuseMessage, type MessageDraft } from '../core/says.js';
@@ -704,7 +705,57 @@ class Daemon {
       // Called, not read: `up` starts the daemon before the mirror, so a value
       // captured at construction reports `enabled: false` for the life of the
       // process — indistinguishable from a mirror that failed to start.
-      send(response, 200, this.#mirrorStatus());
+      //
+      // `configured` comes from the config rather than from that callback,
+      // because the two answer different questions. Whether a `mirror:` block
+      // exists is a fact about the file, which this daemon reloads; whether the
+      // mirror is *running* is a fact about a process started before the block
+      // could have been written from the hub. Reading both from the runtime
+      // callback meant configuring the mirror here left the rail still saying
+      // "no mirror configured" until a restart.
+      const runtime = this.#mirrorStatus();
+      send(response, 200, {
+        ...runtime,
+        configured: runtime.configured || this.#config.mirror?.github !== undefined,
+      });
+      return;
+    }
+    if (path === '/mirror' && method === 'POST') {
+      // The one config write the hub can make, and the reason nobody ever
+      // configured the mirror: it was a YAML block with no documented shape and
+      // no route, so `crosstalk github <url>` from a terminal was the only door
+      // and the hub could not offer the field at all.
+      if (who !== HUMAN_ID) {
+        send(response, 403, wire('daemon', 'ROLE_NOT_PERMITTED', 'configuring the mirror is the human seat'));
+        return;
+      }
+      const payload = (await readJsonBody(request)) as { url?: unknown; login?: unknown };
+      if (typeof payload.url !== 'string' || payload.url.trim() === '') {
+        send(response, 400, wire('daemon', 'MALFORMED_BODY', 'send `url` — a GitHub repository to mirror to'));
+        return;
+      }
+      try {
+        const configured = await configureGithub({
+          repo: this.#repo,
+          url: payload.url,
+          ...(typeof payload.login === 'string' && payload.login.trim() !== ''
+            ? { login: payload.login.trim() }
+            : {}),
+        });
+        // Re-read, so `GET /mirror` stops saying unconfigured without a restart.
+        await this.reload();
+        send(response, 200, {
+          repo: `${configured.repo.owner}/${configured.repo.repo}`,
+          remote: configured.remote,
+          humanLogin: configured.humanLogin,
+        });
+      } catch (error) {
+        send(
+          response,
+          400,
+          wire('daemon', 'MALFORMED_BODY', error instanceof Error ? error.message : 'could not configure the mirror'),
+        );
+      }
       return;
     }
     if (path === '/events' && method === 'GET') {

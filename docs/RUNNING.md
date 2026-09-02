@@ -191,6 +191,33 @@ the empty Participants panel as the signal, not the rest of the sentence.
 
 The recovery is always the same: reopen from the `Hub:` line that `up` printed.
 
+### Reading an older run
+
+The run picker in the sidebar head lists every run this repository has had.
+Pick one and the board shows it — **read-only**: there is no composer, because
+there is no run to post into. The picker says `reading` while you are in one.
+Pick the live run at the top to come back.
+
+Archived runs read the same way as unarchived ones; the only difference is
+which file the daemon reads them out of.
+
+From a terminal:
+
+```bash
+crosstalk runs
+```
+
+`crosstalk runs new` puts the current one away and starts fresh (add
+`--job '...'` to post one at the same time, or `--end` if seats are still
+running). `crosstalk runs archive <id>` moves a finished run to
+`.crosstalk/runs/<id>.jsonl`. `crosstalk runs rm <id> --yes` deletes an
+archive permanently — the only thing in Crosstalk that destroys history, which
+is why it wants the flag.
+
+`crosstalk ledger` reports on the **current** run. Add `--run <id>` for an
+older one — including an archived one, whose events are no longer in the live
+log at all — or `--all` for every run the repository has had.
+
 ### Sending a screenshot
 
 ⌘V into the composer, drag a file onto it, or the paperclip beside `Send`.

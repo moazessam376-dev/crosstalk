@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { mkdir, writeFile, unlink, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, unlink, readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { resolveHubDist, sendHubMissing, serveAsset } from './hub.js';
@@ -28,6 +28,7 @@ import { discoverModels } from '../harness/models.js';
 import { configureGithub } from '../cli/github.js';
 import { currentRungOf } from '../core/decisions.js';
 import { dmId, normaliseRoom } from '../core/rooms.js';
+import { RUN_ID_PATTERN, isRunStart, newRunId, runIdOf, runMarker, type RunSummary } from '../core/runs.js';
 import { refuseMessage, type MessageDraft } from '../core/says.js';
 import { isMessageTag } from '../contracts/say.js';
 
@@ -437,6 +438,20 @@ class Daemon {
    * everyone, because a launch is a new run and nobody in it is behind.
    */
   #floorSeq = 0;
+  /**
+   * Where the current run starts. Every reader clamps to it.
+   *
+   * Distinct from `#floorSeq`, which is a *delivery* mark — how far a seat has
+   * been told things — and is per daemon lifetime. This is the run itself, it
+   * is recovered from the log at startup, and it binds the hub and the CLI as
+   * well as the seats. The operator asked for both halves in one sentence:
+   * archiving a run means the agents stop reading it too.
+   *
+   * Invariant: `#floorSeq >= #runStartSeq`. A seat cannot be owed something
+   * from before the run it is in.
+   */
+  #runStartSeq = 0;
+  #runId: string | undefined;
   #writeTail: Promise<unknown> = Promise.resolve();
   /** Serializes whole write handlers, not just appends — see the call site. */
   #handlerTail: Promise<unknown> = Promise.resolve();
@@ -514,14 +529,21 @@ class Daemon {
 
   async init(): Promise<void> {
     const log = await this.#log.read();
-    this.#state = project(log);
+    // The run boundary is recovered from the log rather than held in memory,
+    // which is the whole reason it is an event: a daemon restarted mid-run has
+    // to land back in that run and not in the sum of every run before it.
+    const marker = [...log].reverse().find((event) => isRunStart(event));
+    this.#runStartSeq = marker?.seq ?? 0;
+    this.#runId = marker === undefined ? undefined : runIdOf(marker);
+    const current = marker === undefined ? log : log.filter((event) => event.seq >= marker.seq);
+    this.#state = project(current);
     // Everything already on the board happened before this daemon existed, so
     // it is history, not a backlog. See `#floorSeq`.
     this.#floorSeq = this.#log.lastSeq;
     // A daemon restarted mid-rung picks the clock back up from the last
     // `rung_entered`; one restarted past the deadline advances immediately
     // rather than losing the rung.
-    this.#ladderTimers.rearm(log, this.#state, this.#config, Date.now());
+    this.#ladderTimers.rearm(current, this.#state, this.#config, Date.now());
 
     // A merge that landed while the daemon was down is the common case and
     // nothing else will notice it.
@@ -812,6 +834,29 @@ class Daemon {
       return;
     }
 
+    if (path === '/runs' && method === 'GET') {
+      this.#requireOperator(ctx, 'GET /runs');
+      send(response, 200, { runs: await this.#listRuns() });
+      return;
+    }
+
+    const archiveRun = /^\/runs\/([^/]+)\/archive$/.exec(path);
+    if (archiveRun !== null && method === 'POST') {
+      this.#requireOperator(ctx, 'POST /runs/:id/archive');
+      await this.#enqueueWrite(() => this.#archiveRun(decodeURIComponent(archiveRun[1]!)));
+      send(response, 200, { runs: await this.#listRuns() });
+      return;
+    }
+
+    const oneRun = /^\/runs\/([^/]+)$/.exec(path);
+    if (oneRun !== null && method === 'DELETE') {
+      this.#requireOperator(ctx, 'DELETE /runs/:id');
+      const body = await readJsonBody(request);
+      await this.#enqueueWrite(() => this.#deleteRun(decodeURIComponent(oneRun[1]!), body['confirm']));
+      send(response, 200, { runs: await this.#listRuns() });
+      return;
+    }
+
     if (path === '/shapes' && method === 'GET') {
       // The launcher's picker. Seats and phases come out with it so the hub can
       // show what a shape will actually do before anyone commits tokens to it.
@@ -1074,6 +1119,7 @@ class Daemon {
     if (path === '/tasks/assign') return assignTask;
     if (path === '/compose') return (ctx, body) => this.#composeJob(ctx, body);
     if (path === '/launch') return (ctx, body) => this.#launch(ctx, body);
+    if (path === '/runs') return (ctx, body) => this.#startRun(ctx, body);
     if (path === '/decisions') return openDecision;
 
     const claimResponse = matchPath(path, '/claims/:id/response');
@@ -1169,8 +1215,23 @@ class Daemon {
     return who;
   }
 
+  /**
+   * A `since` no reader may go below.
+   *
+   * `since` is exclusive everywhere, and the marker is the run's first event,
+   * so the floor is `#runStartSeq - 1` — asking from there yields the marker
+   * itself and everything after it, and nothing from the run before.
+   *
+   * Applied rather than validated: a stale `Last-Event-ID` from a browser that
+   * was connected during the previous run is not an error, it is a reconnect.
+   * Clamping it silently is right; refusing it would blank the hub.
+   */
+  #floorFor(requested: number): number {
+    return Math.max(requested, this.#runStartSeq - 1);
+  }
+
   async #readEvents(url: URL): Promise<EventsResponse> {
-    const since = readNonNegativeInt(url.searchParams.get('since'), 0, 'since');
+    const since = this.#floorFor(readNonNegativeInt(url.searchParams.get('since'), 0, 'since'));
     const limit = Math.min(
       readNonNegativeInt(url.searchParams.get('limit'), MAX_LIMIT, 'limit'),
       MAX_LIMIT,
@@ -1195,7 +1256,7 @@ class Daemon {
     // messages under one spelling and then returns none of them under the other.
     const room = normaliseRoom(requested);
     requireRoomMembership(ctx, room);
-    const since = readNonNegativeInt(url.searchParams.get('since'), 0, 'since');
+    const since = this.#floorFor(readNonNegativeInt(url.searchParams.get('since'), 0, 'since'));
     const events = (await this.#log.readFrom(since + 1)).filter((event) => event.room === room);
     return {
       events,
@@ -1209,10 +1270,15 @@ class Daemon {
   ): Promise<{ events: CrosstalkEvent[] } | { idle: true }> {
     const requested = readNonNegativeInt(url.searchParams.get('timeout_s'), AWAIT_CAP_S, 'timeout_s');
     const timeoutMs = Math.min(requested, AWAIT_CAP_S) * 1000;
-    const mark = readNonNegativeInt(
-      url.searchParams.get('since'),
-      this.#delivered.get(who) ?? this.#floorSeq,
-      'since',
+    // Clamped like every other read. The MCP `inbox` tool exposes `since`, so
+    // without this any agent could ask for the whole log across every run by
+    // passing zero — the exact thing the run boundary exists to prevent.
+    const mark = this.#floorFor(
+      readNonNegativeInt(
+        url.searchParams.get('since'),
+        this.#delivered.get(who) ?? this.#floorSeq,
+        'since',
+      ),
     );
 
     const ready = (await this.#log.readFrom(mark + 1)).filter((event) =>
@@ -1248,6 +1314,263 @@ class Daemon {
    * waited for that would hold a socket open for hours and time out long before
    * the team finished.
    */
+  /**
+   * Release every parked long poll, without ending the run they were in.
+   *
+   * A seat sitting in a 50-second `/await` is not woken by a run boundary on
+   * its own: the marker does not address it, and once the projection resets it
+   * is not a member of anything to be addressed *through*. So a new run opened
+   * with up to fifty seconds of silence from every seat that happened to be
+   * waiting — which reads exactly like three dead agents.
+   *
+   * Resolves with `[]`, which `#awaitTurn` reports as idle. The seat asks
+   * again immediately, and its next question is answered inside the new run.
+   */
+  #releaseWaiters(): void {
+    for (const waiter of [...this.#waiters]) {
+      clearTimeout(waiter.timer);
+      this.#waiters.delete(waiter);
+      waiter.resolve([]);
+    }
+  }
+
+  /**
+   * Begin a run: the boundary, and everything that has to forget across it.
+   *
+   * The read clamps alone would not be enough, and the gap is not cosmetic.
+   * `#state` is a projection of the whole log, so a boundary that only moved a
+   * read window would leave `/board` listing the previous run's tasks, the
+   * inbox quoting its job, and — the one that is a correctness bug —
+   * `assertedGates` scanning every `#floor` message for `ref: gate:<id>` with
+   * no notion of when, so yesterday's assertion marks today's gate met and a
+   * team walks past the gate that exists to stop it.
+   *
+   * So the boundary is a hard reset of the protocol state machine. Order is
+   * load-bearing throughout; each step says why.
+   */
+  async #beginRun(ctx: HandlerContext, job?: string): Promise<CrosstalkEvent[]> {
+    // Below the boundary, closing out the run that is ending: a log replayed
+    // later shows those seats leaving, not still present.
+    const left = await this.#partAll();
+
+    const id = newRunId(new Date());
+    const marker = await this.#append(runMarker(id));
+    this.#runStartSeq = marker.seq;
+    this.#runId = id;
+
+    // The reset itself. Everything above hangs off this line.
+    this.#state = project([marker]);
+
+    // `#joins` is in-flight-and-done both, so while an entry survives the seat
+    // never re-announces and the hub draws this run with the last run's roster.
+    // They re-join on their next authenticated request, before any handler.
+    //
+    // `#partAll` above already deletes every key it saw, so this is the second
+    // of two — and it is kept rather than trimmed because `#ensureJoined` runs
+    // in `#route`, outside `#enqueueWrite`, so a join landing between that
+    // snapshot and here would otherwise survive the boundary. The break-test
+    // reflects this honestly: it goes red only when both are removed.
+    this.#joins.clear();
+    const joined = await this.#ensureJoined(HUMAN_ID);
+
+    this.#releaseWaiters();
+    this.#presence.reset();
+    this.#delivered.clear();
+    // Suppresses a repeated status line, so a stale entry swallows the first
+    // real status of the new run — silently, and only sometimes.
+    this.#lastStatus.clear();
+
+    if (job === undefined) return [...left, marker, ...joined];
+
+    // The job goes on last, and the floor moves after it. Both halves matter:
+    // above the boundary so the operator can see it, below the delivery floor
+    // so `runCompose` types it into each seat exactly once rather than the wake
+    // loop handing over the same text a second time.
+    const posted = await this.#appendMessage(ctx, { kind: 'message', room: FLOOR, body: job });
+    this.#floorSeq = this.#log.lastSeq;
+    this.#delivered.clear();
+    return [...left, marker, ...joined, ...posted];
+  }
+
+  /**
+   * Every run this repository has, newest first.
+   *
+   * Derived from the log rather than kept beside it, exactly as the ledger is:
+   * a list maintained during a run is a list that can be wrong, can be lost on
+   * restart, and cannot describe a run that finished before it existed.
+   *
+   * The log before the first marker is a run too — every repository that
+   * predates this feature is one long unnamed run, and hiding it would be a
+   * worse answer than naming it.
+   */
+  async #listRuns(): Promise<RunSummary[]> {
+    const log = await this.#log.read();
+    const runs: RunSummary[] = [...(await this.#archivedRuns())];
+    let open: RunSummary | undefined;
+
+    for (const event of log) {
+      const id = runIdOf(event);
+      if (id !== undefined) {
+        if (open !== undefined) open.endedSeq = event.seq;
+        open = {
+          id,
+          startedAt: event.ts,
+          firstSeq: event.seq,
+          events: 0,
+          archived: false,
+          current: false,
+        };
+        runs.push(open);
+      } else if (open === undefined) {
+        // Everything before the first boundary. One run, unnamed, so the
+        // operator can still find and archive what they already have.
+        open = {
+          id: 'r-00000000-0000-000000',
+          startedAt: event.ts,
+          firstSeq: event.seq,
+          events: 0,
+          archived: false,
+          current: false,
+        };
+        runs.push(open);
+      }
+      if (open !== undefined) {
+        open.events += 1;
+        if (open.job === undefined && event.kind === 'message' && event.from === HUMAN_ID) {
+          open.job = (event as { head?: string; body?: string }).head ?? (event as { body?: string }).body;
+        }
+      }
+    }
+
+    if (open !== undefined) open.current = true;
+    return runs.reverse();
+  }
+
+  /**
+   * The runs that have been moved out of the live log.
+   *
+   * Read from the directory rather than remembered, for the same reason the
+   * live ones are read from the log: a list kept beside the files is a list
+   * that can disagree with them, and the operator can move a `.jsonl` in or out
+   * by hand — which is the whole of "restorable" here.
+   */
+  async #archivedRuns(): Promise<RunSummary[]> {
+    const dir = join(resolve(this.#repo), '.crosstalk', 'runs');
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch {
+      return [];
+    }
+
+    const runs: RunSummary[] = [];
+    for (const name of names.sort()) {
+      const id = name.endsWith('.jsonl') ? name.slice(0, -'.jsonl'.length) : undefined;
+      // Anything else in the directory is somebody else's file, not a run.
+      if (id === undefined || !RUN_ID_PATTERN.test(id)) continue;
+      try {
+        const lines = (await readFile(join(dir, name), 'utf8')).split('\n').filter((line) => line.trim() !== '');
+        const first = lines[0] === undefined ? undefined : (JSON.parse(lines[0]) as CrosstalkEvent);
+        runs.push({
+          id,
+          startedAt: first?.ts ?? '',
+          firstSeq: first?.seq ?? 0,
+          events: lines.length,
+          archived: true,
+          current: false,
+        });
+      } catch {
+        // A truncated or hand-edited archive is still a run the operator can
+        // see and delete; it just cannot be summarised.
+        runs.push({ id, startedAt: '', firstSeq: 0, events: 0, archived: true, current: false });
+      }
+    }
+    return runs;
+  }
+
+  /** `.crosstalk/runs/<id>.jsonl`, built from a validated id and never from raw input. */
+  #archivePath(runId: string): string {
+    if (!RUN_ID_PATTERN.test(runId)) {
+      // Refused as an id, before anything treats it as a path. Cheaper to get
+      // right than escaping, and there is no second place to forget it.
+      throw new DaemonError('UNKNOWN_RUN', `no run named ${runId}`);
+    }
+    return join(resolve(this.#repo), '.crosstalk', 'runs', `${runId}.jsonl`);
+  }
+
+  /**
+   * Move a finished run out of the live log.
+   *
+   * Refused for the current run: it is the one being appended to, and the
+   * boundary that would mark its end has not been written yet.
+   */
+  async #archiveRun(runId: string): Promise<void> {
+    const runs = await this.#listRuns();
+    const run = runs.find((entry) => entry.id === runId);
+    if (run === undefined) throw new DaemonError('UNKNOWN_RUN', `no run named ${runId}`);
+    if (run.current) {
+      throw new DaemonError(
+        'RUN_NOT_ARCHIVABLE',
+        'that run is the one being written to. Start a new run first, then archive this one.',
+      );
+    }
+    if (run.archived) return;
+
+    const dest = this.#archivePath(runId);
+    await mkdir(join(resolve(this.#repo), '.crosstalk', 'runs'), { recursive: true });
+    // Everything below the *next* run's first event. `endedSeq` is set by
+    // `#listRuns` when it finds the following marker, and a non-current run
+    // always has one.
+    await this.#log.archiveBefore(run.endedSeq ?? run.firstSeq, dest);
+  }
+
+  /**
+   * Remove an archive. The only irreversible act the daemon offers.
+   *
+   * Asks for the run's own id back rather than a boolean: a `confirm: true`
+   * that a client sets by default is not a confirmation, and this is the one
+   * request where being wrong cannot be undone.
+   */
+  async #deleteRun(runId: string, confirm: unknown): Promise<void> {
+    if (confirm !== runId) {
+      throw new DaemonError(
+        'RUN_NOT_CONFIRMED',
+        `deleting a run permanently needs its id back: send { "confirm": "${runId}" }`,
+      );
+    }
+    const path = this.#archivePath(runId);
+    try {
+      await unlink(path);
+    } catch {
+      throw new DaemonError(
+        'RUN_NOT_ARCHIVABLE',
+        `${runId} has no archive to delete. Archive it first — a run still in the live log is not deletable.`,
+      );
+    }
+  }
+
+  /**
+   * Begin a run without staffing anyone — "put this away and give me a clean
+   * board". The launcher's path is `/launch`, which does this *and* spawns.
+   */
+  async #startRun(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
+    this.#requireOperator(ctx, 'POST /runs');
+    const job = body['job'];
+    if (job !== undefined && typeof job !== 'string') {
+      throw new DaemonError('MALFORMED_BODY', '`job` must be a string');
+    }
+    const trimmed = typeof job === 'string' ? job.trim() : '';
+    return this.#beginRun(ctx, trimmed === '' ? undefined : trimmed);
+  }
+
+  /** Every run-shaped action is the operator's; seats do not end each other's runs. */
+  #requireOperator(ctx: HandlerContext, what: string): void {
+    const role = this.#config.participants.find((participant) => participant.id === ctx.who)?.role;
+    if (ctx.who !== HUMAN_ID && role !== 'human') {
+      throw new DaemonError('ROLE_NOT_PERMITTED', `${what} requires the human seat`);
+    }
+  }
+
   async #launch(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
     const role = this.#config.participants.find((participant) => participant.id === ctx.who)?.role;
     if (ctx.who !== HUMAN_ID && role !== 'human') {
@@ -1294,9 +1617,10 @@ class Daemon {
     // "new since your last turn" is how its first act became reading someone
     // else's finished argument — and the job itself is delivered by exactly one
     // path.
-    const posted = await this.#appendMessage(ctx, { kind: 'message', room: FLOOR, body: job.trim() });
-    this.#floorSeq = this.#log.lastSeq;
-    this.#delivered.clear();
+    // One path for "a run begins", whether it was reached through the launcher
+    // or through `POST /runs`. The comment above is the history of getting this
+    // order wrong; `#beginRun` is where it now lives, once.
+    const posted = await this.#beginRun(ctx, job.trim());
 
     const requested = (seats ?? []) as string[];
     // A shape change is grounds to re-staff on its own. The roster can be
@@ -1466,10 +1790,12 @@ class Daemon {
     // The browser resends Last-Event-ID on reconnect; `?since=` is for
     // everything that is not a browser. Both are exclusive, like /events.
     const header = request.headers['last-event-id'];
-    const resumeFrom = readNonNegativeInt(
-      typeof header === 'string' ? header : url.searchParams.get('since'),
-      0,
-      'Last-Event-ID',
+    const resumeFrom = this.#floorFor(
+      readNonNegativeInt(
+        typeof header === 'string' ? header : url.searchParams.get('since'),
+        0,
+        'Last-Event-ID',
+      ),
     );
 
     response.writeHead(200, {

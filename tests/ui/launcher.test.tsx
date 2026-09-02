@@ -301,3 +301,142 @@ describe('the model picker', () => {
   });
 });
 
+
+/**
+ * A planner and however many builders.
+ *
+ * The operator's question was "I don't see where the option to run with a
+ * planner and a number of agents?". Their daemon predated the shape, so the
+ * card was genuinely absent — but behind that sat a real gap: `SeatSpec.varies`
+ * never left the daemon, so even with the card there the hub would have laid
+ * out exactly three builders and offered no way to say otherwise.
+ */
+const PLANNER: ShapeSummary = {
+  name: 'planner-integrator',
+  summary: 'One planner who splits and merges; builders who build their own slice.',
+  seats: [
+    { role: 'leader', count: 1 },
+    { role: 'worker', count: 3, varies: true },
+  ],
+  phases: [
+    {
+      id: 'plan',
+      intent: 'Ask the operator, then split the work.',
+      writes: 'no-source',
+      // `by: 'log'` is the value the type used to say could not exist.
+      gates: [{ id: 'operator-questioned', by: 'log', quorum: 'any' }],
+    },
+  ],
+};
+
+describe('a planner and a number of builders', () => {
+  it('lays out the shape it is given, leader included', () => {
+    expect(seatsFor(PLANNER).map((seat) => seat.id)).toEqual(['leader', 'worker-1', 'worker-2', 'worker-3']);
+    // A single seat is unnumbered; three are numbered. Both in one shape.
+    expect(seatsFor(PLANNER).map((seat) => seat.role)).toEqual(['leader', 'worker', 'worker', 'worker']);
+  });
+
+  it('lays out as many builders as asked for', () => {
+    expect(seatsFor(PLANNER, [], 5).map((seat) => seat.id)).toEqual([
+      'leader',
+      'worker-1',
+      'worker-2',
+      'worker-3',
+      'worker-4',
+      'worker-5',
+    ]);
+    // One builder drops the number, like any other single seat.
+    expect(seatsFor(PLANNER, [], 1).map((seat) => seat.id)).toEqual(['leader', 'worker']);
+    // And the count only touches the seat that varies.
+    expect(seatsFor(TRIO, [], 5).map((seat) => seat.id)).toEqual(['peer-1', 'peer-2', 'peer-3']);
+  });
+
+  it('offers the stepper only where the shape says the count varies', () => {
+    const { rerender } = render(
+      createElement(Launcher, { shapes: [PLANNER, TRIO], launching: false, onLaunch: vi.fn() }),
+    );
+    fireEvent.click(screen.getByText('trio-contract'));
+    expect(screen.queryByTestId('seat-count')).not.toBeInTheDocument();
+
+    rerender(createElement(Launcher, { shapes: [PLANNER, TRIO], launching: false, onLaunch: vi.fn() }));
+    fireEvent.click(screen.getByText('planner-integrator'));
+    expect(screen.getByTestId('seat-count')).toBeInTheDocument();
+  });
+
+  it('restaffs when the number changes, and launches that many', async () => {
+    const onLaunch = vi.fn().mockResolvedValue({ ok: true });
+    render(createElement(Launcher, { shapes: [PLANNER], launching: false, onLaunch }));
+    fireEvent.click(screen.getByText('planner-integrator'));
+    fireEvent.click(screen.getByLabelText('5 workers'));
+    fireEvent.change(screen.getByLabelText('the job'), { target: { value: 'build a vault' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start the run' }));
+
+    await waitFor(() => expect(onLaunch).toHaveBeenCalled());
+    const seats = (onLaunch.mock.calls[0]![0] as { seats: string[] }).seats;
+    expect(seats.filter((seat) => seat.startsWith('worker-'))).toHaveLength(5);
+    expect(seats.filter((seat) => seat.startsWith('leader'))).toHaveLength(1);
+  });
+
+  it('adds the shape\'s own worker role, not a peer', async () => {
+    // `runInit` refuses "a roster is led or flat, not both", so a led roster
+    // that grew by a `peer` was a roster the button had made unlaunchable.
+    const onLaunch = vi.fn().mockResolvedValue({ ok: true });
+    render(createElement(Launcher, { shapes: [PLANNER], launching: false, onLaunch }));
+    fireEvent.click(screen.getByText('planner-integrator'));
+    fireEvent.click(screen.getByText('Add a seat'));
+    fireEvent.change(screen.getByLabelText('the job'), { target: { value: 'build a vault' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start the run' }));
+
+    await waitFor(() => expect(onLaunch).toHaveBeenCalled());
+    const seats = (onLaunch.mock.calls[0]![0] as { seats: string[] }).seats;
+    expect(seats.some((seat) => seat.includes(':peer:'))).toBe(false);
+    expect(seats.filter((seat) => seat.includes(':worker:'))).toHaveLength(4);
+  });
+});
+
+describe('the stepper against a daemon that already has seats', () => {
+  /**
+   * The case the first version of these tests missed entirely.
+   *
+   * `seatsFor` returns the live roster verbatim when there is one, ignoring the
+   * shape — deliberately, so a launch cannot name seats whose tokens do not
+   * exist. But that made the stepper inert exactly when it is most likely to be
+   * used: clicking 5 highlighted 5 and left two seats on screen. Found by
+   * building it and clicking it; every unit test here passed throughout,
+   * because they all passed an empty `running`.
+   */
+  const RUNNING = [
+    { id: 'planner', role: 'leader', harness: 'claude-code-live', model: null, effort: null,
+      workspace: '.', present: true, activity: null, remoteControl: null, mirrored: true },
+    { id: 'builder', role: 'worker', harness: 'claude-code-live', model: null, effort: null,
+      workspace: '.', present: true, activity: null, remoteControl: null, mirrored: true },
+  ];
+
+  it('still shows the live roster until the number is changed', () => {
+    render(
+      createElement(Launcher, {
+        shapes: [PLANNER], launching: false, onLaunch: vi.fn(), running: RUNNING,
+      }),
+    );
+    fireEvent.click(screen.getByText('planner-integrator'));
+    expect(screen.getByDisplayValue('planner')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('builder')).toBeInTheDocument();
+  });
+
+  it('re-lays the roster when the number changes, live seats or not', async () => {
+    const onLaunch = vi.fn().mockResolvedValue({ ok: true });
+    render(
+      createElement(Launcher, {
+        shapes: [PLANNER], launching: false, onLaunch, running: RUNNING,
+      }),
+    );
+    fireEvent.click(screen.getByText('planner-integrator'));
+    fireEvent.click(screen.getByLabelText('5 workers'));
+    fireEvent.change(screen.getByLabelText('the job'), { target: { value: 'build a vault' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start the run' }));
+
+    await waitFor(() => expect(onLaunch).toHaveBeenCalled());
+    const seats = (onLaunch.mock.calls[0]![0] as { seats: string[] }).seats;
+    expect(seats.filter((seat) => seat.includes(':worker:'))).toHaveLength(5);
+  });
+});

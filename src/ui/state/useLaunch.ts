@@ -4,7 +4,14 @@ import type { PostResult } from './humanAction.js';
 /** A gate as the launcher shows it: what the shape will hold the team to. */
 export interface ShapeGate {
   id: string;
-  by: 'workspace' | 'asserted';
+  /**
+   * `'log'` is not decoration: `operator-questioned` uses it, and this type
+   * said it could not exist. The value reaches CSS as `gate-chip is-${by}`, so
+   * the mismatch degraded to an unstyled chip rather than a crash — which is
+   * why it survived. A type that is a lie about what the server sends is worse
+   * than one that is merely incomplete.
+   */
+  by: 'workspace' | 'asserted' | 'log';
   quorum: 'any' | 'all';
 }
 
@@ -18,7 +25,16 @@ export interface ShapePhase {
 export interface ShapeSummary {
   name: string;
   summary: string;
-  seats: Array<{ role: string; count: number }>;
+  /**
+   * `varies` is the whole of "a planner and N agents".
+   *
+   * `planner-integrator` is the one shape that sets it, and the `/shapes`
+   * projection used to drop it — so the hub could never offer the choice and
+   * hardcoded whatever `count` said. The operator asked "where is the option to
+   * run with a planner and a number of agents?" and the answer was that the
+   * field never left the daemon.
+   */
+  seats: Array<{ role: string; count: number; varies?: boolean }>;
   phases: ShapePhase[];
 }
 

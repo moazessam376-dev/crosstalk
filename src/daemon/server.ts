@@ -864,7 +864,14 @@ class Daemon {
         shapes: [...SHAPES.values()].map((shape) => ({
           name: shape.name,
           summary: shape.summary,
-          seats: shape.seats.map((seat) => ({ role: seat.role, count: seat.count })),
+          // `varies` too: it is the difference between "three workers" and
+          // "as many workers as you want", and dropping it left the launcher
+          // unable to express the one shape that has a choice to offer.
+          seats: shape.seats.map((seat) => ({
+            role: seat.role,
+            count: seat.count,
+            ...(seat.varies === true ? { varies: true } : {}),
+          })),
           phases: shape.phases.map((phase) => ({
             id: phase.id,
             intent: phase.intent,

@@ -94,6 +94,15 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_LIMIT = 1000;
 /** Spec §6.2: return by ~50s regardless of the requested timeout, to stay inside harness tool timeouts. */
 const AWAIT_CAP_S = 50;
+
+/**
+ * How long a stopped seat gets to actually exit before we stop waiting on it.
+ *
+ * Bounded on purpose. A launch request that waits forever on a wedged pty is
+ * indistinguishable from a dead daemon, and the operator's next move would be
+ * to kill the thing they are trying to use. We say who is still up instead.
+ */
+const STOP_GRACE_MS = 5_000;
 /** Contract §6. Long enough to be cheap, short enough to beat an idle reaper. */
 const HEARTBEAT_MS = 15_000;
 
@@ -914,6 +923,11 @@ class Daemon {
             // their own terminal is real and working and cannot be mirrored,
             // and the hub must say so rather than draw a dead terminal.
             mirrored: this.#sessions.get(participant.id) !== undefined,
+            // Registered is not running. A seat whose process exited keeps its
+            // handle on purpose — the mirror shows the screen it died on — so
+            // `mirrored` stays true for a dead seat, and the launcher needs the
+            // other question answered: is there still something to stop?
+            live: this.#sessions.get(participant.id)?.running === true,
           })),
       });
       return;
@@ -1342,6 +1356,52 @@ class Daemon {
   }
 
   /**
+   * Stop the seats of the run that is ending, and say who would not go.
+   *
+   * **Kills the process and nothing else.** Not the worktree, not the branch,
+   * not the uncommitted diff sitting in it. A seat is stopped because the
+   * operator wants the board clear; throwing away work they have not pushed is
+   * a different operation with a different name, and `down --purge` is where it
+   * lives.
+   *
+   * The wait is bounded because a hung pty must not hold the request open: a
+   * launch that never answers is indistinguishable from a daemon that has died,
+   * and the operator's next move would be to kill it. Five seconds, then say
+   * plainly which seats are still up rather than pretending they went.
+   */
+  async #endRun(live: SessionHandle[]): Promise<void> {
+    for (const session of live) {
+      try {
+        session.stop();
+      } catch {
+        // A process that has already gone throws on kill. That is the outcome
+        // we wanted, so it is not news.
+      }
+    }
+    const stubborn: string[] = [];
+    await Promise.all(
+      live.map(async (session) => {
+        const went = await Promise.race([
+          session.exited.then(() => true),
+          new Promise<boolean>((settle) => {
+            const timer = setTimeout(() => settle(false), STOP_GRACE_MS);
+            timer.unref?.();
+          }),
+        ]);
+        if (!went) stubborn.push(session.id);
+      }),
+    );
+    if (stubborn.length > 0) {
+      await this.#log.append({
+        kind: 'message',
+        room: FLOOR,
+        from: HUMAN_ID,
+        body: `still running after ${STOP_GRACE_MS / 1000}s and left alone: ${stubborn.join(', ')}`,
+      });
+    }
+  }
+
+  /**
    * Begin a run: the boundary, and everything that has to forget across it.
    *
    * The read clamps alone would not be enough, and the gap is not cosmetic.
@@ -1355,7 +1415,25 @@ class Daemon {
    * So the boundary is a hard reset of the protocol state machine. Order is
    * load-bearing throughout; each step says why.
    */
-  async #beginRun(ctx: HandlerContext, job?: string): Promise<CrosstalkEvent[]> {
+  async #beginRun(ctx: HandlerContext, job?: string, end = false): Promise<CrosstalkEvent[]> {
+    // Seats from the last run that still have a process behind them.
+    //
+    // Refused rather than silently ended, because ending one is destructive in
+    // a way the operator has to mean: an agent mid-edit has uncommitted work,
+    // and the only warning they would ever get is this refusal naming who is
+    // still up. `end: true` is the hub's "End current run & start" button,
+    // which says the same names on its face before it is pressed.
+    const live = this.#sessions.live();
+    if (live.length > 0 && !end) {
+      const names = live.map((session) => session.id).join(', ');
+      throw new DaemonError(
+        'RUN_IN_PROGRESS',
+        `${names} ${live.length === 1 ? 'is' : 'are'} still running. ` +
+          'Send { "end": true } to stop them and start a new run.',
+      );
+    }
+    if (live.length > 0) await this.#endRun(live);
+
     // Below the boundary, closing out the run that is ending: a log replayed
     // later shows those seats leaving, not still present.
     const left = await this.#partAll();
@@ -1567,7 +1645,7 @@ class Daemon {
       throw new DaemonError('MALFORMED_BODY', '`job` must be a string');
     }
     const trimmed = typeof job === 'string' ? job.trim() : '';
-    return this.#beginRun(ctx, trimmed === '' ? undefined : trimmed);
+    return this.#beginRun(ctx, trimmed === '' ? undefined : trimmed, body['end'] === true);
   }
 
   /** Every run-shaped action is the operator's; seats do not end each other's runs. */
@@ -1627,7 +1705,7 @@ class Daemon {
     // One path for "a run begins", whether it was reached through the launcher
     // or through `POST /runs`. The comment above is the history of getting this
     // order wrong; `#beginRun` is where it now lives, once.
-    const posted = await this.#beginRun(ctx, job.trim());
+    const posted = await this.#beginRun(ctx, job.trim(), body['end'] === true);
 
     const requested = (seats ?? []) as string[];
     // A shape change is grounds to re-staff on its own. The roster can be
@@ -1923,8 +2001,23 @@ class Daemon {
     return { events };
   }
 
+  /**
+   * Who is genuinely parked on a long poll right now.
+   *
+   * A seat whose process has gone is dropped, even though its waiter has not
+   * timed out. `/await` parks for up to fifty seconds, so a seat that died
+   * one second in went on being reported `awaiting_turn` for the next
+   * forty-nine — the roster showed a working team where there was a corpse,
+   * which is precisely the "looks fine, is not" failure this project exists to
+   * stop. The waiter itself is left to expire on its own; nothing is listening
+   * to it, and unhooking a timer we did not arm here is how double-frees start.
+   */
   #pendingWaiters(): Set<ParticipantId> {
-    return new Set([...this.#waiters].map((waiter) => waiter.who));
+    return new Set(
+      [...this.#waiters]
+        .filter((waiter) => this.#sessions.get(waiter.who)?.running !== false)
+        .map((waiter) => waiter.who),
+    );
   }
 
   async #appendMessage(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {

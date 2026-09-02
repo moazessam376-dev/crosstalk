@@ -4,6 +4,7 @@ import { identityFor } from '../state/identity.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { HarnessMark } from '../marks/HarnessMark.js';
 import { harnessKind } from '../marks/kind.js';
+import { clockTime } from '../clock.js';
 
 /**
  * How long a body may be before the stream previews it instead of pouring it out.
@@ -142,7 +143,7 @@ export function MessageCard({
         createElement('strong', { className: 'message-author' }, displayName ?? from),
         role === undefined ? null : createElement('span', { className: 'message-role' }, role),
         model === undefined ? null : createElement('span', { className: 'message-model fact' }, model),
-        ts ? createElement('time', { className: 'message-time fact', dateTime: ts }, ts.slice(11, 16)) : null,
+        ts ? createElement('time', { className: 'message-time fact', dateTime: ts }, clockTime(ts)) : null,
         seq !== undefined ? createElement('span', { className: 'message-seq fact' }, `#${seq}`) : null,
         tag === undefined
           ? null

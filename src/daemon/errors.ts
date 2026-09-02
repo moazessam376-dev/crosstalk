@@ -33,6 +33,8 @@ export type DaemonErrorCode =
   | 'RUN_NOT_ARCHIVABLE'
   /** Delete without the run's own id typed back. The one irreversible act. */
   | 'RUN_NOT_CONFIRMED'
+  /** Starting a run while seats from the last one still have live processes. */
+  | 'RUN_IN_PROGRESS'
   | 'PAYLOAD_TOO_LARGE'
   /**
    * The transport was fine and the message was too long. Distinct from

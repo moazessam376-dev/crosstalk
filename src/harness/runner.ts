@@ -1,6 +1,7 @@
 import { execFile as execFileCallback, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import type { Inbox } from '../core/inbox.js';
+import { humanBytes } from '../core/attachments.js';
 
 export type ExecFile = typeof execFileCallback;
 
@@ -142,6 +143,12 @@ export function boardTurn(inbox: Inbox): string {
     lines.push(card.body ?? card.summary);
     if (card.truncated === true) lines.push('(cut — read the log for the rest)');
     if (card.ref !== undefined) lines.push(`ref: ${card.ref}`);
+    // A path, not bytes. The seat has its own Read tool; what it lacks is
+    // somewhere to point it. The type and size are there so it can decide
+    // whether opening a 40 MB video is what it wants to do next.
+    for (const attachment of card.attachments ?? []) {
+      lines.push(`attached: ${attachment.path} (${attachment.type}, ${humanBytes(attachment.bytes)})`);
+    }
   }
 
   if (inbox.mine.length > 0) {

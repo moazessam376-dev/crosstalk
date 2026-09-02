@@ -35,6 +35,8 @@ export type DaemonErrorCode =
   | 'RUN_NOT_CONFIRMED'
   /** Starting a run while seats from the last one still have live processes. */
   | 'RUN_IN_PROGRESS'
+  /** An attachment key that is well-formed and names bytes this repo does not have. */
+  | 'UNKNOWN_ATTACHMENT'
   | 'PAYLOAD_TOO_LARGE'
   /**
    * The transport was fine and the message was too long. Distinct from

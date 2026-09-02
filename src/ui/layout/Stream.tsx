@@ -18,6 +18,7 @@ import { TaskCard } from '../cards/TaskCard.js';
 import { Composer } from './Composer.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { DisputeView } from '../dispute/DisputeView.js';
+import type { MessageAttachment } from '../../contracts/events.js';
 import type { ChannelRoom, ParticipantView } from '../state/derive.js';
 import { assignColours } from '../state/identity.js';
 import type { PostResult } from '../state/humanAction.js';
@@ -31,13 +32,15 @@ export interface StreamProps {
   participants?: ParticipantView[];
   /** `policy.dispute.maxRounds`, passed through to the dispute header. */
   maxRounds?: number;
+  /** Where blobs live on this machine, from `/config.json`. Only a video chip uses it. */
+  blobRoot?: string;
   /** Who the daemon attributes this browser's posts to. */
   self?: string;
   /** What to call the operator's own seat. Absent until they have named it. */
   operator?: string;
   /** `live`, `connecting` or `reconnecting`. Fixture mode never renders a stream. */
   status?: string;
-  onSend?: (body: string) => Promise<PostResult>;
+  onSend?: (body: string, attachments?: readonly MessageAttachment[]) => Promise<PostResult>;
   onVote?: (decisionId: string, option: string, rationale: string) => Promise<PostResult>;
   onHumanAction?: (action: HumanAction) => void;
   /**
@@ -143,6 +146,7 @@ export function Stream({
   rooms,
   participants,
   maxRounds,
+  blobRoot,
   self,
   operator,
   status = 'live',
@@ -203,6 +207,9 @@ export function Stream({
         body: event.body,
         ...(event.head === undefined ? {} : { head: event.head }),
         ...(event.tag === undefined ? {} : { tag: event.tag }),
+        ...(event.attachments === undefined
+          ? {}
+          : { attachments: event.attachments, ...(blobRoot === undefined ? {} : { blobRoot }) }),
         ts: event.ts,
         seq: event.seq,
         role: author?.role,

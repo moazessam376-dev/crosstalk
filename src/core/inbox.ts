@@ -33,6 +33,20 @@ export interface InboxCard {
   tag?: MessageTag;
   /** The slice this is about. */
   task?: string;
+  /**
+   * Files sent with the message, as paths on this machine.
+   *
+   * **A path, never bytes.** The seat reading this has its own `Read` tool and
+   * an absolute path is all it needs to use it; base64 in the card would put a
+   * screenshot through the model's context for a picture it was not asked to
+   * look at, and Beacon-1 already measured what filling a context with things
+   * nobody asked for costs.
+   *
+   * Derived at delivery rather than stored, because the record carries the
+   * sha: a machine-local path written into an append-only log that the mirror
+   * pushes to GitHub is both useless to the next reader and a leak.
+   */
+  attachments?: { path: string; type: string; bytes: number }[];
 }
 
 export interface InboxTask {
@@ -85,14 +99,19 @@ export function displayRole(role: Role): InboxRole {
   return role === 'worker' ? 'builder' : role;
 }
 
+/** Where an attachment's bytes are, on the machine the reader is running on. */
+export type PathOf = (sha: string, type: string) => string;
+
 export function renderInbox(args: {
   who: ParticipantId;
   role: Role;
   unread: CrosstalkEvent[];
   state: HubState;
   phase?: PhaseStatus;
+  /** Absent for a caller with no filesystem — the hub, and every test fixture. */
+  pathOf?: PathOf;
 }): Inbox {
-  const unread = args.unread.map(cardFor);
+  const unread = args.unread.map((event) => cardFor(event, args.pathOf));
   const mine = [...args.state.tasks.values()]
     .filter((task) => task.assignee === args.who)
     .map((task) => ({ id: task.id, title: task.title, state: task.state }));
@@ -204,7 +223,7 @@ function nextLine(
   return undefined;
 }
 
-export function cardFor(event: CrosstalkEvent): InboxCard {
+export function cardFor(event: CrosstalkEvent, pathOf?: PathOf): InboxCard {
   const base = {
     seq: event.seq,
     from: event.from,
@@ -224,6 +243,15 @@ export function cardFor(event: CrosstalkEvent): InboxCard {
         ...(event.ref === undefined ? {} : { ref: event.ref }),
         ...(event.tag === undefined ? {} : { tag: event.tag }),
         ...(event.task === undefined ? {} : { task: event.task }),
+        ...(event.attachments === undefined || event.attachments.length === 0 || pathOf === undefined
+          ? {}
+          : {
+              attachments: event.attachments.map((attachment) => ({
+                path: pathOf(attachment.sha, attachment.type),
+                type: attachment.type,
+                bytes: attachment.bytes,
+              })),
+            }),
       };
     case 'task_created':
       return {

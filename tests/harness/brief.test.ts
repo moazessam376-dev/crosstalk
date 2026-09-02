@@ -1,6 +1,6 @@
 ﻿import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PolicyConfig, Participant } from '../../src/contracts/index.js';
 import type { HarnessDescriptor } from '../../src/harness/registry.js';
@@ -207,10 +207,23 @@ describe('brief generation', () => {
   });
 
   it('stays short once the workspace path is excluded', () => {
-    const repo = '/repo';
-    const workspace = '/repo/.crosstalk/worktrees/codex';
+    // The budget is on the brief's *prose*. The absolute workspace path is
+    // machine-specific and does not belong in it — which is why it is stripped
+    // before measuring.
+    //
+    // The strip used to be a POSIX literal, and `renderBrief` builds the path
+    // with `resolve`. On Windows that produces `C:\repo\.crosstalk\…`, the
+    // literal matched nothing, and the test silently measured prose *plus* a
+    // 32-character path — a stricter budget on one platform than the other,
+    // which is exactly the "green on one platform is not done" failure. It
+    // went red on the runner the first time the prose grew.
+    const repo = resolve('/repo');
+    const workspace = resolve(repo, '.crosstalk/worktrees/codex');
     const content = renderBrief(worker({ workspace: '.crosstalk/worktrees/codex' }), descriptor(), policy(), 'mcp', repo);
     const withoutPath = content.replaceAll(workspace, '');
+    // It really was in there: a strip that matches nothing would make the
+    // assertion below quietly stricter again.
+    expect(withoutPath.length).toBeLessThan(content.length);
     expect(withoutPath.length).toBeLessThanOrEqual(1200);
   });
 

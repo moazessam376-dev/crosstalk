@@ -13,6 +13,7 @@ import type { HubState } from '../state/derive.js';
 import type { SessionsView } from '../state/useLaunch.js';
 import type { MirrorView } from '../state/useMirror.js';
 import type { PostResult } from '../state/humanAction.js';
+import type { MessageAttachment } from '../../contracts/events.js';
 
 type HumanAction = { type: 'propose_test' | 'intervene_human' };
 
@@ -21,12 +22,14 @@ export interface LayoutProps {
   activeRoom?: string;
   /** `policy.dispute.maxRounds`, passed through to the dispute header. */
   maxRounds?: number;
+  /** Where blobs live on this machine, from `/config.json`. Only a video chip uses it. */
+  blobRoot?: string;
   /** Who the daemon attributes this browser's posts to. */
   self?: string;
   /** `live`, `connecting` or `reconnecting`. */
   status?: string;
   /** Absent when no daemon is attached — the composer is not rendered at all. */
-  onSend?: (body: string) => Promise<PostResult>;
+  onSend?: (body: string, attachments?: readonly MessageAttachment[]) => Promise<PostResult>;
   onVote?: (decisionId: string, option: string, rationale: string) => Promise<PostResult>;
   onSelectRoom?: (roomId: string) => void;
   onHumanAction?: (action: HumanAction) => void;
@@ -54,6 +57,7 @@ export function Layout({
   state,
   activeRoom,
   maxRounds,
+  blobRoot,
   self,
   status,
   onSend,
@@ -118,6 +122,7 @@ export function Layout({
       rooms: state.rooms,
       participants: state.participants,
       maxRounds,
+      blobRoot,
       self,
       status,
       operator,

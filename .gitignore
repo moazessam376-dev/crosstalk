@@ -15,6 +15,9 @@ coverage/
 # Archived runs. Kept, not scratch — but never committed: they are somebody's
 # transcript, and this repo lists .crosstalk/ subpaths rather than the directory.
 .crosstalk/runs/
+# The operator's screenshots. This file lists subpaths rather than the whole
+# directory, so without this `git add -A` commits them.
+.crosstalk/blobs/
 .crosstalk/inbox/
 .crosstalk/outbox/
 

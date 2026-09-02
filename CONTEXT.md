@@ -74,12 +74,13 @@ Two runtime dependencies. No native modules. Append-only log. Order by `seq`. Wi
 
 ## Protocol
 
-**Facade.** Agent-facing tools write today’s event kinds. **No new event kinds.** Two named contract amendments:
+**Facade.** Agent-facing tools write today’s event kinds. **No new event kinds.** Three named contract amendments:
 
 1. Add `spoc` and let `taskAcceptance` name that participant. Do not jam SPOC into `observer` or `@human`.
 2. A `message` may carry `tag`, `head` and `task`. All optional — the log is append-only and every message written before the amendment has none, so readers fall back to clipping `body`. `head` is the message and `body` is what the head cannot carry; a message sent with only a head stores `body: head`, because every reader that predates this treats `body` as the message.
+3. A `message` may carry `attachments` — `{sha, name, type, bytes}` each. Not `ref`: `ref` is single-valued, is *required* by `result`/`gate`/`plan`, and `assertedGates` scans it for `gate:<id>`, so an attachment there would displace a gate assertion or be read as one. **The record carries the hash, never the path** — a machine-local path in a log the mirror pushes to GitHub is useless to the next reader and leaks the author's directory layout; the absolute path is derived at delivery. Bytes live content-addressed at `.crosstalk/blobs/<sha[0:2]>/<sha><ext>`, with the extension from a whitelist keyed on the declared type, never from the client's filename.
 
-**Runs.** A run is a range of the log, and its boundary is a `message` from `@crosstalk` carrying `ref: run:<id>` — the `<scheme>:<id>` convention `gate:<id>` already uses, so no new kind and no third amendment. The boundary **resets the projection**, it does not merely clamp reads: `#state` spans the whole log, so a read window alone would leave `/board` listing the last run's tasks and — the correctness bug rather than the display one — `assertedGates` scanning every `#floor` message for `gate:<id>` with no notion of when, marking this run's gates met from yesterday's assertions.
+**Runs.** A run is a range of the log, and its boundary is a `message` from `@crosstalk` carrying `ref: run:<id>` — the `<scheme>:<id>` convention `gate:<id>` already uses, so no new kind and no fourth amendment. The boundary **resets the projection**, it does not merely clamp reads: `#state` spans the whole log, so a read window alone would leave `/board` listing the last run's tasks and — the correctness bug rather than the display one — `assertedGates` scanning every `#floor` message for `gate:<id>` with no notion of when, marking this run's gates met from yesterday's assertions.
 
 **A run boundary abandons open work, and this is intended.** Tasks, claims, decisions and phase progress do not cross it: a new run is a new team, and inheriting a dispute nobody present remembers raising is worse than starting clean. The events stay in the log, readable by opening the old run. Archiving moves a finished run's lines whole, in order, to `.crosstalk/runs/<id>.jsonl`; not a byte is edited or reordered, and `lastSeq` means "highest ever assigned", never "highest still in the file".
 

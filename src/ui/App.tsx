@@ -18,6 +18,7 @@ import { FLOOR } from '../contracts/room.js';
 import { Launcher } from './launch/Launcher.js';
 import { useHarnessCatalog, useLaunch, useSessions, useShapes } from './state/useLaunch.js';
 import { useOperatorName } from './state/operator.js';
+import type { MessageAttachment } from '../contracts/events.js';
 
 /**
  * Used when no daemon answers `/config.json` — `vite dev`, or a static build
@@ -224,10 +225,14 @@ export default function App({ connection: injected }: AppProps = {}) {
       state,
       activeRoom,
       maxRounds,
+      ...(connection.kind === 'live' && connection.config.blobRoot !== undefined
+        ? { blobRoot: connection.config.blobRoot }
+        : {}),
       status: statusLabel,
       self: connection.kind === 'live' ? connection.config.self : undefined,
       onSend: connection.kind === 'live' && activeRoom !== undefined
-        ? (body: string) => postMessage(body, activeRoom)
+        ? (body: string, attachments?: readonly MessageAttachment[]) =>
+            postMessage(body, activeRoom, fetch, attachments)
         : undefined,
       onVote: connection.kind === 'live'
         ? (decisionId: string, option: string, rationale: string) => postVote(decisionId, option, rationale)

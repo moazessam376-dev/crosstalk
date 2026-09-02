@@ -3,11 +3,13 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile, unlink, readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
+import { attachmentUrl, ATTACHMENT_SHA_PATTERN, MAX_ATTACHMENTS } from '../core/attachments.js';
+import { BlobStore, BlobTooLarge, filenameFrom } from './blobs.js';
 import { resolveHubDist, sendHubMissing, serveAsset } from './hub.js';
 import type { AddressInfo } from 'node:net';
 
 import type { CrosstalkConfig } from '../contracts/config.js';
-import type { CrosstalkEvent, DraftEvent, EventKind } from '../contracts/events.js';
+import type { CrosstalkEvent, DraftEvent, EventKind, MessageAttachment } from '../contracts/events.js';
 import { refuseOversizeBody } from '../contracts/events.js';
 import { ProtocolError } from '../contracts/errors.js';
 import type { ParticipantId } from '../contracts/participant.js';
@@ -488,6 +490,17 @@ class Daemon {
    */
   readonly #sessions = new SessionRegistry();
 
+  /**
+   * The bytes behind `message.attachments`.
+   *
+   * Beside the log rather than in it: an event record carries the sha256, and
+   * the bytes live content-addressed under `.crosstalk/blobs/`. A base64 blob
+   * in an append-only JSONL file would be read back in full on every start,
+   * pushed to GitHub by the mirror, and counted against every agent's context
+   * budget — for a screenshot none of them asked to see.
+   */
+  #blobs!: BlobStore;
+
   /** The mirror registry, so `startDaemon` can hand it to whoever spawns seats. */
   get sessions(): SessionRegistry {
     return this.#sessions;
@@ -537,6 +550,7 @@ class Daemon {
   }
 
   async init(): Promise<void> {
+    this.#blobs = new BlobStore(join(resolve(this.#repo), '.crosstalk'));
     const log = await this.#log.read();
     // The run boundary is recovered from the log rather than held in memory,
     // which is the whole reason it is an event: a daemon restarted mid-run has
@@ -715,6 +729,32 @@ class Daemon {
     const joined = await this.#ensureJoined(who);
     const ctx = this.#context(who);
 
+    /**
+     * The bytes of an attachment.
+     *
+     * **Below `#authenticate`, deliberately.** Attachments are log data, and
+     * contract §3 says log readers authenticate. Above it — where the hub's
+     * own bundle is served — every screenshot the operator ever pasted would
+     * be readable by anything that could reach the port.
+     *
+     * The key is validated as a sha and the path is rebuilt from it, so no
+     * client string reaches `join` at all. `BlobStore.serve` adds the
+     * disposition that keeps an attached SVG from being same-origin script.
+     */
+    const blobParams = matchPath(path, '/attachments/:key');
+    if (blobParams !== undefined && method === 'GET') {
+      const key = decodeURIComponent(blobParams[0]!);
+      const download = url.searchParams.get('download') === '1';
+      if (await this.#blobs.serve(response, key, download)) return;
+      send(response, 404, wire('daemon', 'UNKNOWN_ATTACHMENT', `no attachment ${key}`));
+      return;
+    }
+
+    if (path === '/attachments' && method === 'POST') {
+      await this.#uploadAttachment(request, response);
+      return;
+    }
+
     // Reads first: none of them append.
     if (path === '/config.json' && method === 'GET') {
       // The hub learns who it is from the cookie it was bootstrapped with,
@@ -729,6 +769,16 @@ class Daemon {
         streamUrl: '/stream',
         room: FLOOR,
         maxRounds: this.#config.policy.dispute.maxRounds,
+        // Where attachments are on disk, for the one place the hub shows a
+        // path rather than a link: a video chip. The operator asked for "the
+        // path, just like what happens in claude code", and a `/attachments/`
+        // URL is not that — it is a thing to click, not a thing to open in
+        // Finder or paste into a command.
+        //
+        // Machine-local, and that is fine *here* and not in the log: this is
+        // served to the operator's own browser on the same machine, whereas
+        // the log is pushed to GitHub by the mirror.
+        blobRoot: this.#blobs.root,
       });
       return;
     }
@@ -1632,6 +1682,46 @@ class Daemon {
         `${runId} has no archive to delete. Archive it first — a run still in the live log is not deletable.`,
       );
     }
+    // The run's screenshots go with it, unless something else still points at
+    // them — a blob is shared by every message that attached the same bytes.
+    await this.#collectBlobs();
+  }
+
+  /**
+   * Drop every blob nothing references any more.
+   *
+   * Mark and sweep across the live log *and every surviving archive*, because
+   * a screenshot pasted twice is one file: deleting the run that happens to
+   * hold the first reference must not break the card in the run that holds the
+   * second. The archives are read from disk rather than remembered, so a file
+   * the operator moved back by hand still counts as a reference.
+   */
+  async #collectBlobs(): Promise<void> {
+    const keep = new Set<string>();
+    const mark = (events: readonly CrosstalkEvent[]): void => {
+      for (const event of events) {
+        for (const attachment of (event as { attachments?: { sha: string }[] }).attachments ?? []) {
+          keep.add(attachment.sha);
+        }
+      }
+    };
+    mark(await this.#log.read());
+    for (const archived of await this.#archivedRuns()) {
+      try {
+        const raw = await readFile(this.#archivePath(archived.id), 'utf8');
+        mark(
+          raw
+            .split('\n')
+            .filter((line) => line.trim() !== '')
+            .map((line) => JSON.parse(line) as CrosstalkEvent),
+        );
+      } catch {
+        // An unreadable archive is a reason to keep more, not less: skipping it
+        // silently would let its blobs be collected out from under it.
+        return;
+      }
+    }
+    await this.#blobs.sweep(keep, Date.now());
   }
 
   /**
@@ -1646,6 +1736,48 @@ class Daemon {
     }
     const trimmed = typeof job === 'string' ? job.trim() : '';
     return this.#beginRun(ctx, trimmed === '' ? undefined : trimmed, body['end'] === true);
+  }
+
+  /**
+   * Take one file, streamed, and answer with the record that names it.
+   *
+   * The body is the raw file and the headers carry the rest — `content-type`
+   * for what it is, `x-crosstalk-filename` percent-encoded for what the author
+   * called it, which is the convention `x-crosstalk-cwd` already uses. No
+   * multipart parser: that is a dependency's worth of code in a project whose
+   * hard rule is two.
+   *
+   * The request stream is handed to the store rather than buffered, so a
+   * 180 MB video never exists in this process's heap, and the cap is enforced
+   * on the way past rather than read off `content-length` — which is a claim,
+   * and absent entirely under chunked encoding.
+   */
+  async #uploadAttachment(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const type = (request.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+    if (type === '' || type === 'application/octet-stream') {
+      send(
+        response,
+        400,
+        wire('daemon', 'MALFORMED_BODY', 'send the file as the raw body with its `content-type`'),
+      );
+      return;
+    }
+    const name = filenameFrom(request.headers['x-crosstalk-filename']);
+    try {
+      const stored = await this.#blobs.put(request, name, type);
+      send(response, 201, {
+        attachment: { sha: stored.sha, name: stored.name, type: stored.type, bytes: stored.bytes },
+        // Where the hub will fetch it from. Built here rather than in the hub
+        // so the key's spelling lives in one place.
+        url: attachmentUrl(stored.sha, stored.type),
+      });
+    } catch (error) {
+      if (error instanceof BlobTooLarge) {
+        send(response, 413, wire('daemon', 'PAYLOAD_TOO_LARGE', error.message));
+        return;
+      }
+      throw error;
+    }
   }
 
   /** Every run-shaped action is the operator's; seats do not end each other's runs. */
@@ -1785,7 +1917,14 @@ class Daemon {
     const peeked = await this.#awaitTurn(who, peek);
     const unread = 'events' in peeked ? peeked.events : [];
     const phase = await this.phase();
-    const inbox = renderInbox({ who, role, unread, state: this.#state, ...(phase === undefined ? {} : { phase }) });
+    const inbox = renderInbox({
+      who,
+      role,
+      unread,
+      state: this.#state,
+      pathOf: (sha, type) => this.#blobs.pathFor(sha, type),
+      ...(phase === undefined ? {} : { phase }),
+    });
     // A #floor job or an assigned task is already work. Waiting 50s after that
     // is how the Quorum builder spent eight polls idle while the job sat on the board.
     //
@@ -1808,7 +1947,14 @@ class Daemon {
     const blocked = await this.#awaitTurn(who, url);
     const later = 'events' in blocked ? blocked.events : [];
     const after = await this.phase();
-    return renderInbox({ who, role, unread: later, state: this.#state, ...(after === undefined ? {} : { phase: after }) });
+    return renderInbox({
+      who,
+      role,
+      unread: later,
+      state: this.#state,
+      pathOf: (sha, type) => this.#blobs.pathFor(sha, type),
+      ...(after === undefined ? {} : { phase: after }),
+    });
   }
 
   /**
@@ -2051,6 +2197,7 @@ class Daemon {
     if (task !== undefined && typeof task !== 'string') {
       throw new DaemonError('MALFORMED_BODY', 'message `task` must be a string');
     }
+    const attachments = readAttachments(body['attachments']);
 
     // No room and no `to` is the board, which is what a seat means by saying
     // something. Requiring `--room '#floor'` on every floor message made the
@@ -2117,6 +2264,7 @@ class Daemon {
         ...(isMessageTag(body['tag']) ? { tag: body['tag'] } : {}),
         ...(head === undefined ? {} : { head }),
         ...(task === undefined ? {} : { task }),
+        ...(attachments === undefined ? {} : { attachments }),
       }),
     ];
   }
@@ -2421,6 +2569,53 @@ function readCookie(header: string | undefined, name: string): string | undefine
     if (key === name) return rest.join('=');
   }
   return undefined;
+}
+
+/**
+ * Validate the `attachments` a client claims, and keep only what it proved.
+ *
+ * Every field is re-derived rather than trusted, because this record is what
+ * every later reader believes. The sha is the important one: it is a *path
+ * component*, so a record carrying `../../..` in it would be a traversal in
+ * every reader that ever resolves it. It is pattern-checked here, at the one
+ * point where the log gains one.
+ *
+ * The bytes are not re-hashed. They were hashed on the way in — the sha is
+ * where they were filed — so a record naming a sha that was never uploaded
+ * points at nothing and renders as a missing chip, which is the correct
+ * outcome for a reference to a file this repository does not have.
+ */
+function readAttachments(raw: unknown): MessageAttachment[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new DaemonError('MALFORMED_BODY', 'message `attachments` must be a list');
+  }
+  if (raw.length > MAX_ATTACHMENTS) {
+    throw new DaemonError('MALFORMED_BODY', `at most ${MAX_ATTACHMENTS} attachments on one message`);
+  }
+  const read = raw.map((entry) => {
+    const record = entry as Record<string, unknown>;
+    const sha = record['sha'];
+    if (typeof sha !== 'string' || !ATTACHMENT_SHA_PATTERN.test(sha)) {
+      throw new DaemonError('MALFORMED_BODY', 'each attachment needs a `sha` from POST /attachments');
+    }
+    const type = record['type'];
+    if (typeof type !== 'string' || type === '') {
+      throw new DaemonError('MALFORMED_BODY', 'each attachment needs a `type`');
+    }
+    const bytes = record['bytes'];
+    if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
+      throw new DaemonError('MALFORMED_BODY', 'each attachment needs a byte count');
+    }
+    const name = record['name'];
+    return {
+      sha,
+      type,
+      bytes,
+      name: typeof name === 'string' && name !== '' ? name.slice(0, 200) : 'attachment',
+    };
+  });
+  return read.length === 0 ? undefined : read;
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {

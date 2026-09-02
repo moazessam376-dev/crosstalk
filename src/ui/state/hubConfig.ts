@@ -23,6 +23,14 @@ export interface HubConfig {
    * each other and with the running config.
    */
   maxRounds?: number;
+  /**
+   * Where attachments live on this machine.
+   *
+   * Used for exactly one thing: showing a video's path on its chip, which is
+   * what the operator asked for and what a `/attachments/<sha>` link is not.
+   * Absent against a fixture, so the chip falls back to the link.
+   */
+  blobRoot?: string;
 }
 
 export type HubConnection =

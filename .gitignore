@@ -3,36 +3,18 @@ dist/
 coverage/
 *.tsbuildinfo
 
-# Agent scratch at the repo root. Worktrees and probes belong under .crosstalk/,
-# but a stray `git add -A` should never be able to commit them either way.
-/_*
+.crosstalk/
 
-# Crosstalk runtime state — the event log is per-project, never committed from here
-.crosstalk/daemon.json
-.crosstalk/state.json
-.crosstalk/tokens/
-.crosstalk/worktrees/
-# Archived runs. Kept, not scratch — but never committed: they are somebody's
-# transcript, and this repo lists .crosstalk/ subpaths rather than the directory.
-.crosstalk/runs/
-# The operator's screenshots. This file lists subpaths rather than the whole
-# directory, so without this `git add -A` commits them.
-.crosstalk/blobs/
-.crosstalk/inbox/
-.crosstalk/outbox/
-
-# Agent instruction files are committed; personal overrides are not.
+# Agent context stays local.
+CLAUDE.md
 CLAUDE.local.md
+AGENTS.md
 AGENTS.local.md
-.claude/settings.local.json
+.claude/
+.superpowers/
 
 .env
 .env.*
-!.env.example
 
 .DS_Store
 Thumbs.db
-
-# Bench run artifacts: each cell is its own checkout, and several are
-# embedded git repositories. They are evidence, not source.
-.crosstalk/bench/

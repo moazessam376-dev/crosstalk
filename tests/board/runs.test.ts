@@ -43,11 +43,14 @@ describe('runs', () => {
     expect(await readdir(join(stateDir(root), 'runs'))).toEqual([runs[0]!.id]);
   });
 
-  it('ensureRun starts a fresh run when current points at a deleted one', async () => {
+  it('ensureRun starts a fresh run at once when current points at a deleted one', async () => {
     const root = await tempRepo();
     const old = await newRun(root, 'old');
     await rm(old.dir, { recursive: true });
+    const started = Date.now();
     const fresh = await ensureRun(root);
+    // A stale pointer is not a racer mid-write; nothing is worth waiting for.
+    expect(Date.now() - started).toBeLessThan(300);
     expect(fresh.id).not.toBe(old.id);
     expect((await currentRun(root))?.id).toBe(fresh.id);
   });

@@ -68,29 +68,26 @@ export async function ensureRun(root: string): Promise<Run> {
   } catch (error) {
     if (errorCode(error) !== 'EEXIST') throw error;
   }
-  // Another process created the pointer. It may still be writing it.
+  // Another process created the pointer. It may still be writing it, so an
+  // empty or partial id is worth a short wait. A whole id whose folder is gone
+  // is not: a run's folder exists before its pointer does, so that run was deleted.
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    const winner = await currentRun(root);
-    if (winner !== undefined) {
+    const id = await readPointer(root);
+    if (id !== undefined && RUN_ID.test(id)) {
+      const winner = { id, dir: join(stateDir(root), 'runs', id) };
+      if (!existsSync(winner.dir)) break;
       await rm(run.dir, { recursive: true, force: true });
       return winner;
     }
     await new Promise((done) => setTimeout(done, 10));
   }
-  // The pointer names a run that no longer exists. Replace it.
   await writeAtomic(pointer(root), `${run.id}\n`);
   return run;
 }
 
 export async function currentRun(root: string): Promise<Run | undefined> {
-  let id: string;
-  try {
-    id = (await readFile(pointer(root), 'utf8')).trim();
-  } catch (error) {
-    if (errorCode(error) === 'ENOENT') return undefined;
-    throw error;
-  }
-  if (!RUN_ID.test(id)) return undefined;
+  const id = await readPointer(root);
+  if (id === undefined || !RUN_ID.test(id)) return undefined;
   const dir = join(stateDir(root), 'runs', id);
   return existsSync(dir) ? { id, dir } : undefined;
 }
@@ -113,6 +110,15 @@ export async function listRuns(root: string): Promise<string[]> {
 
 function pointer(root: string): string {
   return join(stateDir(root), 'current');
+}
+
+async function readPointer(root: string): Promise<string | undefined> {
+  try {
+    return (await readFile(pointer(root), 'utf8')).trim();
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return undefined;
+    throw error;
+  }
 }
 
 async function makeRun(root: string, label: string | undefined, now: Date): Promise<Run> {

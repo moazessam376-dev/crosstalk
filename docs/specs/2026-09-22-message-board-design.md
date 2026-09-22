@@ -104,9 +104,10 @@ no process to start, no port to discover and no token to hand out.
 
 ### Cursors
 
-`agents/<name>.json` holds `{joinedAt, offsets: {<sender>: <byte offset>}, notified: {<sender>: <byte offset>}, stats}`.
+`agents/<name>.json` holds `{name, joinedAt, offsets: {<sender>: <byte offset>}, stats}`.
 Only `<name>` writes its own cursor file, so it has one writer too. It is
-rewritten atomically (write temp, rename).
+rewritten atomically (write temp, rename). How far the hooks have announced
+lives in `agents/<name>.notified.json`, which only the hooks write.
 
 Delivery rules for `<name>`:
 
@@ -177,7 +178,7 @@ it exactly once:
 `ct setup claude` merges, never overwrites:
 
 - a `crosstalk` entry into `.mcp.json` running `ct mcp`;
-- three hooks into `.claude/settings.local.json`, each running `ct hook <event>`;
+- three hooks into `.claude/settings.local.json`, each running `ct hook`, which reads the event from its stdin;
 - `.crosstalk/` into `.git/info/exclude`, not the tracked `.gitignore`.
 
 Commands are written as absolute `node <crosstalk>/dist/cli/index.js …` paths, so nothing depends on `ct` being on PATH or on which checkout `npm link` last pointed at. It prints what it changed.
@@ -187,7 +188,7 @@ The hooks, all quiet (no output) when there is nothing to say:
 | Event | Does |
 |---|---|
 | `PostToolUse` on the MCP `join` tool | Records `hooks/<agent_id or session_id>` → name, so later hooks know who this is. |
-| `PostToolUse` on any other tool | If the agent has messages it has not been **notified** of, emits `additionalContext`: `crosstalk: 2 unread messages for builder-1. Call inbox.` Never the content. Advances `notified`, so each message is announced once. |
+| `PostToolUse` on any other tool | If the agent has messages it has not been **notified** of, emits `additionalContext`: `crosstalk: 2 unread messages for builder-1. Call inbox.` Never the content. Advances the notified offsets, so each message is announced once. |
 | `Stop` and `SubagentStop` | If the agent has unread direct messages and `stop_hook_active` is false, blocks with `crosstalk: 1 unread message for builder-1. Call inbox before finishing.` |
 
 A subagent is looked up by its `agent_id` only and never inherits its parent's mapping, so a subagent that never joined is unknown to the hooks, which then do nothing. The
@@ -217,7 +218,7 @@ Plain HTML and JavaScript, no framework and no build step.
 - Dependencies: `yaml` (no config file remains), and the dev dependencies for
   React, Vite, jsdom and Testing Library. `@modelcontextprotocol/sdk` stays as the
   only runtime dependency.
-- `README.md`, `AGENTS.md`, `docs/RUNNING.md`: rewritten. The hard rules about
+- `README.md`, `AGENTS.md`: rewritten; `docs/RUNNING.md` folds into the README. The hard rules about
   falsifiers, `seq` and frozen contracts go; the rules about no native modules,
   `execFile`, `node:path` and three-platform CI stay.
 
@@ -226,7 +227,7 @@ Target: about 1,200 lines of source, from about 13,000.
 ## Error handling
 
 - A corrupt line in a sender's file (a crash mid-write) is skipped and counted in
-  `who`; it never blocks reading the rest.
+  the next `inbox` answer; it never blocks reading the rest.
 - A cursor file that fails to parse is rebuilt from `joinedAt` with offsets at
   zero, and the next `inbox` says so.
 - `send` to a name that has not joined is allowed (it waits for them) but the

@@ -4,14 +4,8 @@ import type { Task } from '../../contracts/task.js';
 import { project } from '../../core/projection.js';
 import type { ChannelRoom, ParticipantStatus, ParticipantView } from '../state/derive.js';
 import { assignColours, identityFor } from '../state/identity.js';
-// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
-import { HarnessMark } from '../marks/HarnessMark.js';
-import { harnessKind } from '../marks/kind.js';
-import { pullRequestState } from '../state/pullRequest.js';
 import { HUMAN_ID } from '../../contracts/room.js';
 import type { MirrorView } from '../state/useMirror.js';
-// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
-import { ComposeForm } from './ComposeForm.js';
 
 export interface DockProps {
   events: CrosstalkEvent[];
@@ -22,19 +16,6 @@ export interface DockProps {
   self?: string;
   /** Absent without a daemon, which is when no control should render at all. */
   onOpenSideRoom?: (participantId: string) => void;
-  onCompose?: (job: string) => Promise<{ ok: boolean; reason?: string }>;
-  /**
-   * Open a seat's mirrored CLI.
-   *
-   * Absent when nothing can be mirrored — a fixture hub, or a daemon that
-   * started no sessions — and the row is then not a button. A control that
-   * cannot work is the defect CT-10 is about.
-   */
-  onOpenSession?: (participantId: string) => void;
-  /** Seats this daemon holds a terminal for, from `GET /sessions`. */
-  mirrored?: ReadonlySet<string>;
-  /** What to call the operator's own seat in the roster. */
-  operator?: string;
   /**
    * The GitHub mirror, from `GET /mirror` rather than from the log — it has no
    * write path into the log and this hub does not give it one.
@@ -82,9 +63,7 @@ function section(
   );
 }
 
-type Row = [string, string | ReturnType<typeof createElement>];
-
-function rows(pairs: Row[]) {
+function rows(pairs: [string, string][]) {
   return createElement(
     'dl',
     { className: 'dock-rows' },
@@ -115,19 +94,7 @@ function mirrorState(mirror: MirrorView): string {
   return mirror.enabled ? 'running' : 'not running';
 }
 
-export function Dock({
-  events,
-  participants,
-  rooms,
-  activeRoom,
-  self,
-  onOpenSideRoom,
-  onOpenSession,
-  onCompose,
-  mirror,
-  mirrored,
-  operator,
-}: DockProps) {
+export function Dock({ events, participants, rooms, activeRoom, self, onOpenSideRoom, mirror }: DockProps) {
   const room = rooms.find((candidate) => candidate.id === activeRoom);
   const scoped = activeRoom === undefined ? [] : events.filter((event) => event.room === activeRoom);
   const lastSeq = scoped.at(-1)?.seq;
@@ -144,9 +111,6 @@ export function Dock({
   return createElement(
     'aside',
     { className: 'hub-region hub-dock', 'aria-label': 'inspector', 'data-testid': 'hub-region' },
-    onCompose === undefined
-      ? null
-      : section('Compose', undefined, createElement(ComposeForm, { onStart: onCompose }), 'dock-compose'),
     section(
       'Room',
       room?.kind,
@@ -165,25 +129,10 @@ export function Dock({
           rows(
             [
               ['branch', task.branch],
-              // GitHub's semantics and GitHub's colours — purple for merged
-              // above all, because that is the one every reader already knows.
-              // Open was amber here, which reads as "needs attention" for what
-              // is the healthy state of a pull request.
-              ...(task.pr === undefined
-                ? []
-                : ([
-                    [
-                      'pr',
-                      createElement(
-                        'span',
-                        { className: 'pr-state', 'data-pr': pullRequestState(task.state), 'data-testid': 'dock-pr' },
-                        `#${task.pr} ${pullRequestState(task.state)}`,
-                      ),
-                    ],
-                  ] as Row[])),
+              ...(task.pr === undefined ? [] : ([['pr', `#${task.pr}`]] as [string, string][])),
               ['assignee', task.assignee],
-              ...(assignee === undefined ? [] : ([['worktree', assignee.workspace]] as Row[])),
-            ] as Row[],
+              ...(assignee === undefined ? [] : ([['worktree', assignee.workspace]] as [string, string][])),
+            ] as [string, string][],
           ),
           'dock-workspace',
         ),
@@ -219,8 +168,12 @@ export function Dock({
                 },
                 createElement(
                   'span',
-                  { className: 'member-avatar-wrap', 'data-harness': harnessKind(member.harness) },
-                  createElement(HarnessMark, { harness: member.harness, size: 15, fallback: identity.initials }),
+                  { className: 'member-avatar-wrap' },
+                  createElement(
+                    'span',
+                    { className: 'avatar avatar-md', style: { background: identity.colour }, 'aria-hidden': 'true' },
+                    identity.initials,
+                  ),
                   createElement('span', {
                     className: 'status-dot',
                     'data-status': member.status,
@@ -230,31 +183,13 @@ export function Dock({
                     'data-testid': `member-dot-${member.id}`,
                   }),
                 ),
-                // Clicking a seat opens its terminal. The board says what the
-                // team decided; a seat spends minutes reading files between
-                // messages, and during those minutes the board shows an agent
-                // that has said nothing and looks stalled.
                 createElement(
-                  onOpenSession !== undefined && mirrored?.has(member.id) === true ? 'button' : 'span',
-                  {
-                    className: 'member-body',
-                    ...(onOpenSession !== undefined && mirrored?.has(member.id) === true
-                      ? {
-                          type: 'button',
-                          'data-testid': `open-session-${member.id}`,
-                          title: `Open ${member.id}'s terminal`,
-                          onClick: () => onOpenSession(member.id),
-                        }
-                      : {}),
-                  },
+                  'span',
+                  { className: 'member-body' },
                   createElement(
                     'span',
                     { className: 'member-line' },
-                    createElement(
-                      'span',
-                      { className: 'member-id' },
-                      operator !== undefined && member.id === (self ?? HUMAN_ID) ? operator : member.id,
-                    ),
+                    createElement('span', { className: 'member-id' }, member.id),
                     createElement('span', { className: 'member-role' }, member.role),
                   ),
                   // `harness · model effort · tier`, with whatever the log omits
@@ -294,9 +229,24 @@ export function Dock({
       ),
       'dock-participants',
     ),
-    // The mirror moved to the environment rail, which is where the facts that
-    // frame a whole run belong. Two surfaces reporting one status is two
-    // vocabularies for one fact, and the operator has to learn which is
-    // authoritative — so the dock stopped saying it.
+    mirror === undefined
+      ? null
+      : section(
+          'Mirror',
+          mirrorState(mirror),
+          rows([
+            ...(mirror.lastDrain === undefined
+              ? []
+              : ([
+                  ['synced', String(mirror.lastDrain.completed)],
+                  // Shown even at zero. A mirror retrying every item forever
+                  // publishes nothing and looks, from a `synced` count alone,
+                  // exactly like one with nothing to do.
+                  ['retrying', String(mirror.lastDrain.retrying)],
+                ] as [string, string][])),
+            ...(mirror.lastError === undefined ? [] : ([['error', mirror.lastError]] as [string, string][])),
+          ]),
+          'dock-mirror',
+        ),
   );
 }

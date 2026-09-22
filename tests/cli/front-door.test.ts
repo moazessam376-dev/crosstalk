@@ -3,7 +3,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { realpath as realpathCallback } from 'node:fs';
 import { access, mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import { startDaemon, type DaemonHandle } from '../../src/daemon/server.js';
@@ -357,9 +357,8 @@ describe('the kickoff line an agent is actually given', () => {
     // CT-2: cursor-app got the shell line purely because its name does not
     // start with `claude-code`, in the same run where Crosstalk wrote it an MCP
     // registration and asserted the mcp tier was healthy.
-    expect(lineFor('binding')).toContain('inbox()');
+    expect(lineFor('binding')).toContain('await_turn()');
     expect(lineFor('binding')).not.toContain('--as binding');
-    expect(lineFor('binding')).not.toContain('await_turn()');
 
     // codex-cli registers at ~/.codex/config.toml, outside the repo, so it is
     // genuinely shell tier — the neighbouring case that must still get the CLI.
@@ -401,7 +400,7 @@ describe('the kickoff line an agent is actually given', () => {
     });
     const line = kickoff.find((entry) => entry.id === 'codex')!.line;
 
-    expect(line).toMatch(/node .*dist[\\/]cli[\\/]index\.js inbox /);
+    expect(line).toMatch(/node .*dist[\\/]cli[\\/]index\.js await /);
     expect(line).not.toMatch(/`ct await/);
   }, GIT_TEST_TIMEOUT);
 });
@@ -506,23 +505,13 @@ describe('the hub front door', () => {
       });
       // `maxRounds` added by Track A (A2) — Track C reads it for the round
       // counter. Kept as `toEqual` rather than relaxed to `toMatchObject`: a
-      // strict body assertion is why this test noticed that addition, and
-      // `blobRoot` after it. Both were caught here first; that is the point.
-      //
-      // `blobRoot` is machine-specific, so the value is checked for what the
-      // hub needs of it — an absolute path ending in the blob directory —
-      // rather than compared to a literal that would only be right on one
-      // machine.
-      const config = (await authed.json()) as Record<string, unknown> & { blobRoot: string };
-      expect(config.blobRoot.endsWith(join('.crosstalk', 'blobs'))).toBe(true);
-      expect(isAbsolute(config.blobRoot)).toBe(true);
-      expect({ ...config, blobRoot: undefined }).toEqual({
+      // strict body assertion is why this test noticed the addition at all.
+      expect(await authed.json()).toEqual({
         version: 1,
         self: '@human',
         streamUrl: '/stream',
         room: '#floor',
         maxRounds: 3,
-        blobRoot: undefined,
       });
 
       expect((await fetch(`${daemon.url}/config.json`)).status).toBe(401);

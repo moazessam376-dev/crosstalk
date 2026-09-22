@@ -46,26 +46,20 @@ describe('task gates', () => {
   // nothing recording that a rebase happened. The projection folds without
   // validating, so `rebase_notice` still moves the task — the table's job is
   // only to keep clients out of that leg.
-  it('permits submitted -> in_progress so SPOC can reject, given an acknowledgement', () => {
+  it('refuses a client-authored submitted -> in_progress', () => {
     const state = stateWithTask('T-1', 'submitted', {
       acknowledgement: { restatement: 'build the log', ambiguities: [] },
     });
-    expect(canTransition('submitted', 'in_progress')).toBe(true);
-    expect(() => validateTransition('T-1', 'in_progress', state)).not.toThrow();
+    expect(canTransition('submitted', 'in_progress')).toBe(false);
+    expect(() => validateTransition('T-1', 'in_progress', state)).toThrowError(
+      expect.objectContaining({ code: 'ILLEGAL_TRANSITION' }),
+    );
   });
 
-  it('permits submitted -> accepted when no claim is open', () => {
-    const state = stateWithTask('T-1', 'submitted', {
-      acknowledgement: { restatement: 'build the log', ambiguities: [] },
-      critique: { rounds: 1, findings: [], critic: 'codex subagent' },
-    });
-    expect(canTransition('submitted', 'accepted')).toBe(true);
-    expect(() => validateTransition('T-1', 'accepted', state)).not.toThrow();
-  });
-
-  // The neighbours. Widening the reject/accept legs must not open a skip
-  // backwards into a gate already passed, or a jump to merged.
-  it.each(['self_reviewed', 'merged'] as const)(
+  // The neighbours. Widening one entry must not widen the row: `submitted` is
+  // still a state you leave forwards through review, or backwards to redo the
+  // work — never sideways into a gate you have already passed.
+  it.each(['self_reviewed', 'accepted', 'merged'] as const)(
     'still refuses submitted -> %s',
     (target) => {
       const state = stateWithTask('T-1', 'submitted', {

@@ -23,12 +23,10 @@
     "build:ui": "vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.test.json",
-    "postinstall": "node scripts/fix-node-pty.mjs"
+    "typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "node-pty": "^1.1.0",
     "yaml": "^2.7.1"
   },
   "devDependencies": {

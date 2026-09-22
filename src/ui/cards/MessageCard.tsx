@@ -1,13 +1,6 @@
 import { createElement, useState } from 'react';
 import type { Role, Tier } from '../../contracts/participant.js';
 import { identityFor } from '../state/identity.js';
-// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
-import { HarnessMark } from '../marks/HarnessMark.js';
-import { harnessKind } from '../marks/kind.js';
-import { clockTime } from '../clock.js';
-import type { MessageAttachment } from '../../contracts/events.js';
-// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
-import { Attachments } from './Attachments.js';
 
 /**
  * How long a body may be before the stream previews it instead of pouring it out.
@@ -27,25 +20,17 @@ import { Attachments } from './Attachments.js';
  * findable by the browser's own search, and readable by a screen reader.
  * Truncating the string would take all three away.
  *
- * This is the fallback now. `head` is the field this comment asked for — "a
- * `summary` field the *author* writes" — and where there is one, the fold is
- * decided by whether a body exists rather than by counting characters. The
- * count was never right on its own: it gated on 320 *characters* while the CSS
- * clamped at four *lines*, so a 330-character body that already fitted got an
- * expander revealing nothing.
+ * The better fix is a `summary` field the *author* writes, on `say`,
+ * `raise_claim` and `submit_task`; the report recommends it and so does this
+ * comment. It changes a frozen contract and invalidates every existing log, so
+ * it wants a claim rather than a unilateral edit. When it lands, the card
+ * renders the summary here and this control keeps working.
  */
 const PREVIEW_LIMIT = 320;
 
 export interface MessageCardProps {
   from: string;
   body: string;
-  /**
-   * The author's own one line. Absent on every message written before the
-   * contract amendment, which is the whole log to date.
-   */
-  head?: string;
-  /** What the message is for — `status`, `result`, `ask`. */
-  tag?: string;
   ts?: string;
   seq?: number;
   /** From the roster, when the log has told us who this is. */
@@ -55,44 +40,18 @@ export interface MessageCardProps {
   tier?: Tier;
   /** Assigned from the roster so two participants never share one. */
   colour?: string;
-  /**
-   * What to call this author on screen.
-   *
-   * Only ever different for the operator's own seat: the log records it as
-   * `@human` and always will, and `@human` on screen reads as a placeholder
-   * nobody filled in. An agent's id is its id — the team addresses it by that
-   * on the floor, so renaming one here would make the screen disagree with the
-   * conversation on it.
-   */
-  displayName?: string;
   /** A handle this message addresses, when the roster knows it. */
   mention?: string;
-  /**
-   * Files sent with the message.
-   *
-   * Below the body, not above it: the text is what the author wrote and the
-   * picture is what they could not write. Reversing them makes every message
-   * with a screenshot open on the screenshot.
-   */
-  attachments?: readonly MessageAttachment[];
-  /** Where blobs live on this machine. Only a video chip uses it. */
-  blobRoot?: string;
   testId?: string;
 }
 
 /**
- * A message: the mark of the CLI that wrote it beside a header of
- * author · role · model · time · seq, with the body beneath.
- *
- * The avatar used to be two initials on a colour from a rotating palette. The
- * colour carried nothing — it said "a different participant", which the name
- * beside it already said — and in a run mixing Claude Code, Codex and Cursor
- * the fact worth reading at a glance is which tool is answering, because that
- * is what explains a seat's behaviour when it surprises you.
+ * A message as the design draws it: a 30px avatar beside a header of
+ * author · role · model · handle · time · seq, with the body beneath.
  *
  * Everything after the author is read from `participant_joined`. A participant
- * the log has not introduced gets the mark and the name and nothing else,
- * rather than a blank space where a model should be.
+ * the log has not introduced gets the avatar and handle and nothing else,
+ * rather than a blank chip where a model should be.
  */
 export function MessageCard({
   from,
@@ -105,25 +64,10 @@ export function MessageCard({
   tier,
   colour,
   mention,
-  displayName,
-  head,
-  tag,
-  attachments,
-  blobRoot,
   testId = 'message-card',
 }: MessageCardProps) {
   const [expanded, setExpanded] = useState(false);
-  // Two questions, and they are different. Is there a body at all — `body` holds
-  // the head itself when the author wrote nothing else, so equality means no.
-  // And is that body long enough to be worth folding, which is still a length
-  // question and still roughly the four lines the CSS clamps at.
-  //
-  // Answering only the first was the same mismatch from the other side: a
-  // two-line body under a head got an expander that revealed nothing, exactly
-  // as a 330-character body did when the JS gated on 320 characters and the CSS
-  // clamped on lines.
-  const hasBody = head === undefined || body !== head;
-  const long = hasBody && body.length > PREVIEW_LIMIT;
+  const long = body.length > PREVIEW_LIMIT;
   const collapsed = long && !expanded;
 
   const identity = identityFor(
@@ -146,8 +90,8 @@ export function MessageCard({
     },
     createElement(
       'span',
-      { className: 'message-mark', 'data-harness': harnessKind(harness) },
-      createElement(HarnessMark, { harness, size: 15, fallback: identity.initials }),
+      { className: 'avatar avatar-lg', style: { background: identity.colour }, 'aria-hidden': 'true' },
+      identity.initials,
     ),
     createElement(
       'div',
@@ -155,30 +99,18 @@ export function MessageCard({
       createElement(
         'header',
         { className: 'message-card-header' },
-        createElement('strong', { className: 'message-author' }, displayName ?? from),
+        createElement('strong', { className: 'message-author', style: { color: identity.colour } }, from),
         role === undefined ? null : createElement('span', { className: 'message-role' }, role),
         model === undefined ? null : createElement('span', { className: 'message-model fact' }, model),
-        ts ? createElement('time', { className: 'message-time fact', dateTime: ts }, clockTime(ts)) : null,
+        harness === undefined ? null : createElement('span', { className: 'message-handle fact' }, harness),
+        ts ? createElement('time', { className: 'message-time fact', dateTime: ts }, ts.slice(11, 16)) : null,
         seq !== undefined ? createElement('span', { className: 'message-seq fact' }, `#${seq}`) : null,
-        tag === undefined
-          ? null
-          : createElement('span', { className: 'message-tag fact', 'data-testid': 'message-tag', 'data-tag': tag }, tag),
       ),
-      head === undefined
-        ? null
-        : createElement('p', { className: 'message-head', 'data-testid': 'message-head' }, head),
-      // Hidden entirely when the head is the whole message, rather than
-      // repeated under itself.
-      hasBody
-        ? createElement(
-            'p',
-            {
-              className: collapsed ? 'message-body is-clamped' : 'message-body',
-              'data-testid': 'message-body',
-            },
-            body,
-          )
-        : null,
+      createElement(
+        'p',
+        { className: collapsed ? 'message-body is-clamped' : 'message-body' },
+        body,
+      ),
       long
         ? createElement(
             'button',
@@ -192,9 +124,6 @@ export function MessageCard({
             expanded ? 'Show less' : 'Show more',
           )
         : null,
-      attachments === undefined || attachments.length === 0
-        ? null
-        : createElement(Attachments, { attachments, ...(blobRoot === undefined ? {} : { blobRoot }) }),
       mention === undefined
         ? null
         : createElement('span', { className: 'message-mention', 'data-testid': 'message-mention' }, mention),

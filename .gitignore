@@ -12,12 +12,6 @@ coverage/
 .crosstalk/state.json
 .crosstalk/tokens/
 .crosstalk/worktrees/
-# Archived runs. Kept, not scratch — but never committed: they are somebody's
-# transcript, and this repo lists .crosstalk/ subpaths rather than the directory.
-.crosstalk/runs/
-# The operator's screenshots. This file lists subpaths rather than the whole
-# directory, so without this `git add -A` commits them.
-.crosstalk/blobs/
 .crosstalk/inbox/
 .crosstalk/outbox/
 
@@ -32,7 +26,3 @@ AGENTS.local.md
 
 .DS_Store
 Thumbs.db
-
-# Bench run artifacts: each cell is its own checkout, and several are
-# embedded git repositories. They are evidence, not source.
-.crosstalk/bench/

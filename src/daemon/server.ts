@@ -1,38 +1,24 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { mkdir, writeFile, unlink, readFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, unlink, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import { attachmentUrl, ATTACHMENT_SHA_PATTERN, MAX_ATTACHMENTS } from '../core/attachments.js';
-import { BlobStore, BlobTooLarge, filenameFrom } from './blobs.js';
 import { resolveHubDist, sendHubMissing, serveAsset } from './hub.js';
 import type { AddressInfo } from 'node:net';
 
 import type { CrosstalkConfig } from '../contracts/config.js';
-import type { CrosstalkEvent, DraftEvent, EventKind, MessageAttachment } from '../contracts/events.js';
-import { refuseOversizeBody } from '../contracts/events.js';
+import type { CrosstalkEvent, DraftEvent, EventKind } from '../contracts/events.js';
 import { ProtocolError } from '../contracts/errors.js';
 import type { ParticipantId } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { EventLog } from '../core/log.js';
-import { renderInbox, type Inbox } from '../core/inbox.js';
-import { phaseStatus, type PhaseStatus } from '../core/phase.js';
-import { SHAPES, shapeNamed } from '../core/shape.js';
-import { workspaceGates } from '../workspace/gates.js';
-import { seatBranches } from '../workspace/git.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
 import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js';
 import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
 import { workspaceWarning } from './workspace.js';
 import { Presence } from './presence.js';
-import { SessionRegistry, type SessionHandle } from '../harness/sessions.js';
-import { discoverModels } from '../harness/models.js';
-import { configureGithub } from '../cli/github.js';
 import { currentRungOf } from '../core/decisions.js';
-import { dmId, normaliseRoom } from '../core/rooms.js';
-import { RUN_ID_PATTERN, isRunStart, newRunId, runIdOf, runMarker, type RunSummary } from '../core/runs.js';
-import { refuseMessage, type MessageDraft } from '../core/says.js';
-import { isMessageTag } from '../contracts/say.js';
+import { normaliseRoom } from '../core/rooms.js';
 
 import {
   DAEMON_STATUS,
@@ -48,7 +34,6 @@ import {
   acknowledgeTask,
   addEvidence,
   addressesParticipant,
-  assignTask,
   board,
   castVote,
   proposeTest,
@@ -67,8 +52,6 @@ import { loadConfig } from './config.js';
 import { acquireLock, recordLockUrl, releaseLock } from './lock.js';
 import { isBlockedPort, NoUsablePortError, pickUsablePort } from './ports.js';
 import { DaemonError } from './errors.js';
-import { probeCliHarnesses } from '../harness/path.js';
-import { loadRegistry } from '../harness/registry.js';
 
 /**
  * The default interface. Never `localhost`: it resolves to `::1` first on
@@ -96,43 +79,8 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_LIMIT = 1000;
 /** Spec §6.2: return by ~50s regardless of the requested timeout, to stay inside harness tool timeouts. */
 const AWAIT_CAP_S = 50;
-
-/**
- * How long a stopped seat gets to actually exit before we stop waiting on it.
- *
- * Bounded on purpose. A launch request that waits forever on a wedged pty is
- * indistinguishable from a dead daemon, and the operator's next move would be
- * to kill the thing they are trying to use. We say who is still up instead.
- */
-const STOP_GRACE_MS = 5_000;
 /** Contract §6. Long enough to be cheap, short enough to beat an idle reaper. */
 const HEARTBEAT_MS = 15_000;
-
-/**
- * The most scrolled-off lines one request will return.
- *
- * A whole 5,000-line buffer is about half a megabyte of JSON, and a reader
- * scrolling up wants the screenful it is about to show, not the session. The
- * page is generous enough that a fast flick does not stutter and small enough
- * that no single response is worth streaming.
- */
-const SCROLLBACK_PAGE = 500;
-
-/**
- * The shortest gap between two screen frames on the wire.
- *
- * A TUI repaints far faster than anyone can read, and a stream with no floor
- * would put every intermediate frame of a spinner on the socket. At 40ms the
- * mirror is quicker than the eye and the traffic is bounded: measured against a
- * repainting full-screen app, 3.3 KB/sec for the one seat whose panel is open.
- *
- * This is the number the old design was afraid of, and it was right to be — it
- * rejected streaming *pty bytes*, which is tens of kilobytes a second of escape
- * sequences. Streaming the reconstruction instead is an order of magnitude
- * cheaper, and it is the difference between a keystroke landing in 3ms and in
- * the 1,009ms that was measured through the poll.
- */
-const SCREEN_FRAME_MS = 40;
 
 export interface DaemonHandle {
   url: string;
@@ -140,22 +88,6 @@ export interface DaemonHandle {
   host: string;
   /** One per participant — spec §6.1. A single shared token makes `from` self-asserted. */
   tokens: ReadonlyMap<ParticipantId, string>;
-  /**
-   * The CLI sessions this daemon is mirroring.
-   *
-   * Exposed so a test can put a real process behind `/sessions/:id/screen`
-   * without launching a team, and so an embedder that spawns seats its own way
-   * can register them. `/launch` registers into this same one.
-   */
-  sessions: SessionRegistry;
-  /**
-   * Re-read the roster and its tokens after something has rewritten them.
-   *
-   * `/launch` calls this itself; it is on the handle so an embedder that
-   * staffs a team its own way can too, and so a test can prove a seat added
-   * after startup can actually authenticate.
-   */
-  reload(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -281,7 +213,7 @@ function buildHandle(parts: {
   process.on('SIGTERM', onSignal);
   daemon.onShutdownRequest = close;
 
-  return { url, host, tokens, sessions: daemon.sessions, reload: () => daemon.reload(), close };
+  return { url, host, tokens, close };
 }
 
 function bindOnce(server: Server, host: string, port: number): Promise<number> {
@@ -413,17 +345,8 @@ interface Waiter {
 class Daemon {
   onShutdownRequest: (() => Promise<void>) | undefined;
 
-  /**
-   * Not `readonly`: the hub can staff a team after the daemon is up.
-   *
-   * A roster used to be fixed at startup, which made the launcher's picker
-   * decorative — you could choose seats in the browser and the only thing that
-   * could happen was a refusal, because tokens are minted from this. `reload`
-   * replaces both together, so a roster written by `/launch` is a roster this
-   * daemon can actually authenticate.
-   */
-  #config: CrosstalkConfig;
-  #byToken: Map<string, ParticipantId>;
+  readonly #config: CrosstalkConfig;
+  readonly #byToken: Map<string, ParticipantId>;
   readonly #log: EventLog;
   readonly #hubDist: string;
   #state: HubState;
@@ -432,40 +355,7 @@ class Daemon {
   readonly #waiters = new Set<Waiter>();
   readonly #subscribers = new Set<Subscriber>();
   readonly #delivered = new Map<ParticipantId, number>();
-
-  /**
-   * Where a seat starts reading when nobody has told it anything yet.
-   *
-   * Not zero. `#delivered` lives in memory and starts empty, so a seat's first
-   * poll used to be answered with *the entire log* — every message from every
-   * previous run in that repository, handed over as "new since your last turn"
-   * and typed into its composer as one turn. The board is append-only and kept
-   * across runs by design (`down` says so), so this got worse every restart:
-   * thirty-eight events on the fourth launch of the night, none of them from a
-   * conversation that seat was in.
-   *
-   * A seat cannot have missed what was said before it existed. The floor of a
-   * fresh run is the head of the log, and `/launch` moves it there again for
-   * everyone, because a launch is a new run and nobody in it is behind.
-   */
-  #floorSeq = 0;
-  /**
-   * Where the current run starts. Every reader clamps to it.
-   *
-   * Distinct from `#floorSeq`, which is a *delivery* mark — how far a seat has
-   * been told things — and is per daemon lifetime. This is the run itself, it
-   * is recovered from the log at startup, and it binds the hub and the CLI as
-   * well as the seats. The operator asked for both halves in one sentence:
-   * archiving a run means the agents stop reading it too.
-   *
-   * Invariant: `#floorSeq >= #runStartSeq`. A seat cannot be owed something
-   * from before the run it is in.
-   */
-  #runStartSeq = 0;
-  #runId: string | undefined;
   #writeTail: Promise<unknown> = Promise.resolve();
-  /** Serializes whole write handlers, not just appends — see the call site. */
-  #handlerTail: Promise<unknown> = Promise.resolve();
   /**
    * Rung timers. Driven by appended events, so every path that enters a rung
    * arms one without each caller having to remember.
@@ -480,31 +370,6 @@ class Daemon {
   /** Keyed by participant and reported cwd. Empty string means "checked, nothing wrong". */
   readonly #workspaceWarnings = new Map<string, string>();
   readonly #presence = new Presence();
-  /**
-   * The CLI sessions this daemon started, so the hub can mirror them.
-   *
-   * Only seats launched from here appear: a seat someone started in their own
-   * terminal has no pipe into this process, and reporting it as mirrorable
-   * would be the "control that cannot work" defect all over again. `/sessions`
-   * says which is which.
-   */
-  readonly #sessions = new SessionRegistry();
-
-  /**
-   * The bytes behind `message.attachments`.
-   *
-   * Beside the log rather than in it: an event record carries the sha256, and
-   * the bytes live content-addressed under `.crosstalk/blobs/`. A base64 blob
-   * in an append-only JSONL file would be read back in full on every start,
-   * pushed to GitHub by the mirror, and counted against every agent's context
-   * budget — for a screenshot none of them asked to see.
-   */
-  #blobs!: BlobStore;
-
-  /** The mirror registry, so `startDaemon` can hand it to whoever spawns seats. */
-  get sessions(): SessionRegistry {
-    return this.#sessions;
-  }
 
   /** Absolute path to the clone. `config.project.repo` is relative to the config file. */
   readonly #repo: string;
@@ -529,44 +394,13 @@ class Daemon {
     this.#state = project([]);
   }
 
-  /**
-   * Re-read the roster and its tokens from disk.
-   *
-   * Called after `/launch` writes a new one. Deliberately narrow: the log, the
-   * projection, presence and every open subscriber are untouched, because none
-   * of them depend on who is seated — the projection is derived from events and
-   * presence is keyed by id. What changes is who may authenticate and who the
-   * roster reports, which is exactly what staffing a team changes.
-   *
-   * Token minting is additive (`runInit` keeps any file that already exists),
-   * so a seat that was already here keeps the token it has been using and its
-   * open connections stay valid.
-   */
-  async reload(): Promise<void> {
-    const config = await loadConfig(this.#repo);
-    const tokens = await loadOrMintTokens(config, join(resolve(this.#repo), '.crosstalk'));
-    this.#config = config;
-    this.#byToken = new Map([...tokens].map(([id, token]) => [token, id]));
-  }
-
   async init(): Promise<void> {
-    this.#blobs = new BlobStore(join(resolve(this.#repo), '.crosstalk'));
     const log = await this.#log.read();
-    // The run boundary is recovered from the log rather than held in memory,
-    // which is the whole reason it is an event: a daemon restarted mid-run has
-    // to land back in that run and not in the sum of every run before it.
-    const marker = [...log].reverse().find((event) => isRunStart(event));
-    this.#runStartSeq = marker?.seq ?? 0;
-    this.#runId = marker === undefined ? undefined : runIdOf(marker);
-    const current = marker === undefined ? log : log.filter((event) => event.seq >= marker.seq);
-    this.#state = project(current);
-    // Everything already on the board happened before this daemon existed, so
-    // it is history, not a backlog. See `#floorSeq`.
-    this.#floorSeq = this.#log.lastSeq;
+    this.#state = project(log);
     // A daemon restarted mid-rung picks the clock back up from the last
     // `rung_entered`; one restarted past the deadline advances immediately
     // rather than losing the rung.
-    this.#ladderTimers.rearm(current, this.#state, this.#config, Date.now());
+    this.#ladderTimers.rearm(log, this.#state, this.#config, Date.now());
 
     // A merge that landed while the daemon was down is the common case and
     // nothing else will notice it.
@@ -729,32 +563,6 @@ class Daemon {
     const joined = await this.#ensureJoined(who);
     const ctx = this.#context(who);
 
-    /**
-     * The bytes of an attachment.
-     *
-     * **Below `#authenticate`, deliberately.** Attachments are log data, and
-     * contract §3 says log readers authenticate. Above it — where the hub's
-     * own bundle is served — every screenshot the operator ever pasted would
-     * be readable by anything that could reach the port.
-     *
-     * The key is validated as a sha and the path is rebuilt from it, so no
-     * client string reaches `join` at all. `BlobStore.serve` adds the
-     * disposition that keeps an attached SVG from being same-origin script.
-     */
-    const blobParams = matchPath(path, '/attachments/:key');
-    if (blobParams !== undefined && method === 'GET') {
-      const key = decodeURIComponent(blobParams[0]!);
-      const download = url.searchParams.get('download') === '1';
-      if (await this.#blobs.serve(response, key, download)) return;
-      send(response, 404, wire('daemon', 'UNKNOWN_ATTACHMENT', `no attachment ${key}`));
-      return;
-    }
-
-    if (path === '/attachments' && method === 'POST') {
-      await this.#uploadAttachment(request, response);
-      return;
-    }
-
     // Reads first: none of them append.
     if (path === '/config.json' && method === 'GET') {
       // The hub learns who it is from the cookie it was bootstrapped with,
@@ -769,16 +577,6 @@ class Daemon {
         streamUrl: '/stream',
         room: FLOOR,
         maxRounds: this.#config.policy.dispute.maxRounds,
-        // Where attachments are on disk, for the one place the hub shows a
-        // path rather than a link: a video chip. The operator asked for "the
-        // path, just like what happens in claude code", and a `/attachments/`
-        // URL is not that — it is a thing to click, not a thing to open in
-        // Finder or paste into a command.
-        //
-        // Machine-local, and that is fine *here* and not in the log: this is
-        // served to the operator's own browser on the same machine, whereas
-        // the log is pushed to GitHub by the mirror.
-        blobRoot: this.#blobs.root,
       });
       return;
     }
@@ -786,57 +584,7 @@ class Daemon {
       // Called, not read: `up` starts the daemon before the mirror, so a value
       // captured at construction reports `enabled: false` for the life of the
       // process — indistinguishable from a mirror that failed to start.
-      //
-      // `configured` comes from the config rather than from that callback,
-      // because the two answer different questions. Whether a `mirror:` block
-      // exists is a fact about the file, which this daemon reloads; whether the
-      // mirror is *running* is a fact about a process started before the block
-      // could have been written from the hub. Reading both from the runtime
-      // callback meant configuring the mirror here left the rail still saying
-      // "no mirror configured" until a restart.
-      const runtime = this.#mirrorStatus();
-      send(response, 200, {
-        ...runtime,
-        configured: runtime.configured || this.#config.mirror?.github !== undefined,
-      });
-      return;
-    }
-    if (path === '/mirror' && method === 'POST') {
-      // The one config write the hub can make, and the reason nobody ever
-      // configured the mirror: it was a YAML block with no documented shape and
-      // no route, so `crosstalk github <url>` from a terminal was the only door
-      // and the hub could not offer the field at all.
-      if (who !== HUMAN_ID) {
-        send(response, 403, wire('daemon', 'ROLE_NOT_PERMITTED', 'configuring the mirror is the human seat'));
-        return;
-      }
-      const payload = (await readJsonBody(request)) as { url?: unknown; login?: unknown };
-      if (typeof payload.url !== 'string' || payload.url.trim() === '') {
-        send(response, 400, wire('daemon', 'MALFORMED_BODY', 'send `url` — a GitHub repository to mirror to'));
-        return;
-      }
-      try {
-        const configured = await configureGithub({
-          repo: this.#repo,
-          url: payload.url,
-          ...(typeof payload.login === 'string' && payload.login.trim() !== ''
-            ? { login: payload.login.trim() }
-            : {}),
-        });
-        // Re-read, so `GET /mirror` stops saying unconfigured without a restart.
-        await this.reload();
-        send(response, 200, {
-          repo: `${configured.repo.owner}/${configured.repo.repo}`,
-          remote: configured.remote,
-          humanLogin: configured.humanLogin,
-        });
-      } catch (error) {
-        send(
-          response,
-          400,
-          wire('daemon', 'MALFORMED_BODY', error instanceof Error ? error.message : 'could not configure the mirror'),
-        );
-      }
+      send(response, 200, this.#mirrorStatus());
       return;
     }
     if (path === '/events' && method === 'GET') {
@@ -851,212 +599,10 @@ class Daemon {
       send(response, 200, await this.#awaitTurn(who, url));
       return;
     }
-    if (path === '/inbox' && method === 'GET') {
-      send(response, 200, await this.#inboxTurn(who, url));
-      return;
-    }
-    if (path === '/harnesses' && method === 'GET') {
-      // Availability *and* what each harness can be put on. The launcher used
-      // to carry its own hard-coded copy of both, so a Codex seat was offered
-      // Claude models and a model nobody had added to a React array could not
-      // be chosen at all.
-      const registry = await loadRegistry();
-      const spawnable = [...registry.values()].filter((descriptor) => descriptor.spawn !== undefined);
-      // Asked, not assumed. A hand-written list goes stale in the one direction
-      // that matters: the operator's Codex offers luna, terra and sol, and the
-      // registry offered `gpt-5.3-codex`, which does not exist for them. Codex
-      // answers `model/list` over its app server; Claude Code names its aliases
-      // in its own `--help`. Whatever cannot be discovered falls back to the
-      // registry, marked as such, and every field stays free text either way.
-      const catalog = await Promise.all(
-        spawnable.map(async (descriptor) => {
-          const discovered = await discoverModels(descriptor.key, descriptor);
-          return {
-            id: descriptor.key,
-            label: descriptor.label ?? descriptor.key,
-            models: discovered.models.map((model) => model.id),
-            catalogue: discovered.models,
-            modelSource: discovered.source,
-            // Whether a seat on this harness can be watched in the hub. The
-            // launcher was reading a `-live` suffix, which is a naming
-            // convention rather than a contract.
-            watchable: descriptor.turnFormat === 'interactive',
-          };
-        }),
-      );
-      send(response, 200, { harnesses: await probeCliHarnesses(), catalog });
-      return;
-    }
-    if (path === '/phase' && method === 'GET') {
-      const phase = await this.phase();
-      send(response, 200, phase ?? { shape: null });
-      return;
-    }
-
-    if (path === '/runs' && method === 'GET') {
-      this.#requireOperator(ctx, 'GET /runs');
-      send(response, 200, { runs: await this.#listRuns() });
-      return;
-    }
-
-    const runEvents = /^\/runs\/([^/]+)\/events$/.exec(path);
-    if (runEvents !== null && method === 'GET') {
-      this.#requireOperator(ctx, 'GET /runs/:id/events');
-      send(response, 200, { events: await this.#eventsOfRun(decodeURIComponent(runEvents[1]!)) });
-      return;
-    }
-
-    const archiveRun = /^\/runs\/([^/]+)\/archive$/.exec(path);
-    if (archiveRun !== null && method === 'POST') {
-      this.#requireOperator(ctx, 'POST /runs/:id/archive');
-      await this.#enqueueWrite(() => this.#archiveRun(decodeURIComponent(archiveRun[1]!)));
-      send(response, 200, { runs: await this.#listRuns() });
-      return;
-    }
-
-    const oneRun = /^\/runs\/([^/]+)$/.exec(path);
-    if (oneRun !== null && method === 'DELETE') {
-      this.#requireOperator(ctx, 'DELETE /runs/:id');
-      const body = await readJsonBody(request);
-      await this.#enqueueWrite(() => this.#deleteRun(decodeURIComponent(oneRun[1]!), body['confirm']));
-      send(response, 200, { runs: await this.#listRuns() });
-      return;
-    }
-
-    if (path === '/shapes' && method === 'GET') {
-      // The launcher's picker. Seats and phases come out with it so the hub can
-      // show what a shape will actually do before anyone commits tokens to it.
-      send(response, 200, {
-        shapes: [...SHAPES.values()].map((shape) => ({
-          name: shape.name,
-          summary: shape.summary,
-          // `varies` too: it is the difference between "three workers" and
-          // "as many workers as you want", and dropping it left the launcher
-          // unable to express the one shape that has a choice to offer.
-          seats: shape.seats.map((seat) => ({
-            role: seat.role,
-            count: seat.count,
-            ...(seat.varies === true ? { varies: true } : {}),
-          })),
-          phases: shape.phases.map((phase) => ({
-            id: phase.id,
-            intent: phase.intent,
-            writes: phase.writes,
-            gates: phase.exit.map((gate) => ({ id: gate.id, by: gate.by, quorum: gate.quorum ?? 'any' })),
-          })),
-        })),
-      });
-      return;
-    }
-
-    if (path === '/sessions' && method === 'GET') {
-      // What each CLI is doing *now* — the hub's mirror. Presence comes from
-      // the seat's own tool hooks, so it reports what the seat is doing rather
-      // than what it last said, which is the difference between a live view and
-      // a transcript.
-      const now = Date.now();
-      const phase = await this.phase();
-      const registry = await loadRegistry();
-      send(response, 200, {
-        phase: phase ?? null,
-        seats: this.#config.participants
-          .filter((participant) => participant.role !== 'human')
-          .map((participant) => ({
-            id: participant.id,
-            role: participant.role,
-            harness: participant.harness,
-            model: participant.model ?? null,
-            effort: participant.effort ?? null,
-            workspace: participant.workspace,
-            present: this.#presence.isPresent(participant.id, now),
-            activity: this.#presence.activityOf(participant.id, now) ?? null,
-            // Seats launched interactive are named after themselves, so this is
-            // the handle to attach to from a phone. Which ones those are is the
-            // registry's `turnFormat`, not a suffix on the key — the suffix is
-            // a naming convention and this was reading it as a contract.
-            remoteControl:
-              registry.get(participant.harness)?.turnFormat === 'interactive' ? participant.id : null,
-            // Whether this daemon holds the pipe. A seat someone started in
-            // their own terminal is real and working and cannot be mirrored,
-            // and the hub must say so rather than draw a dead terminal.
-            mirrored: this.#sessions.get(participant.id) !== undefined,
-            // Registered is not running. A seat whose process exited keeps its
-            // handle on purpose — the mirror shows the screen it died on — so
-            // `mirrored` stays true for a dead seat, and the launcher needs the
-            // other question answered: is there still something to stop?
-            live: this.#sessions.get(participant.id)?.running === true,
-          })),
-      });
-      return;
-    }
-
-    const screenParams = matchPath(path, '/sessions/:id/screen');
-    if (screenParams !== undefined && method === 'GET') {
-      const seat = decodeURIComponent(screenParams[0]!);
-      const session = this.#sessions.get(seat);
-      if (session === undefined) {
-        send(response, 404, wire('daemon', 'NO_MIRRORED_SESSION', `no mirrored session for ${seat}`));
-        return;
-      }
-      const snapshot = session.screen();
-      // The version the watcher already has. Answering "unchanged" for the cost
-      // of a number is what makes a mirror pollable at a second's cadence
-      // without shipping a grid per seat per tick.
-      const since = Number(url.searchParams.get('since') ?? '-1');
-      if (snapshot !== undefined && Number.isFinite(since) && snapshot.version === since) {
-        send(response, 200, { seat, unchanged: true, version: snapshot.version, running: session.running });
-        return;
-      }
-      send(response, 200, {
-        seat,
-        unchanged: false,
-        running: session.running,
-        exitCode: session.exitCode ?? null,
-        canPush: session.canPush,
-        screen: snapshot ?? null,
-      });
-      return;
-    }
-
-    const historyParams = matchPath(path, '/sessions/:id/scrollback');
-    if (historyParams !== undefined && method === 'GET') {
-      // What scrolled off, windowed. The lines used to be destroyed at the
-      // point they left the grid — measured, 200 written and 31 reachable — so
-      // there was nothing for a route like this to serve.
-      const seat = decodeURIComponent(historyParams[0]!);
-      const session = this.#sessions.get(seat);
-      if (session === undefined) {
-        send(response, 404, wire('daemon', 'NO_MIRRORED_SESSION', `no mirrored session for ${seat}`));
-        return;
-      }
-      const from = Number(url.searchParams.get('from') ?? '0');
-      const count = Number(url.searchParams.get('count') ?? String(SCROLLBACK_PAGE));
-      const page = session.scrollback(
-        Number.isFinite(from) ? from : 0,
-        Number.isFinite(count) ? Math.min(Math.max(0, count), SCROLLBACK_PAGE) : SCROLLBACK_PAGE,
-      );
-      // A seat that was never captured has no history, which is not the same
-      // answer as a seat whose history is empty.
-      send(response, 200, page === undefined ? { seat, captured: false } : { seat, captured: true, ...page });
-      return;
-    }
-
-    const streamParams = matchPath(path, '/sessions/:id/screen/stream');
-    if (streamParams !== undefined && method === 'GET') {
-      const seat = decodeURIComponent(streamParams[0]!);
-      const session = this.#sessions.get(seat);
-      if (session === undefined) {
-        send(response, 404, wire('daemon', 'NO_MIRRORED_SESSION', `no mirrored session for ${seat}`));
-        return;
-      }
-      this.#streamScreen(response, seat, session);
-      return;
-    }
-
     if (path === '/roster' && method === 'GET') {
       const present = (id: ParticipantId): boolean => this.#presence.isPresent(id, Date.now());
       send(response, 200, {
-        ...roster(ctx, this.#pendingWaiters(), present, (id) => this.#presence.activityOf(id, Date.now())),
+        ...roster(ctx, this.#pendingWaiters(), present),
         ...(warnings.length > 0 ? { warnings } : {}),
       });
       return;
@@ -1072,88 +618,6 @@ class Daemon {
     const roomParams = matchPath(path, '/rooms/:room/events');
     if (roomParams !== undefined && method === 'GET') {
       send(response, 200, await this.#readRoom(ctx, decodeURIComponent(roomParams[0]!), url));
-      return;
-    }
-
-    const inputParams = matchPath(path, '/sessions/:id/input');
-    if (inputParams !== undefined && method === 'POST') {
-      // Typing into somebody's CLI is not a protocol act — it never reaches the
-      // log, so it cannot be mistaken for something the team decided. It is the
-      // operator leaning over and using the keyboard, and it is the human seat's
-      // to do.
-      if (who !== HUMAN_ID) {
-        send(response, 403, wire('daemon', 'ROLE_NOT_PERMITTED', 'POST /sessions/:id/input requires the human seat'));
-        return;
-      }
-      const seat = decodeURIComponent(inputParams[0]!);
-      const session = this.#sessions.get(seat);
-      if (session === undefined) {
-        send(response, 404, wire('daemon', 'NO_MIRRORED_SESSION', `no mirrored session for ${seat}`));
-        return;
-      }
-      const payload = (await readJsonBody(request)) as {
-        turn?: unknown;
-        keys?: unknown;
-        rows?: unknown;
-        cols?: unknown;
-      };
-      // A resize is input in the same sense a keystroke is: it never reaches
-      // the log, and it is the operator's window telling the seat how much room
-      // it has. `pty.resize` existed from the first day and nothing ever called
-      // it, so every seat ran at 32×110 whatever the hub was showing.
-      if (typeof payload.rows === 'number' && typeof payload.cols === 'number') {
-        if (!Number.isFinite(payload.rows) || !Number.isFinite(payload.cols)) {
-          send(response, 400, wire('daemon', 'MALFORMED_BODY', '`rows` and `cols` must be numbers'));
-          return;
-        }
-        session.resize(payload.rows, payload.cols);
-        send(response, 200, { seat, sent: 'resize' });
-        return;
-      }
-      if (typeof payload.keys === 'string') {
-        await session.key(payload.keys);
-        send(response, 200, { seat, sent: 'keys' });
-        return;
-      }
-      if (typeof payload.turn !== 'string' || payload.turn.trim() === '') {
-        send(response, 400, wire('daemon', 'MALFORMED_BODY', 'send `turn` (a prompt) or `keys` (raw bytes)'));
-        return;
-      }
-      if (!session.canPush) {
-        send(response, 409, wire('daemon', 'SESSION_CANNOT_TAKE_TURN', `${seat} cannot take a turn after it starts`));
-        return;
-      }
-      await session.send(payload.turn);
-      send(response, 200, { seat, sent: 'turn' });
-      return;
-    }
-
-    if (path === '/presence' && method === 'POST') {
-      // Not an event: it never reaches the log, so it never reaches the
-      // projection and never competes with what was decided. A harness hook
-      // calls this on every tool use, which is thousands of times a run.
-      const payload = (await readJsonBody(request)) as {
-        verb?: unknown;
-        path?: unknown;
-        working?: unknown;
-        blocked?: unknown;
-      };
-      const verb = typeof payload.verb === 'string' ? payload.verb : 'working';
-      const file = typeof payload.path === 'string' ? payload.path : undefined;
-      // An empty string clears it, so the supervisor can report recovery
-      // without inventing a reason.
-      const blocked = typeof payload.blocked === 'string' && payload.blocked !== '' ? payload.blocked : undefined;
-      this.#presence.note(
-        who,
-        {
-          verb,
-          working: payload.working !== false,
-          ...(file === undefined ? {} : { path: file }),
-          ...(blocked === undefined ? {} : { blocked }),
-        },
-        Date.now(),
-      );
-      send(response, 204, {});
       return;
     }
 
@@ -1173,16 +637,7 @@ class Daemon {
 
     const body = await readJsonBody(request);
     rejectDerivedAuthorFields(body);
-    // Serialized: a handler validates against state and *then* appends, and two
-    // concurrent raises both computed `C-${claims.size + 1}` from the same
-    // snapshot — two distinct claims under one id, silently merged by the
-    // projection. The append queue cannot fix that on its own because the id is
-    // minted before the queue is reached; the validate-and-append pair has to
-    // be atomic. Loopback traffic from a handful of agents, so the serial write
-    // path costs nothing anyone can observe.
-    send(response, 201, {
-      events: [...joined, ...(await this.#enqueueWrite(() => handler(ctx, body)))],
-    } satisfies WriteResponse);
+    send(response, 201, { events: [...joined, ...(await handler(ctx, body))] } satisfies WriteResponse);
   }
 
   #writeHandler(
@@ -1194,10 +649,6 @@ class Daemon {
     if (path === '/events') return (ctx, body) => this.#appendMessage(ctx, body);
     if (path === '/claims') return raiseClaim;
     if (path === '/tasks') return createTask;
-    if (path === '/tasks/assign') return assignTask;
-    if (path === '/compose') return (ctx, body) => this.#composeJob(ctx, body);
-    if (path === '/launch') return (ctx, body) => this.#launch(ctx, body);
-    if (path === '/runs') return (ctx, body) => this.#startRun(ctx, body);
     if (path === '/decisions') return openDecision;
 
     const claimResponse = matchPath(path, '/claims/:id/response');
@@ -1293,23 +744,8 @@ class Daemon {
     return who;
   }
 
-  /**
-   * A `since` no reader may go below.
-   *
-   * `since` is exclusive everywhere, and the marker is the run's first event,
-   * so the floor is `#runStartSeq - 1` — asking from there yields the marker
-   * itself and everything after it, and nothing from the run before.
-   *
-   * Applied rather than validated: a stale `Last-Event-ID` from a browser that
-   * was connected during the previous run is not an error, it is a reconnect.
-   * Clamping it silently is right; refusing it would blank the hub.
-   */
-  #floorFor(requested: number): number {
-    return Math.max(requested, this.#runStartSeq - 1);
-  }
-
   async #readEvents(url: URL): Promise<EventsResponse> {
-    const since = this.#floorFor(readNonNegativeInt(url.searchParams.get('since'), 0, 'since'));
+    const since = readNonNegativeInt(url.searchParams.get('since'), 0, 'since');
     const limit = Math.min(
       readNonNegativeInt(url.searchParams.get('limit'), MAX_LIMIT, 'limit'),
       MAX_LIMIT,
@@ -1334,7 +770,7 @@ class Daemon {
     // messages under one spelling and then returns none of them under the other.
     const room = normaliseRoom(requested);
     requireRoomMembership(ctx, room);
-    const since = this.#floorFor(readNonNegativeInt(url.searchParams.get('since'), 0, 'since'));
+    const since = readNonNegativeInt(url.searchParams.get('since'), 0, 'since');
     const events = (await this.#log.readFrom(since + 1)).filter((event) => event.room === room);
     return {
       events,
@@ -1348,15 +784,10 @@ class Daemon {
   ): Promise<{ events: CrosstalkEvent[] } | { idle: true }> {
     const requested = readNonNegativeInt(url.searchParams.get('timeout_s'), AWAIT_CAP_S, 'timeout_s');
     const timeoutMs = Math.min(requested, AWAIT_CAP_S) * 1000;
-    // Clamped like every other read. The MCP `inbox` tool exposes `since`, so
-    // without this any agent could ask for the whole log across every run by
-    // passing zero — the exact thing the run boundary exists to prevent.
-    const mark = this.#floorFor(
-      readNonNegativeInt(
-        url.searchParams.get('since'),
-        this.#delivered.get(who) ?? this.#floorSeq,
-        'since',
-      ),
+    const mark = readNonNegativeInt(
+      url.searchParams.get('since'),
+      this.#delivered.get(who) ?? 0,
+      'since',
     );
 
     const ready = (await this.#log.readFrom(mark + 1)).filter((event) =>
@@ -1384,701 +815,6 @@ class Daemon {
   }
 
   /**
-   * Start a run from the hub: pick a shape, name the seats, type the prompt.
-   *
-   * The spawning itself is `runCompose`, unchanged — the daemon is only the
-   * thing with a port on it. Deliberately fire-and-forget: `runCompose` returns
-   * a `supervise()` that runs until every seat exits, and a launch request that
-   * waited for that would hold a socket open for hours and time out long before
-   * the team finished.
-   */
-  /**
-   * Release every parked long poll, without ending the run they were in.
-   *
-   * A seat sitting in a 50-second `/await` is not woken by a run boundary on
-   * its own: the marker does not address it, and once the projection resets it
-   * is not a member of anything to be addressed *through*. So a new run opened
-   * with up to fifty seconds of silence from every seat that happened to be
-   * waiting — which reads exactly like three dead agents.
-   *
-   * Resolves with `[]`, which `#awaitTurn` reports as idle. The seat asks
-   * again immediately, and its next question is answered inside the new run.
-   */
-  #releaseWaiters(): void {
-    for (const waiter of [...this.#waiters]) {
-      clearTimeout(waiter.timer);
-      this.#waiters.delete(waiter);
-      waiter.resolve([]);
-    }
-  }
-
-  /**
-   * Stop the seats of the run that is ending, and say who would not go.
-   *
-   * **Kills the process and nothing else.** Not the worktree, not the branch,
-   * not the uncommitted diff sitting in it. A seat is stopped because the
-   * operator wants the board clear; throwing away work they have not pushed is
-   * a different operation with a different name, and `down --purge` is where it
-   * lives.
-   *
-   * The wait is bounded because a hung pty must not hold the request open: a
-   * launch that never answers is indistinguishable from a daemon that has died,
-   * and the operator's next move would be to kill it. Five seconds, then say
-   * plainly which seats are still up rather than pretending they went.
-   */
-  async #endRun(live: SessionHandle[]): Promise<void> {
-    for (const session of live) {
-      try {
-        session.stop();
-      } catch {
-        // A process that has already gone throws on kill. That is the outcome
-        // we wanted, so it is not news.
-      }
-    }
-    const stubborn: string[] = [];
-    await Promise.all(
-      live.map(async (session) => {
-        const went = await Promise.race([
-          session.exited.then(() => true),
-          new Promise<boolean>((settle) => {
-            const timer = setTimeout(() => settle(false), STOP_GRACE_MS);
-            timer.unref?.();
-          }),
-        ]);
-        if (!went) stubborn.push(session.id);
-      }),
-    );
-    if (stubborn.length > 0) {
-      await this.#log.append({
-        kind: 'message',
-        room: FLOOR,
-        from: HUMAN_ID,
-        body: `still running after ${STOP_GRACE_MS / 1000}s and left alone: ${stubborn.join(', ')}`,
-      });
-    }
-  }
-
-  /**
-   * Begin a run: the boundary, and everything that has to forget across it.
-   *
-   * The read clamps alone would not be enough, and the gap is not cosmetic.
-   * `#state` is a projection of the whole log, so a boundary that only moved a
-   * read window would leave `/board` listing the previous run's tasks, the
-   * inbox quoting its job, and — the one that is a correctness bug —
-   * `assertedGates` scanning every `#floor` message for `ref: gate:<id>` with
-   * no notion of when, so yesterday's assertion marks today's gate met and a
-   * team walks past the gate that exists to stop it.
-   *
-   * So the boundary is a hard reset of the protocol state machine. Order is
-   * load-bearing throughout; each step says why.
-   */
-  async #beginRun(ctx: HandlerContext, job?: string, end = false): Promise<CrosstalkEvent[]> {
-    // Seats from the last run that still have a process behind them.
-    //
-    // Refused rather than silently ended, because ending one is destructive in
-    // a way the operator has to mean: an agent mid-edit has uncommitted work,
-    // and the only warning they would ever get is this refusal naming who is
-    // still up. `end: true` is the hub's "End current run & start" button,
-    // which says the same names on its face before it is pressed.
-    const live = this.#sessions.live();
-    if (live.length > 0 && !end) {
-      const names = live.map((session) => session.id).join(', ');
-      throw new DaemonError(
-        'RUN_IN_PROGRESS',
-        `${names} ${live.length === 1 ? 'is' : 'are'} still running. ` +
-          'Send { "end": true } to stop them and start a new run.',
-      );
-    }
-    if (live.length > 0) await this.#endRun(live);
-
-    // Below the boundary, closing out the run that is ending: a log replayed
-    // later shows those seats leaving, not still present.
-    const left = await this.#partAll();
-
-    const id = newRunId(new Date());
-    const marker = await this.#append(runMarker(id));
-    this.#runStartSeq = marker.seq;
-    this.#runId = id;
-
-    // The reset itself. Everything above hangs off this line.
-    this.#state = project([marker]);
-
-    // `#joins` is in-flight-and-done both, so while an entry survives the seat
-    // never re-announces and the hub draws this run with the last run's roster.
-    // They re-join on their next authenticated request, before any handler.
-    //
-    // `#partAll` above already deletes every key it saw, so this is the second
-    // of two — and it is kept rather than trimmed because `#ensureJoined` runs
-    // in `#route`, outside `#enqueueWrite`, so a join landing between that
-    // snapshot and here would otherwise survive the boundary. The break-test
-    // reflects this honestly: it goes red only when both are removed.
-    this.#joins.clear();
-    const joined = await this.#ensureJoined(HUMAN_ID);
-
-    this.#releaseWaiters();
-    this.#presence.reset();
-    this.#delivered.clear();
-    // Suppresses a repeated status line, so a stale entry swallows the first
-    // real status of the new run — silently, and only sometimes.
-    this.#lastStatus.clear();
-
-    if (job === undefined) return [...left, marker, ...joined];
-
-    // The job goes on last, and the floor moves after it. Both halves matter:
-    // above the boundary so the operator can see it, below the delivery floor
-    // so `runCompose` types it into each seat exactly once rather than the wake
-    // loop handing over the same text a second time.
-    const posted = await this.#appendMessage(ctx, { kind: 'message', room: FLOOR, body: job });
-    this.#floorSeq = this.#log.lastSeq;
-    this.#delivered.clear();
-    return [...left, marker, ...joined, ...posted];
-  }
-
-  /**
-   * Every run this repository has, newest first.
-   *
-   * Derived from the log rather than kept beside it, exactly as the ledger is:
-   * a list maintained during a run is a list that can be wrong, can be lost on
-   * restart, and cannot describe a run that finished before it existed.
-   *
-   * The log before the first marker is a run too — every repository that
-   * predates this feature is one long unnamed run, and hiding it would be a
-   * worse answer than naming it.
-   */
-  async #listRuns(): Promise<RunSummary[]> {
-    const log = await this.#log.read();
-    const runs: RunSummary[] = [...(await this.#archivedRuns())];
-    let open: RunSummary | undefined;
-
-    for (const event of log) {
-      const id = runIdOf(event);
-      if (id !== undefined) {
-        if (open !== undefined) open.endedSeq = event.seq;
-        open = {
-          id,
-          startedAt: event.ts,
-          firstSeq: event.seq,
-          events: 0,
-          archived: false,
-          current: false,
-        };
-        runs.push(open);
-      } else if (open === undefined) {
-        // Everything before the first boundary. One run, unnamed, so the
-        // operator can still find and archive what they already have.
-        open = {
-          id: 'r-00000000-0000-000000',
-          startedAt: event.ts,
-          firstSeq: event.seq,
-          events: 0,
-          archived: false,
-          current: false,
-        };
-        runs.push(open);
-      }
-      if (open !== undefined) {
-        open.events += 1;
-        if (open.job === undefined && event.kind === 'message' && event.from === HUMAN_ID) {
-          open.job = (event as { head?: string; body?: string }).head ?? (event as { body?: string }).body;
-        }
-      }
-    }
-
-    if (open !== undefined) open.current = true;
-    return runs.reverse();
-  }
-
-  /**
-   * The runs that have been moved out of the live log.
-   *
-   * Read from the directory rather than remembered, for the same reason the
-   * live ones are read from the log: a list kept beside the files is a list
-   * that can disagree with them, and the operator can move a `.jsonl` in or out
-   * by hand — which is the whole of "restorable" here.
-   */
-  async #archivedRuns(): Promise<RunSummary[]> {
-    const dir = join(resolve(this.#repo), '.crosstalk', 'runs');
-    let names: string[];
-    try {
-      names = await readdir(dir);
-    } catch {
-      return [];
-    }
-
-    const runs: RunSummary[] = [];
-    for (const name of names.sort()) {
-      const id = name.endsWith('.jsonl') ? name.slice(0, -'.jsonl'.length) : undefined;
-      // Anything else in the directory is somebody else's file, not a run.
-      if (id === undefined || !RUN_ID_PATTERN.test(id)) continue;
-      try {
-        const lines = (await readFile(join(dir, name), 'utf8')).split('\n').filter((line) => line.trim() !== '');
-        const first = lines[0] === undefined ? undefined : (JSON.parse(lines[0]) as CrosstalkEvent);
-        runs.push({
-          id,
-          startedAt: first?.ts ?? '',
-          firstSeq: first?.seq ?? 0,
-          events: lines.length,
-          archived: true,
-          current: false,
-        });
-      } catch {
-        // A truncated or hand-edited archive is still a run the operator can
-        // see and delete; it just cannot be summarised.
-        runs.push({ id, startedAt: '', firstSeq: 0, events: 0, archived: true, current: false });
-      }
-    }
-    return runs;
-  }
-
-  /**
-   * Every event of one run — the current one, an older one still in the live
-   * log, or one that has been archived out of it.
-   *
-   * The read clamps exist so a *live* reader never sees across the boundary.
-   * This is the deliberate exception: the operator asking to read a finished
-   * run. It is a read, it is the operator's own, and without it the run picker
-   * lists runs it cannot open — a control that does nothing, which this project
-   * treats as a defect rather than a missing nicety.
-   *
-   * Read-only in the strongest sense available: there is no route that writes
-   * into a run other than the current one, so "read-only" is not a flag the hub
-   * sets and could forget.
-   */
-  async #eventsOfRun(runId: string): Promise<CrosstalkEvent[]> {
-    // Archived first: an id can be in both places for the moment between the
-    // archive being written and the live log being rewritten, and the archive
-    // is the copy that is definitely complete.
-    try {
-      const raw = await readFile(this.#archivePath(runId), 'utf8');
-      return raw
-        .split('\n')
-        .filter((line) => line.trim() !== '')
-        .map((line) => JSON.parse(line) as CrosstalkEvent);
-    } catch (error) {
-      // A malformed id is refused as an id by `#archivePath`, and that refusal
-      // is the answer — not "no such file".
-      if (error instanceof DaemonError) throw error;
-    }
-
-    const runs = await this.#listRuns();
-    const run = runs.find((entry) => entry.id === runId);
-    if (run === undefined) throw new DaemonError('UNKNOWN_RUN', `no run named ${runId}`);
-    const next = runs.filter((entry) => entry.firstSeq > run.firstSeq).map((entry) => entry.firstSeq);
-    const end = next.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...next);
-    return (await this.#log.read()).filter((event) => event.seq >= run.firstSeq && event.seq < end);
-  }
-
-  /** `.crosstalk/runs/<id>.jsonl`, built from a validated id and never from raw input. */
-  #archivePath(runId: string): string {
-    if (!RUN_ID_PATTERN.test(runId)) {
-      // Refused as an id, before anything treats it as a path. Cheaper to get
-      // right than escaping, and there is no second place to forget it.
-      throw new DaemonError('UNKNOWN_RUN', `no run named ${runId}`);
-    }
-    return join(resolve(this.#repo), '.crosstalk', 'runs', `${runId}.jsonl`);
-  }
-
-  /**
-   * Move a finished run out of the live log.
-   *
-   * Refused for the current run: it is the one being appended to, and the
-   * boundary that would mark its end has not been written yet.
-   */
-  async #archiveRun(runId: string): Promise<void> {
-    const runs = await this.#listRuns();
-    const run = runs.find((entry) => entry.id === runId);
-    if (run === undefined) throw new DaemonError('UNKNOWN_RUN', `no run named ${runId}`);
-    if (run.current) {
-      throw new DaemonError(
-        'RUN_NOT_ARCHIVABLE',
-        'that run is the one being written to. Start a new run first, then archive this one.',
-      );
-    }
-    if (run.archived) return;
-
-    await mkdir(join(resolve(this.#repo), '.crosstalk', 'runs'), { recursive: true });
-
-    /**
-     * Everything up to and including the run asked for, oldest first, each to
-     * its own file.
-     *
-     * Not a nicety — without it, archiving a run that has an older run beneath
-     * it destroyed that older run's identity. `archiveBefore` moves a *prefix*
-     * of the log, so a single call for the newer run swept the older one's
-     * events into the newer one's file: the older run vanished from
-     * `/runs` and its id became unreachable, with no error and no sign
-     * anything had happened. Measured, on a three-run log: archiving the
-     * middle run left one archive of 7 events where there should have been two
-     * of 3 and 4, and the first run was simply gone.
-     *
-     * A prefix structure means "put this one away" *has* to mean "and the ones
-     * before it" — they cannot stay in a live log the prefix has been cut out
-     * of. So the loop does what the operator asked and keeps each run's events
-     * in the file named after it, rather than refusing and making them archive
-     * in an order the UI never told them about.
-     */
-    const older = runs
-      .filter((entry) => !entry.current && !entry.archived && entry.firstSeq <= run.firstSeq)
-      .sort((left, right) => left.firstSeq - right.firstSeq);
-
-    for (const entry of older) {
-      // `endedSeq` is set by `#listRuns` when it finds the following marker,
-      // and a non-current run always has one.
-      await this.#log.archiveBefore(entry.endedSeq ?? entry.firstSeq, this.#archivePath(entry.id));
-    }
-  }
-
-  /**
-   * Remove an archive. The only irreversible act the daemon offers.
-   *
-   * Asks for the run's own id back rather than a boolean: a `confirm: true`
-   * that a client sets by default is not a confirmation, and this is the one
-   * request where being wrong cannot be undone.
-   */
-  async #deleteRun(runId: string, confirm: unknown): Promise<void> {
-    if (confirm !== runId) {
-      throw new DaemonError(
-        'RUN_NOT_CONFIRMED',
-        `deleting a run permanently needs its id back: send { "confirm": "${runId}" }`,
-      );
-    }
-    const path = this.#archivePath(runId);
-    try {
-      await unlink(path);
-    } catch {
-      throw new DaemonError(
-        'RUN_NOT_ARCHIVABLE',
-        `${runId} has no archive to delete. Archive it first — a run still in the live log is not deletable.`,
-      );
-    }
-    // The run's screenshots go with it, unless something else still points at
-    // them — a blob is shared by every message that attached the same bytes.
-    await this.#collectBlobs();
-  }
-
-  /**
-   * Drop every blob nothing references any more.
-   *
-   * Mark and sweep across the live log *and every surviving archive*, because
-   * a screenshot pasted twice is one file: deleting the run that happens to
-   * hold the first reference must not break the card in the run that holds the
-   * second. The archives are read from disk rather than remembered, so a file
-   * the operator moved back by hand still counts as a reference.
-   */
-  async #collectBlobs(): Promise<void> {
-    const keep = new Set<string>();
-    const mark = (events: readonly CrosstalkEvent[]): void => {
-      for (const event of events) {
-        for (const attachment of (event as { attachments?: { sha: string }[] }).attachments ?? []) {
-          keep.add(attachment.sha);
-        }
-      }
-    };
-    mark(await this.#log.read());
-    for (const archived of await this.#archivedRuns()) {
-      try {
-        const raw = await readFile(this.#archivePath(archived.id), 'utf8');
-        mark(
-          raw
-            .split('\n')
-            .filter((line) => line.trim() !== '')
-            .map((line) => JSON.parse(line) as CrosstalkEvent),
-        );
-      } catch {
-        // An unreadable archive is a reason to keep more, not less: skipping it
-        // silently would let its blobs be collected out from under it.
-        return;
-      }
-    }
-    await this.#blobs.sweep(keep, Date.now());
-  }
-
-  /**
-   * Begin a run without staffing anyone — "put this away and give me a clean
-   * board". The launcher's path is `/launch`, which does this *and* spawns.
-   */
-  async #startRun(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
-    this.#requireOperator(ctx, 'POST /runs');
-    const job = body['job'];
-    if (job !== undefined && typeof job !== 'string') {
-      throw new DaemonError('MALFORMED_BODY', '`job` must be a string');
-    }
-    const trimmed = typeof job === 'string' ? job.trim() : '';
-    return this.#beginRun(ctx, trimmed === '' ? undefined : trimmed, body['end'] === true);
-  }
-
-  /**
-   * Take one file, streamed, and answer with the record that names it.
-   *
-   * The body is the raw file and the headers carry the rest — `content-type`
-   * for what it is, `x-crosstalk-filename` percent-encoded for what the author
-   * called it, which is the convention `x-crosstalk-cwd` already uses. No
-   * multipart parser: that is a dependency's worth of code in a project whose
-   * hard rule is two.
-   *
-   * The request stream is handed to the store rather than buffered, so a
-   * 180 MB video never exists in this process's heap, and the cap is enforced
-   * on the way past rather than read off `content-length` — which is a claim,
-   * and absent entirely under chunked encoding.
-   */
-  async #uploadAttachment(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const type = (request.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
-    if (type === '' || type === 'application/octet-stream') {
-      send(
-        response,
-        400,
-        wire('daemon', 'MALFORMED_BODY', 'send the file as the raw body with its `content-type`'),
-      );
-      return;
-    }
-    const name = filenameFrom(request.headers['x-crosstalk-filename']);
-    try {
-      const stored = await this.#blobs.put(request, name, type);
-      send(response, 201, {
-        attachment: { sha: stored.sha, name: stored.name, type: stored.type, bytes: stored.bytes },
-        // Where the hub will fetch it from. Built here rather than in the hub
-        // so the key's spelling lives in one place.
-        url: attachmentUrl(stored.sha, stored.type),
-      });
-    } catch (error) {
-      if (error instanceof BlobTooLarge) {
-        send(response, 413, wire('daemon', 'PAYLOAD_TOO_LARGE', error.message));
-        return;
-      }
-      throw error;
-    }
-  }
-
-  /** Every run-shaped action is the operator's; seats do not end each other's runs. */
-  #requireOperator(ctx: HandlerContext, what: string): void {
-    const role = this.#config.participants.find((participant) => participant.id === ctx.who)?.role;
-    if (ctx.who !== HUMAN_ID && role !== 'human') {
-      throw new DaemonError('ROLE_NOT_PERMITTED', `${what} requires the human seat`);
-    }
-  }
-
-  async #launch(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
-    const role = this.#config.participants.find((participant) => participant.id === ctx.who)?.role;
-    if (ctx.who !== HUMAN_ID && role !== 'human') {
-      throw new DaemonError('ROLE_NOT_PERMITTED', 'POST /launch requires the human seat');
-    }
-    const job = body['job'];
-    if (typeof job !== 'string' || job.trim() === '') {
-      throw new DaemonError('MALFORMED_BODY', '`job` is required');
-    }
-    const seats = body['seats'];
-    if (seats !== undefined && !Array.isArray(seats)) {
-      throw new DaemonError('MALFORMED_BODY', '`seats` must be a list of id:role:harness strings');
-    }
-    const shape = body['shape'];
-    if (shape !== undefined && typeof shape !== 'string') {
-      throw new DaemonError('MALFORMED_BODY', '`shape` must be a string');
-    }
-    if (typeof shape === 'string' && !SHAPES.has(shape)) {
-      throw new DaemonError('MALFORMED_BODY', `no shape named ${shape}`);
-    }
-
-    // Staffing the team is the hub's job, not a thing you have to have done at
-    // the command line first.
-    //
-    // This used to refuse any roster the daemon was not already running, and
-    // that made the launcher's picker decorative: you could choose seats in the
-    // browser and the only outcome was an error telling you to edit a YAML file
-    // and restart. The reason was real — `runInit` will not overwrite a roster,
-    // and forcing it would have written seats whose tokens this daemon had
-    // never minted, so they could not have called back — but the fix was to
-    // mint and reload, not to refuse.
-    // The job goes on the board first, and the floor is set *after* it.
-    //
-    // Order matters, and getting it wrong delivered the job twice. `runCompose`
-    // types the job into each seat as its opening turn — that is the path that
-    // survives a start-up dialog, because it keeps offering until the seat is
-    // at a prompt. Posting to #floor is for the operator and for anyone who
-    // joins later. With the floor set before the append, the job was also above
-    // it, so the wake loop handed the same text over a second time and every
-    // seat opened on its brief printed twice.
-    //
-    // Setting the floor after covers both at once: everything already on the
-    // board belongs to runs before this one — handing that to a fresh team as
-    // "new since your last turn" is how its first act became reading someone
-    // else's finished argument — and the job itself is delivered by exactly one
-    // path.
-    // One path for "a run begins", whether it was reached through the launcher
-    // or through `POST /runs`. The comment above is the history of getting this
-    // order wrong; `#beginRun` is where it now lives, once.
-    const posted = await this.#beginRun(ctx, job.trim(), body['end'] === true);
-
-    const requested = (seats ?? []) as string[];
-    // A shape change is grounds to re-staff on its own. The roster can be
-    // identical and the team still be a different team: `trio-contract` and
-    // three unshaped peers seat the same three people and are not the same
-    // thing to run, and the briefs each seat reads are written by `init`.
-    const restaffing =
-      rosterDiffers(this.#config.participants, requested) ||
-      (typeof shape === 'string' && shape !== this.#config.shape);
-
-    const { runCompose } = await import('../cli/compose.js');
-    void (async () => {
-      if (restaffing) {
-        // `runInit` writes the roster, builds each seat's worktree and brief,
-        // and mints tokens for the new ones while keeping every token that
-        // already exists. Then this daemon picks all of it up in place.
-        const { runInit } = await import('../cli/init.js');
-        await runInit({
-          repo: this.#repo,
-          participants: requested,
-          force: true,
-          ...(typeof shape === 'string' ? { shape } : {}),
-        });
-        await this.reload();
-      }
-      const result = await runCompose({
-        repo: this.#repo,
-        job: job.trim(),
-        // Already written and reloaded above, so `runCompose` spawns the roster
-        // rather than writing it a second time.
-        participants: [],
-        ...(typeof shape === 'string' ? { shape } : {}),
-        // What makes the mirror possible: the seats this daemon starts publish
-        // their sessions here, so `/sessions/:id/screen` has something to read
-        // and `/sessions/:id/input` has somewhere to write.
-        sessions: this.#sessions,
-        // The job reaches the board through this handler's own append below, so
-        // compose must not post it a second time.
-        postJob: async () => {},
-      });
-      await result.supervise();
-    })().catch(async (error: unknown) => {
-      // A launch that dies silently looks exactly like a team that joined and
-      // said nothing, which is the failure this whole project exists to stop.
-      const reason = error instanceof Error ? error.message : String(error);
-      await this.#log.append({ kind: 'message', room: FLOOR, from: HUMAN_ID, body: `launch failed: ${reason}` });
-    });
-
-    return posted;
-  }
-
-  async #composeJob(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
-    const role = this.#config.participants.find((participant) => participant.id === ctx.who)?.role;
-    if (ctx.who !== HUMAN_ID && role !== 'human') {
-      throw new DaemonError('ROLE_NOT_PERMITTED', 'POST /compose requires the human seat');
-    }
-    const job = body['job'];
-    if (typeof job !== 'string' || job.trim() === '') {
-      throw new DaemonError('MALFORMED_BODY', '`job` is required');
-    }
-    return this.#appendMessage(ctx, { kind: 'message', room: FLOOR, body: job.trim() });
-  }
-
-  /**
-   * The last standing status each seat was told, so it is not told again.
-   *
-   * Keyed by participant because the status is per-role: what blocks a peer is
-   * not what blocks the human seat watching them.
-   */
-  readonly #lastStatus = new Map<ParticipantId, string>();
-
-  async #inboxTurn(who: ParticipantId, url: URL): Promise<Inbox> {
-    const wait = url.searchParams.get('wait') !== '0';
-    const role = this.#config.participants.find((participant) => participant.id === who)?.role ?? 'observer';
-    const peek = new URL(url.href);
-    peek.searchParams.set('timeout_s', '0');
-    const peeked = await this.#awaitTurn(who, peek);
-    const unread = 'events' in peeked ? peeked.events : [];
-    const phase = await this.phase();
-    const inbox = renderInbox({
-      who,
-      role,
-      unread,
-      state: this.#state,
-      pathOf: (sha, type) => this.#blobs.pathFor(sha, type),
-      ...(phase === undefined ? {} : { phase }),
-    });
-    // A #floor job or an assigned task is already work. Waiting 50s after that
-    // is how the Quorum builder spent eight polls idle while the job sat on the board.
-    //
-    // But "there is work" is a standing condition, not an event, and returning
-    // on it every time turns the wake loop into a hot spin: the seat is told
-    // the same unmet gate as fast as HTTP allows, forever. Measured once the
-    // shape started reaching the config — every seat's composer filling with
-    // dozens of identical board notices, which is where a run's context went
-    // before it had written a line of code.
-    //
-    // So a *changed* status returns immediately and an unchanged one blocks.
-    // The seat still learns about new work the moment it appears, and learns
-    // about it once.
-    if (unread.length > 0 || !wait) return inbox;
-    const status = inbox.next;
-    if (status !== undefined && status !== 'idle' && this.#lastStatus.get(who) !== status) {
-      this.#lastStatus.set(who, status);
-      return inbox;
-    }
-    const blocked = await this.#awaitTurn(who, url);
-    const later = 'events' in blocked ? blocked.events : [];
-    const after = await this.phase();
-    return renderInbox({
-      who,
-      role,
-      unread: later,
-      state: this.#state,
-      pathOf: (sha, type) => this.#blobs.pathFor(sha, type),
-      ...(after === undefined ? {} : { phase: after }),
-    });
-  }
-
-  /**
-   * Where the team is, recomputed per turn rather than stored.
-   *
-   * The workspace gates shell out to git, so this is the one derived value that
-   * costs something. It is still per-turn and not cached: a cached phase that
-   * disagreed with the repository would be exactly the "belief written as a
-   * fact" that the whole delivery repair is about.
-   */
-  async phase(): Promise<PhaseStatus | undefined> {
-    const shape = shapeNamed(this.#config.shape);
-    if (shape === undefined) return undefined;
-
-    const seats = this.#config.participants.filter(
-      (participant) => participant.id !== HUMAN_ID && participant.role !== 'human',
-    );
-    const needed = shape.phases.flatMap((phase) => phase.exit.filter((gate) => gate.by === 'workspace').map((gate) => gate.id));
-    const contractPath = this.#config.contractPath ?? shape.contract;
-
-    let workspace;
-    try {
-      workspace = await workspaceGates({
-        repo: this.#repo,
-        base: this.#config.project.mainBranch,
-        // The config wins, then the shape's own default. Falling back to the
-        // shape is what stops a shape shipping a gate nothing can ever meet:
-        // `contractPath` is optional in the config and no code path has ever
-        // set it.
-        ...(contractPath === undefined ? {} : { contractPath }),
-        branches: await seatBranches(this.#repo, seats),
-        needed,
-      });
-    } catch {
-      // A repository that cannot be read is not a reason to stop delivering
-      // turns. The gate reports unchecked and the seat sees why.
-      workspace = new Map();
-    }
-
-    return phaseStatus(shape, {
-      events: this.#state.messages,
-      participants: seats.map((seat) => seat.id),
-      workspace,
-      // Messages carry the asserted gates; the decisions are a separate
-      // projection and a log gate reading them needs to be handed them. The
-      // first cut passed only `messages` and `operator-questioned` could
-      // therefore never be met through the daemon at all.
-      decisions: this.#state.decisions.values(),
-      // A gate can be owed by some seats and not others: `slice-done` is the
-      // builders', and counting the planner in it held build shut forever.
-      roles: new Map(seats.map((seat) => [seat.id, seat.role])),
-    });
-  }
-
-  /**
    * Server-sent events. Contract §6.
    *
    * Frames carry no `event:` name on purpose: the hub subscribes with
@@ -2090,12 +826,10 @@ class Daemon {
     // The browser resends Last-Event-ID on reconnect; `?since=` is for
     // everything that is not a browser. Both are exclusive, like /events.
     const header = request.headers['last-event-id'];
-    const resumeFrom = this.#floorFor(
-      readNonNegativeInt(
-        typeof header === 'string' ? header : url.searchParams.get('since'),
-        0,
-        'Last-Event-ID',
-      ),
+    const resumeFrom = readNonNegativeInt(
+      typeof header === 'string' ? header : url.searchParams.get('since'),
+      0,
+      'Last-Event-ID',
     );
 
     response.writeHead(200, {
@@ -2111,15 +845,8 @@ class Daemon {
 
     const heartbeat = setInterval(() => {
       // A comment line: EventSource ignores it, and it keeps the connection
-      // from being reaped by an idle timeout somewhere in between. It is also
-      // the only thing that notices an idle subscriber which stopped reading —
-      // without traffic there is no write to discover the backlog with.
+      // from being reaped by an idle timeout somewhere in between.
       response.write(':hb\n\n');
-      if (backlogOf(response) > MAX_SUBSCRIBER_BACKLOG) {
-        clearInterval(heartbeat);
-        this.#subscribers.delete(subscriber);
-        response.destroy();
-      }
     }, HEARTBEAT_MS);
 
     const subscriber: Subscriber = { response, heartbeat };
@@ -2130,109 +857,13 @@ class Daemon {
     });
   }
 
-  /**
-   * One seat's screen, pushed.
-   *
-   * The panel used to poll. It asked for 800ms and the browser gave it 1,000 —
-   * hidden tabs have their timers clamped, and the hub tab is hidden whenever it
-   * is not frontmost — so a keystroke took about a second to appear on a path
-   * whose two slow halves measured 2.8ms and 3.2ms. Everything else in the
-   * mirror was already fast; the wait was the only defect.
-   *
-   * Only the open seat is ever streamed, which is the same rule the poll had:
-   * a hub with six seats must not spend six sockets to draw one terminal.
-   */
-  #streamScreen(response: ServerResponse, seat: string, session: SessionHandle): void {
-    response.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-store',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-    });
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let sentAt = 0;
-    let closed = false;
-    let done = (): void => {
-      closed = true;
-    };
-
-    const frame = (): void => {
-      if (closed) return;
-      // A subscriber that stopped reading is a socket whose buffer only grows.
-      // The log stream has always reaped these; a screen stream ships far more
-      // bytes per second, so it needs it more.
-      if (backlogOf(response) > MAX_SUBSCRIBER_BACKLOG) {
-        done();
-        response.destroy();
-        return;
-      }
-      sentAt = Date.now();
-      const snapshot = session.screen();
-      response.write(
-        `data: ${JSON.stringify({
-          seat,
-          running: session.running,
-          exitCode: session.exitCode ?? null,
-          canPush: session.canPush,
-          screen: snapshot ?? null,
-        })}\n\n`,
-      );
-    };
-
-    // Coalesced rather than debounced: a debounce would hold the last frame of
-    // a burst back until the burst stopped, which is precisely the frame the
-    // operator is waiting to see. This sends immediately when it can and
-    // schedules exactly one catch-up when it cannot.
-    const onChange = (): void => {
-      if (closed || timer !== undefined) return;
-      const wait = Math.max(0, SCREEN_FRAME_MS - (Date.now() - sentAt));
-      if (wait === 0) {
-        frame();
-        return;
-      }
-      timer = setTimeout(() => {
-        timer = undefined;
-        frame();
-      }, wait);
-    };
-
-    frame();
-    const unwatch = session.watch(onChange);
-    const heartbeat = setInterval(() => response.write(':hb\n\n'), HEARTBEAT_MS);
-
-    done = (): void => {
-      if (closed) return;
-      closed = true;
-      unwatch();
-      clearInterval(heartbeat);
-      if (timer !== undefined) clearTimeout(timer);
-    };
-    response.on('close', done);
-  }
-
   #deliver(who: ParticipantId, events: CrosstalkEvent[]): { events: CrosstalkEvent[] } {
     this.#delivered.set(who, events[events.length - 1]!.seq);
     return { events };
   }
 
-  /**
-   * Who is genuinely parked on a long poll right now.
-   *
-   * A seat whose process has gone is dropped, even though its waiter has not
-   * timed out. `/await` parks for up to fifty seconds, so a seat that died
-   * one second in went on being reported `awaiting_turn` for the next
-   * forty-nine — the roster showed a working team where there was a corpse,
-   * which is precisely the "looks fine, is not" failure this project exists to
-   * stop. The waiter itself is left to expire on its own; nothing is listening
-   * to it, and unhooking a timer we did not arm here is how double-frees start.
-   */
   #pendingWaiters(): Set<ParticipantId> {
-    return new Set(
-      [...this.#waiters]
-        .filter((waiter) => this.#sessions.get(waiter.who)?.running !== false)
-        .map((waiter) => waiter.who),
-    );
+    return new Set([...this.#waiters].map((waiter) => waiter.who));
   }
 
   async #appendMessage(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
@@ -2250,71 +881,17 @@ class Daemon {
       );
     }
 
+    const room = body['room'];
+    const text = body['body'];
+    if (typeof room !== 'string' || room === '') {
+      throw new DaemonError('MALFORMED_BODY', 'message requires a room');
+    }
+    if (typeof text !== 'string') {
+      throw new DaemonError('MALFORMED_BODY', 'message requires a body');
+    }
     const to = body['to'];
     if (to !== undefined && typeof to !== 'string') {
       throw new DaemonError('MALFORMED_BODY', 'message `to` must be a participant id');
-    }
-    const ref = body['ref'];
-    if (ref !== undefined && typeof ref !== 'string') {
-      throw new DaemonError('MALFORMED_BODY', 'message `ref` must be a string');
-    }
-    const head = body['head'];
-    if (head !== undefined && typeof head !== 'string') {
-      throw new DaemonError('MALFORMED_BODY', 'message `head` must be a string');
-    }
-    const task = body['task'];
-    if (task !== undefined && typeof task !== 'string') {
-      throw new DaemonError('MALFORMED_BODY', 'message `task` must be a string');
-    }
-    const attachments = readAttachments(body['attachments']);
-
-    // No room and no `to` is the board, which is what a seat means by saying
-    // something. Requiring `--room '#floor'` on every floor message made the
-    // common case the verbose one, and `refuseMessage` already reads an absent
-    // room as the floor — so the two disagreed and the seat got a transport
-    // complaint where it should have got the tag rule.
-    //
-    // `to` with no room opens the side room. This is the whole of the fix for
-    // the 312 messages that named one seat and were read by three: `to` alone
-    // could never remove a reader, because `#floor` membership delivers to
-    // everyone and `to` only adds a wake on top. A room is what narrows it, and
-    // reaching one used to mean hand-building `dm:a~b` — which no MCP seat did,
-    // in 1187 events, having been told twice to.
-    const named = body['room'];
-    const room = typeof named === 'string' && named !== ''
-      ? named
-      : typeof to === 'string'
-        ? dmId(ctx.who, to)
-        : FLOOR;
-
-    // `body` falls back to `head`, and this is the load-bearing half of the
-    // amendment: every reader that predates it — the projection, the mirror,
-    // `boardTurn`, every card — treats `body` as the message, and an empty one
-    // would render as a blank card and an empty turn.
-    const written = body['body'];
-    const text = typeof written === 'string' ? written : typeof head === 'string' ? head : undefined;
-    if (text === undefined) {
-      throw new DaemonError('MALFORMED_BODY', 'message requires a body, or a `head`');
-    }
-
-    const refusal = this.#refuseSchema(ctx.who, {
-      room,
-      tag: body['tag'],
-      head,
-      body: written,
-      to,
-      ref,
-    });
-    if (refusal !== null) {
-      throw new DaemonError('MESSAGE_REFUSED', refusal);
-    }
-
-    // The cap is enforced here rather than in each tool so both tiers get it:
-    // the shell CLI and the MCP facade are two spellings of one interface, and
-    // beacon-1 showed what happens when they drift.
-    const oversize = refuseOversizeBody(text, ctx.who);
-    if (oversize !== null) {
-      throw new DaemonError('MESSAGE_TOO_LONG', oversize);
     }
 
     // Before membership and before the append, so `dm:leader~codex` and
@@ -2329,36 +906,8 @@ class Daemon {
         room: canonical,
         body: text,
         ...(to === undefined ? {} : { to }),
-        ...(ref === undefined ? {} : { ref }),
-        ...(isMessageTag(body['tag']) ? { tag: body['tag'] } : {}),
-        ...(head === undefined ? {} : { head }),
-        ...(task === undefined ? {} : { task }),
-        ...(attachments === undefined ? {} : { attachments }),
       }),
     ];
-  }
-
-  /**
-   * Hold this seat to the message schema, or do not.
-   *
-   * Gated on the shape naming tags for the seat's role, so a project with no
-   * shape — every repository already using Crosstalk — writes exactly what it
-   * wrote before. `@human` is exempt for the same reason it is exempt from the
-   * length cap: the operator is not a seat and is not being taught anything.
-   */
-  #refuseSchema(who: ParticipantId, draft: MessageDraft): string | null {
-    if (who === HUMAN_ID) return null;
-    const shape = shapeNamed(this.#config.shape);
-    if (shape === undefined) return null;
-    const role = this.#config.participants.find((participant) => participant.id === who)?.role;
-    const allowed = shape.seats.find((seat) => seat.role === role)?.tags;
-    if (allowed === undefined) return null;
-
-    return refuseMessage(draft, {
-      from: who,
-      allowed,
-      roster: this.#config.participants.map((participant) => participant.id),
-    });
   }
 
   /**
@@ -2402,16 +951,6 @@ class Daemon {
     return events;
   }
 
-  /**
-   * One write handler at a time. A failure must not poison the chain — the
-   * next writer runs whatever became of this one.
-   */
-  #enqueueWrite<T>(run: () => Promise<T>): Promise<T> {
-    const queued = this.#handlerTail.then(run);
-    this.#handlerTail = queued.catch(() => {});
-    return queued;
-  }
-
   /** Every write funnels through here: one EventLog, one seq sequence, no gaps. */
   async #append(draft: DraftEvent): Promise<CrosstalkEvent> {
     const queued = this.#writeTail.then(async () => {
@@ -2428,15 +967,7 @@ class Daemon {
       setImmediate(() => void this.#sweepStaleness());
     }
     this.#wake(event);
-    for (const subscriber of [...this.#subscribers]) {
-      if (writeFrame(subscriber.response, event)) continue;
-      // Too far behind to catch up. It reconnects with Last-Event-ID and the
-      // stream resumes from the log; holding the socket open would only trade
-      // one stalled reader for the whole daemon's memory.
-      clearInterval(subscriber.heartbeat);
-      this.#subscribers.delete(subscriber);
-      subscriber.response.destroy();
-    }
+    for (const subscriber of this.#subscribers) writeFrame(subscriber.response, event);
     return event;
   }
 
@@ -2474,39 +1005,6 @@ function requireShutdownAuthority(config: CrosstalkConfig, who: ParticipantId): 
   }
 }
 
-/**
- * Whether a requested roster is different from the one already seated.
- *
- * Compared on id, role and harness — the three the spec's first fields carry,
- * and the three that decide who can talk to the daemon. Model and effort are
- * per-seat argv: changing them re-spawns a seat differently but does not change
- * who it is, so they are not grounds for rewriting the roster.
- *
- * Used to decide whether `/launch` has to re-staff before it spawns. It is a
- * question, not a gate — an earlier version returned a refusal message here,
- * which turned every roster chosen in the hub into an error telling the
- * operator to go and edit YAML.
- */
-export function rosterDiffers(
-  running: readonly { id: string; role: string; harness: string }[],
-  requested: readonly string[],
-): boolean {
-  if (requested.length === 0) return false;
-  const seated = new Map(
-    running
-      .filter((participant) => participant.role !== 'human')
-      .map((participant) => [participant.id, participant] as const),
-  );
-  if (seated.size !== requested.length) return true;
-
-  return requested.some((spec) => {
-    const [id, role, harness] = spec.split(':');
-    if (id === undefined) return true;
-    const participant = seated.get(id);
-    return participant === undefined || participant.role !== role || participant.harness !== harness;
-  });
-}
-
 /** Matches `/tasks/:id/ack` shapes, returning the captured segments. */
 function matchPath(path: string, pattern: string): string[] | undefined {
   const actual = path.split('/').filter(Boolean);
@@ -2524,53 +1022,9 @@ function matchPath(path: string, pattern: string): string[] | undefined {
   return captured;
 }
 
-/**
- * How much a single subscriber may fall behind before it is dropped.
- *
- * SSE has no application-level backpressure: `response.write` returns false
- * when the socket is full and Node buffers the rest in memory, forever, with no
- * signal that anything is wrong. A client that connects and never reads —
- * a suspended laptop, a tab the OS froze, a `curl` piped into something
- * stalled — makes the daemon grow without bound. Measured: one such client
- * queued 704 MB in five seconds and took RSS from 41 MB to 1.36 GB. Node's own
- * docs say the process "will abort unconditionally".
- *
- * Dropping the connection is safe precisely because resume exists: `id:` is the
- * seq, EventSource reconnects on its own with `Last-Event-ID`, and
- * `#openStream` replays from the log. A subscriber that cannot keep up loses
- * its socket and nothing else.
- */
-export const MAX_SUBSCRIBER_BACKLOG = 8 * 1024 * 1024;
-
-/**
- * How far behind a subscriber is, in bytes waiting to reach it.
- *
- * Read off the **socket**, not off the `ServerResponse`. An `OutgoingMessage`
- * flushes into the socket eagerly, so its own `writableLength` stays near zero
- * however far behind the reader is — measured: 400 frames and 24 MB of backlog
- * with `response.writableLength` never once above the threshold. The queue that
- * actually grows is the socket's.
- */
-export function backlogOf(response: ServerResponse): number {
-  return response.socket?.writableLength ?? 0;
-}
-
-/**
- * `id:` is the seq, so Last-Event-ID resume needs no separate cursor.
- *
- * Returns false when this subscriber is too far behind to keep.
- *
- * Exported for the test that pins the drop threshold. The end-to-end behaviour
- * — a paused reader building a real backlog until the daemon hangs up on it —
- * was verified by direct measurement against the built daemon (60 frames of
- * 60 KB queue ~2.8 MB on the subscriber's socket; a few hundred passes the cap
- * and the socket is closed). It is not reproducible under the test runner,
- * which throttles the flood well below the threshold, so what is pinned here
- * is the decision rather than the plumbing.
- */
-export function writeFrame(response: ServerResponse, event: CrosstalkEvent): boolean {
+/** `id:` is the seq, so Last-Event-ID resume needs no separate cursor. */
+function writeFrame(response: ServerResponse, event: CrosstalkEvent): void {
   response.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`);
-  return backlogOf(response) <= MAX_SUBSCRIBER_BACKLOG;
 }
 
 function wire(
@@ -2638,53 +1092,6 @@ function readCookie(header: string | undefined, name: string): string | undefine
     if (key === name) return rest.join('=');
   }
   return undefined;
-}
-
-/**
- * Validate the `attachments` a client claims, and keep only what it proved.
- *
- * Every field is re-derived rather than trusted, because this record is what
- * every later reader believes. The sha is the important one: it is a *path
- * component*, so a record carrying `../../..` in it would be a traversal in
- * every reader that ever resolves it. It is pattern-checked here, at the one
- * point where the log gains one.
- *
- * The bytes are not re-hashed. They were hashed on the way in — the sha is
- * where they were filed — so a record naming a sha that was never uploaded
- * points at nothing and renders as a missing chip, which is the correct
- * outcome for a reference to a file this repository does not have.
- */
-function readAttachments(raw: unknown): MessageAttachment[] | undefined {
-  if (raw === undefined) return undefined;
-  if (!Array.isArray(raw)) {
-    throw new DaemonError('MALFORMED_BODY', 'message `attachments` must be a list');
-  }
-  if (raw.length > MAX_ATTACHMENTS) {
-    throw new DaemonError('MALFORMED_BODY', `at most ${MAX_ATTACHMENTS} attachments on one message`);
-  }
-  const read = raw.map((entry) => {
-    const record = entry as Record<string, unknown>;
-    const sha = record['sha'];
-    if (typeof sha !== 'string' || !ATTACHMENT_SHA_PATTERN.test(sha)) {
-      throw new DaemonError('MALFORMED_BODY', 'each attachment needs a `sha` from POST /attachments');
-    }
-    const type = record['type'];
-    if (typeof type !== 'string' || type === '') {
-      throw new DaemonError('MALFORMED_BODY', 'each attachment needs a `type`');
-    }
-    const bytes = record['bytes'];
-    if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
-      throw new DaemonError('MALFORMED_BODY', 'each attachment needs a byte count');
-    }
-    const name = record['name'];
-    return {
-      sha,
-      type,
-      bytes,
-      name: typeof name === 'string' && name !== '' ? name.slice(0, 200) : 'attachment',
-    };
-  });
-  return read.length === 0 ? undefined : read;
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {

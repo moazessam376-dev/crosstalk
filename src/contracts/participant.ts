@@ -7,13 +7,7 @@ export type ParticipantId = string;
  * party to: a reviewer's whole purpose is to speak, and it needs its own brief
  * telling it explicitly not to implement.
  */
-/**
- * `peer` is a leaderless builder: it starts from the `#floor` job directly,
- * coordinates on the board, and no participant holds task authority over it.
- * A roster is either led (exactly one leader) or flat (one or more peers,
- * no leader) — `doctor` refuses the mixtures.
- */
-export type Role = 'leader' | 'worker' | 'observer' | 'human' | 'plan_reviewer' | 'spoc' | 'peer';
+export type Role = 'leader' | 'worker' | 'observer' | 'human' | 'plan_reviewer';
 
 /**
  * How a participant reaches the hub. Descending fidelity: `mcp` validates
@@ -45,18 +39,6 @@ export interface Participant {
    * whether or not it can see it.
    */
   effort?: string;
-  /**
-   * How much the harness asks before it acts, e.g. "auto", "acceptEdits".
-   *
-   * Free text for the same reason `effort` is: harnesses do not agree on the
-   * words. The interactive Claude Code seat used to be pinned to
-   * `bypassPermissions` in the registry with no way to say otherwise, on the
-   * argument that a session which asks is a session that stalls. That argument
-   * holds for an unattended 4am run and not for an operator sitting in front of
-   * the hub, which is now exactly where a mirrored seat is watched from — so it
-   * is a per-seat choice with a friendlier default rather than a constant.
-   */
-  permissionMode?: string;
   /**
    * Repo-relative path prefixes this participant may write, e.g.
    * `["src/metrics/", "tests/metrics/"]`.

@@ -1,9 +1,6 @@
-import { createElement, useLayoutEffect, useRef } from 'react';
+import { createElement } from 'react';
 import type { Claim } from '../../contracts/claim.js';
 import type { CrosstalkEvent } from '../../contracts/events.js';
-import { HUMAN_ID } from '../../contracts/room.js';
-import { isRunStart } from '../../core/runs.js';
-import { clockTime } from '../clock.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { ClaimCard } from '../cards/ClaimCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
@@ -11,14 +8,11 @@ import { MessageCard } from '../cards/MessageCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { ProtocolCard } from '../cards/ProtocolCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
-import { DecisionCard } from '../cards/DecisionCard.js';
-// @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { TaskCard } from '../cards/TaskCard.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { Composer } from './Composer.js';
 // @ts-expect-error TS6142 is expected because the frozen test config omits JSX.
 import { DisputeView } from '../dispute/DisputeView.js';
-import type { MessageAttachment } from '../../contracts/events.js';
 import type { ChannelRoom, ParticipantView } from '../state/derive.js';
 import { assignColours } from '../state/identity.js';
 import type { PostResult } from '../state/humanAction.js';
@@ -32,25 +26,13 @@ export interface StreamProps {
   participants?: ParticipantView[];
   /** `policy.dispute.maxRounds`, passed through to the dispute header. */
   maxRounds?: number;
-  /** Where blobs live on this machine, from `/config.json`. Only a video chip uses it. */
-  blobRoot?: string;
   /** Who the daemon attributes this browser's posts to. */
   self?: string;
-  /** What to call the operator's own seat. Absent until they have named it. */
-  operator?: string;
   /** `live`, `connecting` or `reconnecting`. Fixture mode never renders a stream. */
   status?: string;
-  onSend?: (body: string, attachments?: readonly MessageAttachment[]) => Promise<PostResult>;
+  onSend?: (body: string) => Promise<PostResult>;
   onVote?: (decisionId: string, option: string, rationale: string) => Promise<PostResult>;
   onHumanAction?: (action: HumanAction) => void;
-  /**
-   * Rendered but not shown, while a seat's terminal has the centre column.
-   *
-   * The board is hidden rather than unmounted so its scroll position, every
-   * expanded message and any half-written composer draft are still there when
-   * the operator comes back.
-   */
-  hidden?: boolean;
 }
 
 const ICONS: Record<string, string> = { floor: '#', task: '◇', dispute: '⚔', direct: '@' };
@@ -77,98 +59,22 @@ function kindOf(roomId: string | undefined): string {
   return 'direct';
 }
 
-/**
- * How close to the bottom still counts as being at the bottom.
- *
- * A reader who has scrolled up by a line is still reading the end and wants the
- * next message; one who has scrolled up by a screen is reading something and
- * must not be yanked away from it.
- */
-const STICK_SLACK_PX = 40;
-
-/**
- * Remember where the operator was, per room.
- *
- * Nothing in the hub restored a scroll position, which had three separate
- * symptoms and one cause. A freshly mounted stream sat at `scrollTop = 0` — the
- * oldest event in the room, and on a run of 1187 events a very long way from
- * anything current. Switching rooms carried the previous room's offset over and
- * let the browser clamp it. And new events arriving over SSE never scrolled at
- * all, so a message could land below the fold in silence.
- *
- * Hiding matters here too: the board is now hidden rather than unmounted while
- * a seat's terminal has the centre column, and a `display: none` element has
- * its `scrollTop` reset to zero by the browser. The offset is therefore kept in
- * a ref that is written on every scroll, not read back off the element when it
- * is time to restore.
- */
-function useStreamScroll(room: string, hidden: boolean, depth: number) {
-  const scroller = useRef<{ scrollTop: number; scrollHeight: number; clientHeight: number } | null>(null);
-  const offsets = useRef(new Map<string, number>());
-  const shown = useRef<string | undefined>(undefined);
-  const stick = useRef(true);
-
-  const remember = (): void => {
-    const el = scroller.current;
-    if (el === null || hidden) return;
-    offsets.current.set(room, el.scrollTop);
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_SLACK_PX;
-  };
-
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    if (el === null || hidden) {
-      // Leaving `shown` alone: coming back from a terminal has to look like
-      // arriving in the room again, so the saved offset is put back.
-      shown.current = undefined;
-      return;
-    }
-
-    if (shown.current !== room) {
-      const saved = offsets.current.get(room);
-      // A room never opened before starts at the newest message, not the
-      // oldest. That is what "open the room" means.
-      el.scrollTop = saved ?? el.scrollHeight;
-      stick.current = saved === undefined;
-      shown.current = room;
-      return;
-    }
-
-    if (stick.current) el.scrollTop = el.scrollHeight;
-  }, [room, hidden, depth]);
-
-  return { scroller, remember };
-}
-
 export function Stream({
   events,
   activeRoom,
   rooms,
   participants,
   maxRounds,
-  blobRoot,
   self,
-  operator,
   status = 'live',
   onSend,
   onVote,
   onHumanAction,
-  hidden,
 }: StreamProps) {
   const visibleEvents = (activeRoom ? events.filter((event) => event.room === activeRoom) : events)
     .slice()
     .sort((left, right) => left.seq - right.seq);
-  // Depth, not the array: a re-render that changed nothing about the log must
-  // not move the operator, and the whole log is re-projected and re-sorted on a
-  // two-second timer.
-  const { scroller, remember } = useStreamScroll(activeRoom ?? '#floor', hidden === true, visibleEvents.length);
   const claims = new Map<string, Claim>();
-  // Answered decisions, so a card that has been settled shows the answer rather
-  // than offering the buttons again.
-  const outcomes = new Map<string, string>();
-  for (const event of visibleEvents) {
-    if (event.kind === 'decision_resolved') outcomes.set(event.decisionId, event.outcome);
-  }
   const staleShas = new Set<string>();
   const roster = new Map((participants ?? []).map((participant) => [participant.id, participant]));
   const colours = assignColours((participants ?? []).map((participant) => participant.id));
@@ -183,33 +89,12 @@ export function Stream({
   const isDispute = Boolean(activeRoom && activeRoom.startsWith('dispute:'));
 
   const cards = visibleEvents.map((event) => {
-    // The run marker is a message on the wire and a divider on screen.
-    //
-    // It has to be an event — the boundary is durable or it is nothing — but
-    // rendering it as a card puts `run r-20260902-0100-2fc0dd` at the top of
-    // every board as though somebody said it. This project has already measured
-    // what machine chatter on the floor costs: 622 of one run's 1187 events.
-    // One rule, one date, no author.
-    if (isRunStart(event)) {
-      return createElement(
-        'div',
-        { key: String(event.seq) + '-run', className: 'run-divider', 'data-testid': 'run-divider' },
-        createElement('span', { className: 'run-divider-label' }, 'run started'),
-        createElement('time', { className: 'run-divider-when', dateTime: event.ts }, clockTime(event.ts)),
-      );
-    }
-
     if (event.kind === 'message') {
       const author = roster.get(event.from);
       return createElement(MessageCard, {
         key: String(event.seq) + '-' + event.kind,
         from: event.from,
         body: event.body,
-        ...(event.head === undefined ? {} : { head: event.head }),
-        ...(event.tag === undefined ? {} : { tag: event.tag }),
-        ...(event.attachments === undefined
-          ? {}
-          : { attachments: event.attachments, ...(blobRoot === undefined ? {} : { blobRoot }) }),
         ts: event.ts,
         seq: event.seq,
         role: author?.role,
@@ -217,7 +102,6 @@ export function Stream({
         harness: author?.harness,
         tier: author?.tier,
         colour: colours.get(event.from),
-        ...(operator !== undefined && event.from === (self ?? HUMAN_ID) ? { displayName: operator } : {}),
         mention: mentionIn(event.body, roster),
         testId: 'card-message-' + event.seq,
       });
@@ -260,42 +144,18 @@ export function Stream({
       }
     }
 
-    // A decision the operator is being asked to answer gets a card with a
-    // button per option. `ProtocolCard` draws the question and not the options,
-    // and the only vote control in the hub lives inside `DisputeView`, which a
-    // decision with no claim never reaches — so the one surface for planning
-    // with the operator rendered as a dead line of text.
-    if (event.kind === 'decision_opened' && event.decision.method === 'human') {
-      return createElement(DecisionCard, {
-        key: String(event.seq) + '-' + event.kind,
-        decision: event.decision,
-        ...(outcomes.get(event.decision.id) === undefined ? {} : { outcome: outcomes.get(event.decision.id)! }),
-        ...(onVote === undefined ? {} : { onVote }),
-      });
-    }
-
     return createElement(ProtocolCard, { key: String(event.seq) + '-' + event.kind, event });
   });
 
   return createElement(
     'section',
-    {
-      className: 'hub-region hub-stream',
-      'aria-label': 'event stream',
-      'data-testid': 'hub-region',
-      'data-region': 'stream',
-      ...(hidden === true ? { hidden: true } : {}),
-    },
+    { className: 'hub-region hub-stream', 'aria-label': 'event stream', 'data-testid': 'hub-region' },
     createElement(
       'header',
       { className: 'stream-head' },
       createElement('span', { className: 'stream-icon', 'aria-hidden': 'true' }, ICONS[kind] ?? '#'),
       createElement('h2', { className: 'stream-title' }, activeRoom ?? 'Stream'),
-      createElement(
-        'span',
-        { className: 'stream-sub fact' },
-        `${visibleEvents.length} event${visibleEvents.length === 1 ? '' : 's'}`,
-      ),
+      createElement('span', { className: 'stream-sub fact' }, `${visibleEvents.length} events`),
       createElement(
         'span',
         { className: 'stream-status', 'data-status': status, 'data-testid': 'stream-status' },
@@ -305,12 +165,7 @@ export function Stream({
     ),
     createElement(
       'div',
-      {
-        className: 'stream-scroll',
-        'data-testid': 'stream-scroll',
-        ref: scroller,
-        onScroll: remember,
-      },
+      { className: 'stream-scroll' },
       // An empty room is a first run, not a fault — the design says so on the
       // screen rather than leaving a blank panel.
       visibleEvents.length === 0 && !isDispute
@@ -324,7 +179,7 @@ export function Stream({
               { className: 'first-run-note' },
               self === undefined
                 ? 'Start an agent, or post the first message below.'
-                : `Connected as ${operator ?? self}. Start an agent, or post the first message below.`,
+                : `Connected as ${self}. Start an agent, or post the first message below.`,
             ),
           )
         : null,
@@ -347,6 +202,6 @@ export function Stream({
         )
       : null,
     // §10.3: a composer on every room, disputes included.
-    activeRoom && onSend ? createElement(Composer, { room: activeRoom, self, operator, onSend }) : null,
+    activeRoom && onSend ? createElement(Composer, { room: activeRoom, self, onSend }) : null,
   );
 }

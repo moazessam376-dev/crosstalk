@@ -1,73 +1,33 @@
 harnesses:
   claude-code-cli:
-    label: Claude Code · headless
-    models: [claude-opus-5, claude-fable-5, claude-sonnet-5, claude-haiku-4-5-20251001]
     briefFile: CLAUDE.md
-    settings: claude-code
     mcp: stdio
     mcpConfigPath: .mcp.json
     supervisable: true
-    # No positional prompt: with stream-json input the job is the first turn
-    # written to stdin, which is also what lets later turns land in the queue.
-    spawn: [claude, -p, --input-format, stream-json, --output-format, stream-json, --verbose]
-    turnFormat: stream-json
+    spawn: [claude, -p]
   claude-code-app:
-    label: Claude Code · app
     briefFile: CLAUDE.md
-    settings: claude-code
     mcp: stdio
     mcpConfigPath: .mcp.json
     supervisable: false
   codex-cli:
-    label: Codex
-    # Fallback only: `codex app-server` answers `model/list` with the real
-    # catalogue and its efforts, and that is what the hub shows when the
-    # binary is present. This list is what to say when it is not.
-    models: [gpt-5.6-luna, gpt-5.6-terra, gpt-5.6-sol]
     briefFile: AGENTS.md
     mcp: stdio
     mcpConfigPath: "~/.codex/config.toml"
     supervisable: true
     spawn: [codex, exec, --json]
   codex-app:
-    label: Codex · app
     briefFile: AGENTS.md
     mcp: unverified
     supervisable: false
   cursor-cli:
-    label: Cursor
-    # Fallback only; see `codex-cli`.
-    models: [claude-opus-5, claude-sonnet-5, auto]
     briefFile: .cursor/rules/crosstalk.mdc
     mcp: stdio
     mcpConfigPath: .cursor/mcp.json
     supervisable: true
     spawn: [cursor-agent, -p]
   cursor-app:
-    label: Cursor · app
     briefFile: .cursor/rules/crosstalk.mdc
     mcp: stdio
     mcpConfigPath: .cursor/mcp.json
     supervisable: false
-  claude-code-live:
-    label: Claude Code · interactive
-    models: [claude-opus-5, claude-fable-5, claude-sonnet-5, claude-haiku-4-5-20251001]
-    briefFile: CLAUDE.md
-    settings: claude-code
-    mcp: stdio
-    mcpConfigPath: .mcp.json
-    supervisable: true
-    # An interactive seat the operator can watch and steer from a phone, and
-    # mirror in the hub.
-    # `--remote-control` needs a terminal, so `openSession` runs this on a real
-    # pty; spawned without one, Claude Code falls back to print mode and exits.
-    # The pty is node-pty rather than `script`, which cannot be given a writable
-    # stdin from a daemon — measured: `tcgetattr/ioctl: Operation not supported
-    # on socket`. See src/harness/pty.ts.
-    # `auto` because a mirrored seat is one somebody is looking at: the hub
-    # draws its terminal and takes its keyboard, so a question it asks is a
-    # question that can be answered. `bypassPermissions` was chosen back when
-    # nobody was at the keyboard at 4am; a seat that needs it still gets it,
-    # per seat, with `permissionMode` in the roster.
-    spawn: [claude, --remote-control, --permission-mode, auto]
-    turnFormat: interactive

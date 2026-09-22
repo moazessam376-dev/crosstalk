@@ -1,8 +1,5 @@
-import type { Participant, ParticipantId } from './participant.js';
+import type { Participant } from './participant.js';
 import type { DecisionMethod, LadderRung } from './decision.js';
-
-/** Who may move a task to `accepted`. `spoc` is the named team-OS amendment. */
-export type TaskAcceptanceMethod = DecisionMethod | 'spoc';
 
 export interface ProjectConfig {
   /** Repo root, relative to the config file. */
@@ -43,12 +40,7 @@ export interface PolicyConfig {
     rungTimeouts: Partial<Record<LadderRung, Duration>>;
   };
   taskAcceptance: {
-    method: TaskAcceptanceMethod;
-    /**
-     * Required when `method` is `spoc`. The participant who may accept.
-     * Absent on every config written before the team-OS amendment.
-     */
-    delegate?: ParticipantId;
+    method: DecisionMethod;
   };
 }
 
@@ -82,14 +74,6 @@ export interface CrosstalkConfig {
   project: ProjectConfig;
   participants: Participant[];
   policy: PolicyConfig;
-  /**
-   * How this team works, by name — see `core/shape.ts`. Absent means no phase
-   * machine: the roster still works exactly as it did, which is what keeps this
-   * additive for every project that already exists.
-   */
-  shape?: string;
-  /** The file the shape's contract gate looks for, relative to the repo. */
-  contractPath?: string;
   /** Absent means no mirror. v1 ships the protocol; the mirror follows. */
   mirror?: MirrorConfig;
 }

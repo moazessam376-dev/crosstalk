@@ -1,5 +1,4 @@
 import type { RoomId } from '../../contracts/room.js';
-import type { MessageAttachment } from '../../contracts/events.js';
 
 export type HumanAction = { type: 'propose_test' | 'intervene_human' };
 
@@ -53,16 +52,8 @@ export async function postMessage(
   body: string,
   room: RoomId,
   fetchImpl: typeof fetch = fetch,
-  attachments?: readonly MessageAttachment[],
 ): Promise<PostResult> {
-  return post(
-    '/events',
-    // Omitted rather than sent empty: every message written before the
-    // amendment has no `attachments` key at all, and an empty array would
-    // change what every existing reader sees for no reason.
-    { kind: 'message', room, body, ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }) },
-    fetchImpl,
-  );
+  return post('/events', { kind: 'message', room, body }, fetchImpl);
 }
 
 /**
@@ -84,24 +75,6 @@ export async function postVote(
   fetchImpl: typeof fetch = fetch,
 ): Promise<PostResult> {
   return post(`/decisions/${encodeURIComponent(decisionId)}/vote`, { option, rationale }, fetchImpl);
-}
-
-export async function postCompose(
-  job: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<PostResult> {
-  return post('/compose', { job }, fetchImpl);
-}
-
-/**
- * Point the mirror at a GitHub repository.
- *
- * The measured reason nobody ever configured the mirror: doing it meant a
- * terminal command against a YAML block with no documented shape, while the hub
- * said "no mirror configured" and offered no way to change that.
- */
-export async function postMirrorRepo(url: string, fetchImpl: typeof fetch = fetch): Promise<PostResult> {
-  return post('/mirror', { url }, fetchImpl);
 }
 
 async function post(path: string, payload: unknown, fetchImpl: typeof fetch): Promise<PostResult> {

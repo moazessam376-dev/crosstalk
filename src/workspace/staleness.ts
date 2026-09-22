@@ -1,5 +1,5 @@
 import type { Claim, Task } from '../contracts/index.js';
-import { commitExists, isAncestor, isReachable } from './git.js';
+import { commitExists, isAncestor } from './git.js';
 
 export async function evaluateStaleness(
   claims: Claim[],
@@ -79,17 +79,7 @@ class AncestryCache {
     this.#cwd = cwd;
   }
 
-  /**
-   * Whether the repository still stands behind `sha` — false means the
-   * evidence is stale.
-   *
-   * Fresh when main contains the commit *or any local branch still reaches
-   * it*. Ancestry-of-main alone flagged every unmerged worktree commit — the
-   * normal home of honest evidence in a branch-per-task project — as stale on
-   * the first sweep. Stale now means orphaned: rebased away, pruned, or never
-   * in this repository, which is what §5.4's "the base moved out from under
-   * it" actually describes.
-   */
+  /** Whether `head` still contains `sha` — false means the evidence is stale. */
   async holds(sha: string): Promise<boolean> {
     const cached = this.#known.get(sha);
     if (cached !== undefined) return cached;
@@ -101,7 +91,7 @@ class AncestryCache {
 
   async #ask(sha: string): Promise<boolean> {
     try {
-      if (await isAncestor(sha, this.#head, this.#cwd)) return true;
+      return await isAncestor(sha, this.#head, this.#cwd);
     } catch (error) {
       // `merge-base --is-ancestor` exits 128 on an object the repository does
       // not hold, and `isAncestor` rethrows anything that is not a plain "no".
@@ -117,6 +107,5 @@ class AncestryCache {
       }
       throw error;
     }
-    return isReachable(sha, this.#cwd);
   }
 }

@@ -3,9 +3,7 @@ import type { PolicyConfig, Participant, Tier } from '../../src/contracts/index.
 import type { HarnessDescriptor } from '../../src/harness/registry.js';
 import { renderBrief } from '../../src/harness/brief.js';
 import { CLI_COMMANDS } from '../../src/cli/index.js';
-import { TOOLS_BY_NAME, TOOLS } from '../../src/mcp/tools.js';
-import { MESSAGE_TAGS, HEAD_LIMIT } from '../../src/contracts/say.js';
-import { TAGS } from '../../src/core/says.js';
+import { TOOLS_BY_NAME } from '../../src/mcp/tools.js';
 
 /**
  * The brief is the first thing every agent reads, and it named commands that do
@@ -50,7 +48,7 @@ function mcpToolsNamed(brief: string): string[] {
   return [...brief.matchAll(/`([a-z_][a-z0-9_]*)\(/g)].map((match) => match[1]!);
 }
 
-const ROLES: Participant['role'][] = ['leader', 'worker', 'spoc'];
+const ROLES: Participant['role'][] = ['leader', 'worker'];
 
 describe('a brief only names commands that exist', () => {
   it.each(ROLES)('shell tier, %s role', (role) => {
@@ -118,7 +116,7 @@ describe('a brief only names commands that exist', () => {
       '/repo',
     );
 
-    expect(brief).toMatch(/inbox\(/);
+    expect(brief).toMatch(/roster\(/);
   });
 
   it('does not tell a worktree agent it owns particular paths', () => {
@@ -138,103 +136,7 @@ describe('a brief only names commands that exist', () => {
   it('still names the gates that do exist, on the tier that has them', () => {
     const brief = renderBrief(participant(), descriptor(), policy, 'mcp', '/repo');
     // Losing the gates entirely would also pass "names nothing wrong".
-    expect(brief).toContain('inbox(');
-    expect(brief).toContain('act(');
-    expect(brief).toContain('claim(');
-    expect(brief).not.toContain('ack_task(');
-    expect(brief).not.toContain('submit_task(');
+    expect(brief).toContain('ack_task(');
+    expect(brief).toContain('submit_task(');
   });
-});
-
-/**
- * No size, anywhere a model reads before writing.
- *
- * `1500` appeared three times in these templates and twice in the `say` tool
- * schema, which is in context on every call. Over 1187 events the median peer
- * message came in at 1429 characters — 95% of the allowance, from every seat,
- * every time. That is not verbosity; it is a target being hit. The budgets are
- * enforced on the write and named only in refusals, after the fact, and only as
- * an amount to cut.
- */
-describe('the prompt surface names no budget', () => {
-  const budgets = [String(HEAD_LIMIT), ...MESSAGE_TAGS.map((tag) => String(TAGS[tag].body))]
-    .filter((size) => size !== '0');
-
-  it('has budgets to look for, so this is not vacuous', () => {
-    expect(budgets.length).toBeGreaterThan(0);
-    expect(budgets).toContain('1500');
-  });
-
-  for (const tier of ['mcp', 'shell', 'file'] as Tier[]) {
-    it(`keeps them out of the ${tier} brief`, () => {
-      const content = renderBrief(participant(), descriptor(), policy, tier, '/repo', 'trio-contract');
-      for (const size of budgets) expect(content, `${tier} brief names ${size}`).not.toContain(size);
-    });
-  }
-
-  it('keeps them out of every tool description and property', () => {
-    const rendered = JSON.stringify(TOOLS.map((tool) => ({ d: tool.description, s: tool.inputSchema })));
-    for (const size of budgets) expect(rendered, `a tool schema names ${size}`).not.toContain(size);
-  });
-});
-
-describe('the brief and the tag table agree', () => {
-  it('names every tag the seat has, and invents none', () => {
-    const content = renderBrief(
-      participant({ role: 'peer' }),
-      descriptor(),
-      policy,
-      'mcp',
-      '/repo',
-      'trio-contract',
-    );
-
-    for (const tag of MESSAGE_TAGS) expect(content, `brief omits ${tag}`).toContain(`\`${tag}\``);
-  });
-
-  it('says nothing about tags when the shape does not enforce them', () => {
-    // A brief teaching a schema the daemon will not apply is a rule that is not
-    // real, and this repo has measured what agents do with those.
-    const content = renderBrief(participant(), descriptor(), policy, 'mcp', '/repo');
-
-    expect(content).not.toContain('`status`');
-    expect(content).not.toContain('`blocked`');
-  });
-});
-
-/**
- * A verb's *shape*, not just its name.
- *
- * The existing checks catch a brief naming a command that does not exist, which
- * is the bug that created this file. They did not catch four templates still
- * carrying `say(room, body)` directly above the tag table that contradicts it —
- * the name was real, the signature had moved. A seat reading both would have
- * had to guess which one the daemon meant.
- */
-describe('the brief names say the way say is actually called', () => {
-  const required = TOOLS_BY_NAME.get('say')!.inputSchema.required ?? [];
-
-  it('has required fields to check against, so this is not vacuous', () => {
-    expect(required).toContain('tag');
-    expect(required).toContain('head');
-  });
-
-  for (const role of ['leader', 'worker', 'peer', 'spoc'] as const) {
-    it(`is right in the ${role} brief`, () => {
-      const content = renderBrief(
-        participant({ role, ...(role === 'leader' || role === 'spoc' ? { id: role } : {}) }),
-        descriptor(),
-        policy,
-        'mcp',
-        '/repo',
-        'trio-contract',
-      );
-
-      // The old signature, exactly. Positional args are the drift.
-      expect(content, `${role} brief still says say(room`).not.toContain('say(room');
-      for (const field of required) {
-        expect(content, `${role} brief calls say without ${field}`).toContain(field);
-      }
-    });
-  }
 });

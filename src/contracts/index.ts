@@ -35,7 +35,6 @@ export type {
   ProjectConfig,
   Duration,
   PlanningMode,
-  TaskAcceptanceMethod,
   PolicyConfig,
   MirrorMode,
   MirrorConfig,

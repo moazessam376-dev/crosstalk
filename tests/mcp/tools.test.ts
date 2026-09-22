@@ -82,7 +82,6 @@ const EVIDENCE = {
 };
 
 const CLAIM = {
-  kind: 'raise' as const,
   against: 'codex',
   target: 'src/economy.ts:41',
   assertion: 'The staffing coefficient is applied twice',
@@ -94,6 +93,12 @@ const CLAIM = {
 /**
  * The tool envelope minus `warnings`, which is a fact about where this test
  * process happens to be running rather than about the tool.
+ *
+ * The rig serves a temp repo while vitest runs in the Crosstalk checkout, so
+ * CT-9's workspace warning fires on every call here. Split out rather than
+ * folded into the expectation: the shape stays strictly asserted, and the
+ * environment-dependent part is named as such instead of quietly widening a
+ * `toEqual` into a `toMatchObject`.
  */
 function shapeOf(result: ToolResult): { rest: Record<string, unknown>; warnings: unknown } {
   const { warnings, ...rest } = payload(result) as Record<string, unknown>;
@@ -103,7 +108,7 @@ function shapeOf(result: ToolResult): { rest: Record<string, unknown>; warnings:
 describe('mcp tools against a real daemon', () => {
   it('raises a claim and derives raisedBy from the token rather than the payload', async () => {
     await withDaemon(async (f) => {
-      const result = await callTool(f.as('leader'), 'claim', { ...CLAIM });
+      const result = await callTool(f.as('leader'), 'raise_claim', { ...CLAIM });
 
       expect(result.isError).toBeUndefined();
       const events = (payload(result) as { events: CrosstalkEvent[] }).events;
@@ -112,13 +117,14 @@ describe('mcp tools against a real daemon', () => {
 
       expect(raised.claim.raisedBy).toBe('leader');
       expect(raised.from).toBe('leader');
+      // The evidence author is derived too — the client never sends `by`.
       expect(raised.claim.evidence[0]?.by).toBe('leader');
     });
   });
 
   it('surfaces MISSING_FALSIFIER as an error an agent can act on', async () => {
     await withDaemon(async (f) => {
-      const result = await callTool(f.as('leader'), 'claim', { ...CLAIM, falsifier: '' });
+      const result = await callTool(f.as('leader'), 'raise_claim', { ...CLAIM, falsifier: '' });
 
       expect(result.isError).toBe(true);
       expect(text(result)).toContain('MISSING_FALSIFIER');
@@ -128,7 +134,7 @@ describe('mcp tools against a real daemon', () => {
 
   it('surfaces VACUOUS_FALSIFIER, so a placeholder is refused as loudly as an empty one', async () => {
     await withDaemon(async (f) => {
-      const result = await callTool(f.as('leader'), 'claim', {
+      const result = await callTool(f.as('leader'), 'raise_claim', {
         ...CLAIM,
         falsifier: 'if it did not work I would see it fail',
       });
@@ -141,10 +147,9 @@ describe('mcp tools against a real daemon', () => {
   it('refuses an uphold that carries no new evidence, and says why', async () => {
     await withDaemon(async (f) => {
       const leader = f.as('leader');
-      await callTool(leader, 'claim', { ...CLAIM });
+      await callTool(leader, 'raise_claim', { ...CLAIM });
 
-      const contested = await callTool(f.as('codex'), 'claim', {
-        kind: 'respond',
+      const contested = await callTool(f.as('codex'), 'respond_to_claim', {
         claimId: 'C-1',
         verdict: 'contest',
         rationale: 'Both sites read the same coefficient but apply it to different quantities.',
@@ -153,8 +158,10 @@ describe('mcp tools against a real daemon', () => {
       });
       expect(contested.isError).toBeUndefined();
 
-      const stale = await callTool(leader, 'claim', {
-        kind: 'respond',
+      // The same evidence the claim already carries. `uphold` restates a claim
+      // whose falsifier is on the record, so it needs new evidence — not a
+      // new falsifier, and not more conviction.
+      const stale = await callTool(leader, 'respond_to_claim', {
         claimId: 'C-1',
         verdict: 'uphold',
         rationale: 'Still stands.',
@@ -164,8 +171,8 @@ describe('mcp tools against a real daemon', () => {
       expect(stale.isError).toBe(true);
       expect(text(stale)).toContain('UPHOLD_WITHOUT_NEW_EVIDENCE');
 
-      const upheld = await callTool(leader, 'claim', {
-        kind: 'respond',
+      // The neighbouring case that must stay legal: new evidence, no falsifier.
+      const upheld = await callTool(leader, 'respond_to_claim', {
         claimId: 'C-1',
         verdict: 'uphold',
         rationale: 'Narrowing the defect.',
@@ -180,8 +187,7 @@ describe('mcp tools against a real daemon', () => {
   it('returns every event a write appends, not just the first', async () => {
     await withDaemon(async (f) => {
       const leader = f.as('leader');
-      const opened = await callTool(leader, 'claim', {
-        kind: 'open',
+      const opened = await callTool(leader, 'open_decision', {
         question: 'Do we ship the daemon before the CLI?',
         options: ['yes', 'no'],
         voters: ['leader'],
@@ -189,22 +195,22 @@ describe('mcp tools against a real daemon', () => {
       });
       expect(opened.isError).toBeUndefined();
 
-      const voted = await callTool(leader, 'claim', {
-        kind: 'vote',
+      const voted = await callTool(leader, 'vote', {
         decisionId: 'D-1',
         option: 'yes',
         rationale: 'The CLI has nothing to talk to until the daemon exists.',
       });
 
       expect(voted.isError).toBeUndefined();
+      // An agent that reads only the first event never learns the decision closed.
       expect(kinds(voted)).toEqual(['vote_cast', 'decision_resolved']);
     });
   });
 
-  it('assigns in one act and acknowledges through gate 1 in one call', async () => {
+  it('acknowledges a task and moves it through gate 1 in one call', async () => {
     await withDaemon(async (f) => {
-      const assigned = await callTool(f.as('leader'), 'act', {
-        kind: 'assign',
+      const leader = f.as('leader');
+      await callTool(leader, 'create_task', {
         id: 'T-01',
         title: 'Build the MCP server',
         brief: 'Tier 1 transport.',
@@ -214,111 +220,22 @@ describe('mcp tools against a real daemon', () => {
         acceptance: ['tools listed'],
         branch: 'track-h/mcp',
       });
-      expect(assigned.isError).toBeUndefined();
-      expect(kinds(assigned)).toEqual(expect.arrayContaining(['task_created', 'task_state']));
+      await callTool(leader, 'set_task_state', { taskId: 'T-01', state: 'assigned' });
 
-      const acked = await callTool(f.as('codex'), 'act', {
-        kind: 'ack',
+
+      const acked = await callTool(f.as('codex'), 'ack_task', {
         taskId: 'T-01',
         restatement: 'Build a stdio MCP server whose tool schemas teach the protocol.',
+        ambiguities: ['Whether submit_task is in scope given the contract calls the route blocked'],
       });
 
       expect(acked.isError).toBeUndefined();
+      // The daemon prepends `participant_joined` on a participant's first
+      // authenticated request, and this is codex's — surfaced, not dropped,
+      // because an agent that never sees its own join cannot tell whether the
+      // roster knows about it. Gate 1's two events are the tail.
       expect(kinds(acked)).toContain('participant_joined');
       expect(kinds(acked).slice(-2)).toEqual(['brief_ack', 'task_state']);
-    });
-  });
-
-  it('refuses a worker calling act.assign', async () => {
-    await withDaemon(async (f) => {
-      const result = await callTool(f.as('codex'), 'act', {
-        kind: 'assign',
-        id: 'T-99',
-        title: 'Nope',
-        brief: 'Not yours.',
-        assignee: 'codex',
-        branch: 'ct/nope',
-      });
-      expect(result.isError).toBe(true);
-      expect(text(result)).toContain('NOT_TASK_AUTHORITY');
-    });
-  });
-
-  it('refuses act.done without a critique record, and submits with one', async () => {
-    await withDaemon(async (f) => {
-      await callTool(f.as('leader'), 'act', {
-        kind: 'assign',
-        id: 'T-03',
-        title: 'Ship it',
-        brief: 'Done.',
-        assignee: 'codex',
-        branch: 'ct/T-03',
-      });
-      await callTool(f.as('codex'), 'act', {
-        kind: 'ack',
-        taskId: 'T-03',
-        restatement: 'Ship it',
-      });
-      await f.as('codex').post('/tasks/T-03/state', { state: 'in_progress' });
-
-      // Gate 2 is authored, never fabricated: the server used to invent
-      // `{rounds: 1, critic: 'self', findings: []}` on omission, which made the
-      // gate a rubber stamp for the agent that said nothing.
-      const silent = await callTool(f.as('codex'), 'act', { kind: 'done', taskId: 'T-03' });
-      expect(silent.isError).toBe(true);
-      expect(text(silent)).toContain('GATE_NOT_SELF_REVIEWED');
-
-      const done = await callTool(f.as('codex'), 'act', {
-        kind: 'done',
-        taskId: 'T-03',
-        critique: { rounds: 1, critic: 'self', findings: [] },
-      });
-      expect(done.isError).toBeUndefined();
-      expect(kinds(done)).toEqual(expect.arrayContaining(['self_review', 'task_state']));
-
-      const inbox = payload(await callTool(f.as('codex'), 'inbox', { wait: false })) as {
-        mine: { id: string; state: string }[];
-      };
-      expect(inbox.mine.find((task) => task.id === 'T-03')?.state).toBe('submitted');
-    });
-  });
-
-  it('lets the leader accept a submitted task and refuses a worker', async () => {
-    await withDaemon(async (f) => {
-      await callTool(f.as('leader'), 'act', {
-        kind: 'assign',
-        id: 'T-04',
-        title: 'Ship it',
-        brief: 'Done.',
-        assignee: 'codex',
-        branch: 'ct/T-04',
-      });
-      await callTool(f.as('codex'), 'act', {
-        kind: 'ack',
-        taskId: 'T-04',
-        restatement: 'Ship it',
-      });
-      await f.as('codex').post('/tasks/T-04/state', { state: 'in_progress' });
-      await callTool(f.as('codex'), 'act', {
-        kind: 'done',
-        taskId: 'T-04',
-        critique: { rounds: 1, critic: 'self', findings: [] },
-      });
-
-      const waiting = payload(await callTool(f.as('leader'), 'inbox', { wait: false })) as { next?: string };
-      expect(waiting.next).toBe('T-04 is submitted — accept');
-
-      const worker = await callTool(f.as('codex'), 'act', { kind: 'accept', taskId: 'T-04' });
-      expect(worker.isError).toBe(true);
-      expect(text(worker)).toContain('NOT_TASK_AUTHORITY');
-
-      const accepted = await callTool(f.as('leader'), 'act', { kind: 'accept', taskId: 'T-04' });
-      expect(accepted.isError).toBeUndefined();
-      const inbox = payload(await callTool(f.as('leader'), 'inbox', { wait: false })) as {
-        next?: string;
-        mine: { id: string; state: string }[];
-      };
-      expect(inbox.next).not.toBe('T-04 is submitted — accept');
     });
   });
 
@@ -336,13 +253,24 @@ describe('mcp tools against a real daemon', () => {
         branch: 'b',
       });
 
-      const error = await leader
-        .post('/tasks/T-02/state', { state: 'merged' })
-        .then(() => undefined)
-        .catch((caught: unknown) => caught);
+      const result = await callTool(leader, 'set_task_state', { taskId: 'T-02', state: 'merged' });
 
-      expect(error).toBeInstanceOf(DaemonRequestError);
-      expect((error as DaemonRequestError).code).toBe('ILLEGAL_TRANSITION');
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain('ILLEGAL_TRANSITION');
+    });
+  });
+
+  it('reads a room whose id contains a "#", which an unencoded path would drop', async () => {
+    await withDaemon(async (f) => {
+      const leader = f.as('leader');
+      await callTool(leader, 'say', { room: '#floor', body: 'pushed at 9911aaa' });
+
+      const result = await callTool(f.as('codex'), 'read_events', { room: '#floor' });
+
+      expect(result.isError).toBeUndefined();
+      const events = (payload(result) as { events: CrosstalkEvent[] }).events;
+      expect(events.map((event) => event.kind)).toContain('message');
+      expect(events.every((event) => event.room === '#floor')).toBe(true);
     });
   });
 
@@ -351,75 +279,96 @@ describe('mcp tools against a real daemon', () => {
     expect(roomPath('dispute:C-118')).toBe('/rooms/dispute%3AC-118/events');
   });
 
-  it('treats inbox since as exclusive, so paging cannot re-read or skip an event', async () => {
+  it('treats `since` as exclusive, so paging cannot re-read or skip an event', async () => {
     await withDaemon(async (f) => {
       const leader = f.as('leader');
-      const codex = f.as('codex');
       await callTool(leader, 'say', { room: '#floor', body: 'one' });
       await callTool(leader, 'say', { room: '#floor', body: 'two' });
 
-      const all = payload(await callTool(codex, 'inbox', { wait: false, since: 0 })) as {
-        unread: { seq: number }[];
+      const all = payload(await callTool(leader, 'read_events', {})) as {
+        events: CrosstalkEvent[];
+        lastSeq: number;
       };
-      expect(all.unread.length).toBeGreaterThan(0);
-      const last = all.unread[all.unread.length - 1]!.seq;
-      const next = payload(await callTool(codex, 'inbox', { wait: false, since: last })) as {
-        unread: { seq: number }[];
+      const next = payload(await callTool(leader, 'read_events', { since: all.lastSeq })) as {
+        events: CrosstalkEvent[];
       };
 
-      expect(next.unread).toEqual([]);
+      expect(all.events.length).toBeGreaterThan(0);
+      // Inclusive `since` would hand back the last event a second time.
+      expect(next.events).toEqual([]);
+
+      const fromFirst = payload(await callTool(leader, 'read_events', { since: 1 })) as {
+        events: CrosstalkEvent[];
+      };
+      expect(fromFirst.events.map((event) => event.seq)).not.toContain(1);
+      expect(fromFirst.events[0]?.seq).toBe(2);
     });
   });
 
-  it('inbox returns idle when nothing addresses the caller', async () => {
+  it('await_turn returns idle when nothing addresses the caller', async () => {
     await withDaemon(async (f) => {
-      const result = await callTool(f.as('codex'), 'inbox', { timeout_s: 1, wait: false });
+      const result = await callTool(f.as('codex'), 'await_turn', { timeout_s: 1 });
 
       expect(result.isError).toBeUndefined();
       const { rest, warnings } = shapeOf(result);
-      expect(rest['you']).toBe('codex');
-      expect(rest['next']).toBe('idle');
-      expect(rest['unread']).toEqual([]);
+      expect(rest).toEqual({ idle: true, you: 'codex' });
+      // CT-9 fires here because the rig is outside the temp repo it serves.
       expect(warnings).toBeDefined();
     });
   });
 
-  it('forwards inbox `since`, so a caller can re-read what it already consumed', async () => {
+  // Added because a mutation survived: setting await_turn's `since` to
+  // undefined broke nothing, so nothing was testing that it reached the server.
+  // The daemon tracks a per-participant delivered mark, which makes the default
+  // path and the explicit path look identical until you re-read something you
+  // have already consumed.
+  it('forwards await_turn\'s `since`, so a caller can re-read what it already consumed', async () => {
     await withDaemon(async (f) => {
       const codex = f.as('codex');
       await callTool(f.as('leader'), 'say', { room: '#floor', body: 'review posted' });
 
-      const first = payload(await callTool(codex, 'inbox', { timeout_s: 5 })) as {
-        unread: { kind: string; summary: string }[];
+      const first = payload(await callTool(codex, 'await_turn', { timeout_s: 5 })) as {
+        events: CrosstalkEvent[];
       };
-      expect(first.unread.length).toBeGreaterThan(0);
+      expect(first.events.length).toBeGreaterThan(0);
 
-      expect(shapeOf(await callTool(codex, 'inbox', { timeout_s: 1, wait: false })).rest['next']).toBe('idle');
+      // The delivered mark has advanced, so the default path now has nothing.
+      expect(shapeOf(await callTool(codex, 'await_turn', { timeout_s: 1 })).rest).toEqual({
+        idle: true,
+        you: 'codex',
+      });
 
-      const replayed = payload(await callTool(codex, 'inbox', { timeout_s: 1, since: 0 })) as {
-        unread: { kind: string; summary: string }[];
+      // ...but an explicit `since` must override that mark. Without it being
+      // forwarded, this is idle too and the test cannot tell the difference.
+      const replayed = payload(await callTool(codex, 'await_turn', { timeout_s: 1, since: 0 })) as {
+        events: CrosstalkEvent[];
       };
-      expect(replayed.unread.some((card) => card.kind === 'said' && card.summary === 'review posted')).toBe(true);
+      expect(replayed.events.some((event) => event.kind === 'message' && event.body === 'review posted')).toBe(
+        true,
+      );
     });
   });
 
-  it('inbox wakes on another participant speaking, and not on the caller itself', async () => {
+  it('await_turn wakes on another participant speaking, and not on the caller itself', async () => {
     await withDaemon(async (f) => {
       const codex = f.as('codex');
       const leader = f.as('leader');
 
-      await callTool(codex, 'inbox', { timeout_s: 1, wait: false });
+      // Join first, so the wait starts from a known delivered mark.
+      await callTool(codex, 'await_turn', { timeout_s: 1 });
 
-      const waiting = callTool(codex, 'inbox', { timeout_s: 20 });
+      const waiting = callTool(codex, 'await_turn', { timeout_s: 20 });
+      // The caller's own write must not resolve its own wait — a loop that
+      // wakes on your own events looks like progress and is not.
       await callTool(codex, 'say', { room: '#floor', body: 'still working' });
       await callTool(leader, 'say', { room: '#floor', body: 'review posted' });
 
       const result = await waiting;
-      const unread = (payload(result) as { unread: { from: string; summary: string }[] }).unread;
+      const events = (payload(result) as { events: CrosstalkEvent[] }).events;
 
-      expect(unread.length).toBeGreaterThan(0);
-      expect(unread.every((card) => card.from !== 'codex')).toBe(true);
-      expect(unread.some((card) => card.summary === 'review posted')).toBe(true);
+      expect(events.length).toBeGreaterThan(0);
+      expect(events.every((event) => event.from !== 'codex')).toBe(true);
+      expect(events.some((event) => event.kind === 'message' && event.body === 'review posted')).toBe(true);
     });
   });
 
@@ -434,6 +383,7 @@ describe('mcp tools against a real daemon', () => {
       expect(error).toBeInstanceOf(DaemonRequestError);
       const failure = error as DaemonRequestError;
       expect(failure.code).toBe('EVENT_KIND_NOT_APPENDABLE');
+      // Not "request failed": the message names the route that would have worked.
       expect(failure.message).toContain('POST /claims');
     });
   });
@@ -456,34 +406,42 @@ describe('mcp tools against a real daemon', () => {
       const result = await callTool(f.as('leader'), 'raise_a_claim', {});
 
       expect(result.isError).toBe(true);
-      expect(text(result)).toContain('claim');
-      expect(text(result)).toContain('inbox');
+      expect(text(result)).toContain('raise_claim');
     });
   });
 
-  it('lists the caller and only the caller\'s tasks on inbox', async () => {
+  it('reads the roster and the board', async () => {
     await withDaemon(async (f) => {
-      await callTool(f.as('leader'), 'act', {
-        kind: 'assign',
+      const roster = payload(await callTool(f.as('leader'), 'roster', {})) as {
+        participants: { id: string; model?: string }[];
+      };
+      expect(roster.participants.map((p) => p.id)).toContain('codex');
+
+      const board = payload(await callTool(f.as('leader'), 'board', {})) as { tasks: unknown[] };
+      expect(Array.isArray(board.tasks)).toBe(true);
+      // board is metadata only — a body key anywhere makes it a firehose.
+      expect(JSON.stringify(board)).not.toContain('"body"');
+    });
+  });
+
+  it('returns the caller\'s own tasks only', async () => {
+    await withDaemon(async (f) => {
+      await f.as('leader').post('/tasks', {
         id: 'T-09',
         title: 'x',
         brief: 'y',
+        specRefs: [],
         assignee: 'codex',
+        deps: [],
+        acceptance: ['z'],
         branch: 'b',
       });
 
-      const mine = payload(await callTool(f.as('codex'), 'inbox', { wait: false })) as {
-        you: string;
-        mine: { id: string }[];
-      };
-      const leaders = payload(await callTool(f.as('leader'), 'inbox', { wait: false })) as {
-        mine: { id: string }[];
-      };
+      const mine = payload(await callTool(f.as('codex'), 'my_tasks', {})) as { tasks: { id: string }[] };
+      const leaders = payload(await callTool(f.as('leader'), 'my_tasks', {})) as { tasks: { id: string }[] };
 
-      expect(mine.you).toBe('codex');
-      expect(mine.mine.map((task) => task.id)).toContain('T-09');
-      expect(leaders.mine.map((task) => task.id)).not.toContain('T-09');
-      expect(JSON.stringify(mine.mine)).not.toContain('"body"');
+      expect(mine.tasks.map((t) => t.id)).toContain('T-09');
+      expect(leaders.tasks.map((t) => t.id)).not.toContain('T-09');
     });
   });
 });

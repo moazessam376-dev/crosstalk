@@ -2,7 +2,7 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { existsSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import type { CrosstalkEvent } from '../contracts/events.js';
@@ -19,40 +19,22 @@ import {
 import { startMirror } from '../mirror/index.js';
 import { resolveHubDist } from '../daemon/hub.js';
 import { HUMAN_ID } from '../contracts/room.js';
-import { SHAPES } from '../core/shape.js';
-import type { MirrorMode } from '../contracts/config.js';
 import { dmId } from '../core/rooms.js';
-import { ledgerOf, renderLedger } from '../core/ledger.js';
-import { isRunStart, runIdOf, RUN_ID_PATTERN, type RunSummary } from '../core/runs.js';
 
 import { CliError, DaemonClient, EXIT, stateDir, type WriteResult } from './client.js';
-import { runCompose } from './compose.js';
 import { preflight, purgeWorkspaces, runInit } from './init.js';
-import { configureGithub } from './github.js';
 import { openBrowser } from './open.js';
 import { bold, dim, emit, eventLine, failureText, table } from './output.js';
 
 const USAGE = `crosstalk — multi-agent development where a finding is a claim, not a command
 
-  crosstalk init [--participant id:role:harness[:model[:effort[:permission-mode]]]]... [--shape NAME] [--force]
-  crosstalk compose --job '...' [--participant id:role:harness[:model[:effort[:permission-mode]]]]... [--force]
+  crosstalk init [--participant id:role:harness[:model[:effort]]]... [--force]
   crosstalk up   [--port N] [--host ADDR] [--no-open] [--force]
   crosstalk down [--as <id>] [--purge]
   crosstalk doctor
-  crosstalk github <url> [--login <gh-login>] [--mode one-way|two-way-human]
-  crosstalk ledger [--run <id>] [--all] [--json]   what a run cost, per seat
-  crosstalk runs [--json]                    every run this repository has had
-  crosstalk runs new [--job '...']           put this one away and start fresh
-  crosstalk runs archive <id>                move it out of the live log
-  crosstalk runs rm <id>                     delete an archive, permanently
 
-  ct inbox    [--as <id>] [--timeout 0] [--no-wait]
-  ct say      --as <id> --tag <tag> --head '...' [--to <id>] [--room '#floor'] [--ref R] [--body '...']
-  ct act      --as <id> --kind ack|assign|done|accept|reject [--task T-01] [--restatement '...']
-              [--id T-01 --title '...' --brief '...' --assignee <id> --branch <branch>]
-  ct dm       --as <id> --with <id> --head '...'      (a side room; @human is in it too)
-  ct ask      --as <id> --question '...' --option A --option B   (puts a choice to @human)
-  ct answer   <decision-id> --as <id> --option '...' [--why '...']
+  ct say      --as <id> --room '#floor' --body '...' [--to <id>]
+  ct dm       --as <id> --with <id> --body '...'      (a side room; @human is in it too)
   ct claim    --as <id> --against <id> --target <file:line> --assertion '...' --falsifier '...'
               [--severity blocker|defect|risk|nit] [--evidence-cmd '...'] [--evidence-sha <sha>]
   ct respond  <claim-id> --as <id> --verdict accept|contest|uphold|concede|amend|clarify
@@ -139,28 +121,14 @@ async function main(argv: string[]): Promise<number> {
 async function cmdInit(argv: string[]): Promise<number> {
   const { flags } = read(argv, {
     participant: { type: 'string', multiple: true },
-    shape: { type: 'string' },
     force: { type: 'boolean', default: false },
   });
   const repo = str(flags, 'repo') ?? '.';
-
-  // The shape is how a team is told to be a team. It was reachable only from
-  // the hub's launcher, so a roster staffed at the command line ran with no
-  // phases and no gates and nothing said so.
-  const shape = str(flags, 'shape');
-  if (shape !== undefined && !SHAPES.has(shape)) {
-    throw new CliError(
-      `no shape named ${shape}`,
-      EXIT.usage,
-      `Known shapes: ${[...SHAPES.keys()].join(', ')}.`,
-    );
-  }
 
   const result = await runInit({
     repo,
     participants: (flags['participant'] as string[] | undefined) ?? [],
     force: flags['force'] === true,
-    ...(shape === undefined ? {} : { shape }),
   });
 
   emit({ config: result.configPath, mcp: result.mcp, participants: result.kickoff }, flags['json'] === true, () => {
@@ -201,52 +169,6 @@ async function cmdInit(argv: string[]): Promise<number> {
   return EXIT.ok;
 }
 
-async function cmdCompose(argv: string[]): Promise<number> {
-  const { flags } = read(argv, {
-    job: { type: 'string' },
-    participant: { type: 'string', multiple: true },
-    force: { type: 'boolean', default: false },
-  });
-  const repo = str(flags, 'repo') ?? '.';
-  const result = await runCompose({
-    repo,
-    job: require_(flags, 'job'),
-    participants: (flags['participant'] as string[] | undefined) ?? [],
-    force: flags['force'] === true,
-  });
-  emit(result, flags['json'] === true, () =>
-    [
-      `${bold('Job posted')} on #floor as @human.`,
-      result.spawned.length === 0 ? 'No CLI harnesses spawned.' : `Spawned: ${result.spawned.join(', ')}`,
-      result.attached.length === 0 ? '' : `Attach: ${result.attached.join(', ')}`,
-      result.supervised.length === 0 ? '' : `Waking: ${result.supervised.join(', ')} — Ctrl-C to stop.`,
-    ]
-      .filter((line) => line !== '')
-      .join('\n'),
-  );
-
-  // Blocks while any seat can be woken: the loops are the delivery path, so
-  // returning here would leave those seats with nothing but their first turn.
-  if (result.supervised.length > 0 && flags['json'] !== true) {
-    await result.supervise();
-  }
-  return EXIT.ok;
-}
-
-/**
- * Write a roster with nobody but the operator in it, when there is none.
- *
- * Enough for the daemon to start, mint the human token and serve the hub; the
- * agents are staffed from the launcher, which writes the real roster and tells
- * the daemon to re-read it. An existing `crosstalk.yaml` is never touched.
- */
-async function bootstrapRoster(repo: string): Promise<void> {
-  const path = join(repo, 'crosstalk.yaml');
-  if (existsSync(path)) return;
-  await runInit({ repo, participants: [`${HUMAN_ID}:human:human`], force: false });
-  process.stdout.write('  No roster here yet — staff the team in the hub.\n\n');
-}
-
 async function cmdUp(argv: string[]): Promise<number> {
   const { flags } = read(argv, {
     port: { type: 'string' },
@@ -262,11 +184,6 @@ async function cmdUp(argv: string[]): Promise<number> {
     throw new CliError('--port must be an integer', EXIT.usage);
   }
 
-  // A repo with no roster is not an error, it is a repo nobody has staffed
-  // yet. `up` writes an empty one so the hub opens, and the team is chosen
-  // there — that is the whole point of the launcher, and requiring
-  // `crosstalk init --participant ...` first made its picker decorative.
-  await bootstrapRoster(repo);
   const config = await loadConfig(repo);
 
   // Before anything binds. A rejected configuration that started anyway is
@@ -414,12 +331,7 @@ async function cmdDown(argv: string[]): Promise<number> {
 
   let stopped = false;
   try {
-    // Stopping the daemon is an operator act, not a leader act. The default
-    // used to be `leader`, which predates flat peer rosters: a leaderless team
-    // — the shape the bench actually runs — could not be stopped at all
-    // without knowing to pass `--as @human`, and failed with "No token for
-    // leader" on a seat that was never meant to exist.
-    const client = await DaemonClient.open(repo, str(flags, 'as') ?? HUMAN_ID);
+    const client = await DaemonClient.open(repo, str(flags, 'as') ?? 'leader');
     await client.post('/shutdown', {});
     stopped = true;
   } catch (error) {
@@ -499,153 +411,25 @@ function formatFindings(findings: readonly Finding[]): string {
     .join('\n\n');
 }
 
-async function withClient<T>(
-  argv: string[],
-  extra: ParseArgsConfig['options'],
-  fn: (client: DaemonClient, flags: Flags, rest: string[]) => Promise<T>,
-  /**
-   * Who to be when `--as` is absent.
-   *
-   * Only the run commands pass one, and only `@human`: every run-shaped route
-   * is refused for anyone else, so demanding `--as @human` would be asking the
-   * operator to name the only identity the command can have. Every other
-   * command leaves this undefined and keeps refusing, because for those the
-   * identity genuinely is a choice — and guessing it wrong is how a message
-   * ends up attributed to the wrong seat.
-   */
-  fallbackAs?: string,
-): Promise<T> {
+async function withClient<T>(argv: string[], extra: ParseArgsConfig['options'], fn: (client: DaemonClient, flags: Flags, rest: string[]) => Promise<T>): Promise<T> {
   const { flags, rest } = read(argv, extra);
   const repo = resolve(str(flags, 'repo') ?? '.');
-  const client = await DaemonClient.open(repo, str(flags, 'as') ?? fallbackAs);
+  const client = await DaemonClient.open(repo, str(flags, 'as'));
   return fn(client, flags, rest);
 }
 
-async function cmdInbox(argv: string[]): Promise<number> {
-  return withClient(
-    argv,
-    { timeout: { type: 'string', default: '0' }, 'no-wait': { type: 'boolean', default: false } },
-    async (client, flags) => {
-      const timeout = Number(str(flags, 'timeout') ?? '0');
-      if (!Number.isInteger(timeout) || timeout < 0) {
-        throw new CliError('--timeout must be a non-negative integer', EXIT.usage);
-      }
-      const params = new URLSearchParams({ timeout_s: String(timeout) });
-      if (flags['no-wait'] === true) params.set('wait', '0');
-      const result = await client.get<Record<string, unknown>>(`/inbox?${params.toString()}`);
-      emit(result, flags['json'] === true, () => {
-        const next = typeof result['next'] === 'string' ? result['next'] : '';
-        const unread = Array.isArray(result['unread']) ? result['unread'].length : 0;
-        return next === 'idle' ? 'idle' : `${unread} unread${next === '' ? '' : ` — ${next}`}`;
-      });
-      return EXIT.ok;
-    },
-  );
-}
-
-async function cmdAct(argv: string[]): Promise<number> {
-  return withClient(
-    argv,
-    {
-      kind: { type: 'string' },
-      task: { type: 'string' },
-      restatement: { type: 'string' },
-      id: { type: 'string' },
-      title: { type: 'string' },
-      brief: { type: 'string' },
-      assignee: { type: 'string' },
-      branch: { type: 'string' },
-    },
-    async (client, flags) => {
-      const kind = require_(flags, 'kind');
-      if (kind === 'ack') {
-        const result = await client.post<WriteResult>(`/tasks/${encodeURIComponent(require_(flags, 'task'))}/ack`, {
-          restatement: require_(flags, 'restatement'),
-          ambiguities: [],
-        });
-        emit(result, flags['json'] === true, () => `acked ${require_(flags, 'task')}`);
-        return EXIT.ok;
-      }
-      if (kind === 'assign') {
-        const result = await client.post<WriteResult>('/tasks/assign', {
-          id: require_(flags, 'id'),
-          title: require_(flags, 'title'),
-          brief: require_(flags, 'brief'),
-          assignee: require_(flags, 'assignee'),
-          branch: require_(flags, 'branch'),
-        });
-        emit(result, flags['json'] === true, () => `assigned ${require_(flags, 'id')}`);
-        return EXIT.ok;
-      }
-      if (kind === 'done') {
-        const taskId = require_(flags, 'task');
-        const submit = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/submit`, {});
-        const submitted = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/state`, {
-          state: 'submitted',
-        });
-        const result = { events: [...submit.events, ...submitted.events] };
-        emit(result, flags['json'] === true, () => `${taskId} submitted`);
-        return EXIT.ok;
-      }
-      if (kind === 'accept') {
-        const taskId = require_(flags, 'task');
-        const result = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/state`, {
-          state: 'accepted',
-        });
-        emit(result, flags['json'] === true, () => `${taskId} accepted`);
-        return EXIT.ok;
-      }
-      if (kind === 'reject') {
-        const taskId = require_(flags, 'task');
-        const result = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/state`, {
-          state: 'in_progress',
-          reason: str(flags, 'restatement') ?? 'rejected',
-        });
-        emit(result, flags['json'] === true, () => `${taskId} rejected`);
-        return EXIT.ok;
-      }
-      throw new CliError(`Unknown act kind "${kind}"`, EXIT.usage, 'Use ack, assign, done, accept, or reject.');
-    },
-  );
-}
-
-/**
- * The shell tier's `say`, and it has to accept exactly what the MCP tier does.
- *
- * `--room` is no longer required: with `--to` and no room, the daemon opens the
- * side room. `brief-vocabulary.test.ts` exists because these two drifted once
- * already, and named two commands that did not exist.
- */
 async function cmdSay(argv: string[]): Promise<number> {
-  return withClient(
-    argv,
-    {
-      room: { type: 'string' },
-      body: { type: 'string' },
-      to: { type: 'string' },
-      ref: { type: 'string' },
-      tag: { type: 'string' },
-      head: { type: 'string' },
-      task: { type: 'string' },
-    },
-    async (client, flags) => {
-      const optional = ['room', 'body', 'to', 'ref', 'tag', 'task'] as const;
-      const head = str(flags, 'head') ?? str(flags, 'body');
-      if (head === undefined) {
-        throw new CliError('--head is required', EXIT.usage, 'The head is the message: one line, and usually the whole of it.');
-      }
-      const result = await client.post<WriteResult>('/events', {
-        kind: 'message',
-        head,
-        ...Object.fromEntries(optional.flatMap((name) => {
-          const value = str(flags, name);
-          return value === undefined ? [] : [[name, value]];
-        })),
-      });
-      emit(result, flags['json'] === true, () => `posted seq ${result.events[result.events.length - 1]!.seq}`);
-      return EXIT.ok;
-    },
-  );
+  return withClient(argv, { room: { type: 'string' }, body: { type: 'string' }, to: { type: 'string' } }, async (client, flags) => {
+    const to = str(flags, 'to');
+    const result = await client.post<WriteResult>('/events', {
+      kind: 'message',
+      room: require_(flags, 'room'),
+      body: require_(flags, 'body'),
+      ...(to === undefined ? {} : { to }),
+    });
+    emit(result, flags['json'] === true, () => `posted seq ${result.events[result.events.length - 1]!.seq}`);
+    return EXIT.ok;
+  });
 }
 
 /**
@@ -663,23 +447,16 @@ async function cmdSay(argv: string[]): Promise<number> {
  * than DMs.
  */
 async function cmdDm(argv: string[]): Promise<number> {
-  return withClient(argv, { with: { type: 'string' }, body: { type: 'string' }, ref: { type: 'string' }, head: { type: 'string' }, tag: { type: 'string' } }, async (client, flags) => {
+  return withClient(argv, { with: { type: 'string' }, body: { type: 'string' } }, async (client, flags) => {
     const other = require_(flags, 'with');
-    const ref = str(flags, 'ref');
     const me = str(flags, 'as');
     if (me === undefined) {
       throw new CliError('--as is required to open a side room', EXIT.usage, 'The room id is built from both ids, so both have to be named.');
     }
-    const head = str(flags, 'head') ?? require_(flags, 'body');
-    const tag = str(flags, 'tag');
     const result = await client.post<WriteResult>('/events', {
       kind: 'message',
       room: dmId(me, other),
-      to: other,
-      head,
-      ...(str(flags, 'body') === undefined ? {} : { body: str(flags, 'body') }),
-      ...(tag === undefined ? {} : { tag }),
-      ...(ref === undefined ? {} : { ref }),
+      body: require_(flags, 'body'),
     });
     emit(result, flags['json'] === true, () => `posted to ${bold(dmId(me, other))} (@human is in this room too)`);
     return EXIT.ok;
@@ -775,39 +552,6 @@ async function cmdAwait(argv: string[]): Promise<number> {
     emit(result, flags['json'] === true, () =>
       result.idle === true ? 'idle' : table((result.events ?? []).map(eventLine)),
     );
-    return EXIT.ok;
-  });
-}
-
-/**
- * Where the team is, and what is stopping the next phase.
- *
- * A gate is only a rule if something reports it. `inbox()` carries the same
- * status to the seats every turn; this is the operator's view of it, and the
- * one that answers "why has nobody moved" without reading the board.
- */
-async function cmdPhase(argv: string[]): Promise<number> {
-  return withClient(argv, {}, async (client, flags) => {
-    const phase = await client.get<{
-      id?: string;
-      intent?: string;
-      writes?: string;
-      complete?: boolean;
-      gates?: { id: string; need: string; met: boolean; missing?: string }[];
-    }>('/phase');
-
-    emit(phase, flags['json'] === true, () => {
-      if (phase.id === undefined) return 'No shape configured — add `shape:` to crosstalk.yaml.';
-      const lines = [
-        `${bold(phase.complete === true ? 'complete' : phase.id)} — ${phase.intent ?? ''}`,
-        `writes: ${phase.writes ?? 'unknown'}`,
-        '',
-      ];
-      for (const gate of phase.gates ?? []) {
-        lines.push(`${gate.met ? '✓' : '·'} ${gate.id} — ${gate.met ? 'met' : (gate.missing ?? gate.need)}`);
-      }
-      return lines.join('\n');
-    });
     return EXIT.ok;
   });
 }
@@ -934,404 +678,13 @@ async function cmdMine(argv: string[]): Promise<number> {
  * neither of which has ever existed. Exported so a test can compare the brief
  * against the real table instead of a second hand-written copy.
  */
-
-/**
- * `crosstalk github https://github.com/owner/repo` — the mirror in one command.
- *
- * Turning it on was a hand-edit of a YAML shape documented nowhere: `init`
- * writes no mirror key, and `doctor`'s remedy said to add one yourself. Then
- * the next `init --force` — which the hub runs on every re-staffing whose
- * roster or shape differs — rebuilt the file without it. The block is carried
- * across regenerations now; this is the other half, so nobody has to know the
- * shape in the first place.
- */
-/**
- * What the last run cost, per seat, from the log it already wrote.
- *
- * Reads the file rather than the daemon, so it works on a finished run and on a
- * repo whose daemon is down — which is when somebody actually asks.
- */
-/**
- * What a run cost, per seat.
- *
- * This read the whole of `events.jsonl` and called the answer "the last run",
- * which was true only while a repository had ever had one. Now that runs are a
- * thing the log records, the default is the run the operator is actually in —
- * and once archiving moves a finished run to its own file, `--run <id>` is the
- * only way its cost is reachable at all.
- *
- * Still a projection over a file, not a call to the daemon: a ledger has to
- * work on a repository whose daemon has stopped, which is exactly when someone
- * asks what the run cost.
- */
-async function cmdLedger(argv: string[]): Promise<number> {
-  const { flags } = read(argv, {
-    json: { type: 'boolean' },
-    run: { type: 'string' },
-    all: { type: 'boolean', default: false },
-  });
-  const repo = resolve(str(flags, 'repo') ?? '.');
-  const wanted = str(flags, 'run');
-  const path =
-    wanted !== undefined && RUN_ID_PATTERN.test(wanted)
-      ? join(repo, '.crosstalk', 'runs', `${wanted}.jsonl`)
-      : join(repo, '.crosstalk', 'events.jsonl');
-
-  if (wanted !== undefined && !RUN_ID_PATTERN.test(wanted)) {
-    // Refused as an id before it is treated as a path — the same rule the
-    // daemon applies, for the same reason, in the one place the CLI builds
-    // that path itself.
-    throw new CliError(`no run named ${wanted}`, EXIT.usage, 'Run `crosstalk runs` to list them.');
-  }
-
-  // Whether the bytes we end up with are that run's archive — already exactly
-  // one run — or the live log, which holds several and has to be narrowed.
-  let fromArchive = wanted !== undefined;
-  let raw: string;
-  try {
-    raw = await readFile(path, 'utf8');
-  } catch {
-    if (wanted === undefined) {
-      throw new CliError(
-        `no log at ${path}`,
-        EXIT.protocol,
-        'A ledger is a projection over the log, so there has to have been a run.',
-      );
-    }
-    // No archive by that name, so it may still be a run in the live log.
-    fromArchive = false;
-    raw = await readFile(join(repo, '.crosstalk', 'events.jsonl'), 'utf8').catch(() => {
-      throw new CliError(
-        `no run named ${wanted}`,
-        EXIT.protocol,
-        'Run `crosstalk runs` to list them — an archived run is read from .crosstalk/runs/.',
-      );
-    });
-  }
-
-  const events = raw
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line) as CrosstalkEvent];
-      } catch {
-        // A half-written final line is what an append-only log looks like while
-        // it is being appended to. Skip it rather than refuse the whole report.
-        return [];
-      }
-    });
-
-  const scoped = scopeToRun(events, wanted, flags['all'] === true, fromArchive);
-  if (scoped === undefined) {
-    // Asked for a run this repository does not have. Reporting the whole log
-    // under that run's name would be a confident wrong answer, which is the
-    // only kind worth refusing.
-    throw new CliError(
-      `no run named ${wanted}`,
-      EXIT.protocol,
-      'Run `crosstalk runs` to list them.',
-    );
-  }
-  const ledger = ledgerOf(scoped);
-  process.stdout.write(flags.json === true ? `${JSON.stringify(ledger, null, 2)}\n` : `${renderLedger(ledger)}\n`);
-  return EXIT.ok;
-}
-
-async function cmdGithub(argv: string[]): Promise<number> {
-  const { flags, rest } = read(argv, {
-    login: { type: 'string' },
-    mode: { type: 'string' },
-    remote: { type: 'string' },
-  });
-  const url = rest[0];
-  if (url === undefined) {
-    throw new CliError('crosstalk github needs a repository', EXIT.usage, 'crosstalk github https://github.com/owner/repo');
-  }
-
-  const mode = str(flags, 'mode');
-  const MODES: MirrorMode[] = ['off', 'one-way', 'two-way-human'];
-  if (mode !== undefined && !(MODES as string[]).includes(mode)) {
-    throw new CliError(`no mirror mode named ${mode}`, EXIT.usage, `Known modes: ${MODES.join(', ')}.`);
-  }
-
-  const login = str(flags, 'login');
-  const remote = str(flags, 'remote');
-  const result = await configureGithub({
-    repo: str(flags, 'repo') ?? '.',
-    url,
-    ...(login === undefined ? {} : { login }),
-    ...(mode === undefined ? {} : { mode: mode as MirrorMode }),
-    ...(remote === undefined ? {} : { remote }),
-  });
-
-  emit(result, flags['json'] === true, () => {
-    const lines = [
-      `${bold('GitHub mirror configured')} for ${result.repo.owner}/${result.repo.repo}`,
-      '',
-      `  remote ${result.remote}   ${result.repo.url}`,
-      `  config           ${result.configPath}`,
-      `  your comments    ${result.humanLogin}`,
-      '',
-    ];
-    // Said out loud because it is the one field that fails silently: without a
-    // matching login, two-way-human reads no operator comments at all on a repo
-    // owned by an organisation.
-    if (login === undefined) {
-      lines.push(`Comments from ${bold(result.humanLogin)} count as @human. If that is not you, re-run with --login <your-github-login>.`);
-      lines.push('');
-    }
-    lines.push('Then: crosstalk up');
-    return lines.join('\n');
-  });
-  return EXIT.ok;
-}
-
-/**
- * `ct ask --as planner --question '...' --option A --option B` — put a real
- * choice to the operator.
- *
- * `/decisions` had no CLI path at all, for opening or for voting, so the only
- * way to ask the operator anything was `claim({kind:"open"})` on the MCP tier.
- * `operator-questioned` gates the plan phase, so a planner on `codex-cli` —
- * shell tier until somebody hand-pastes `~/.codex/config.toml` — would have sat
- * in plan forever with no way out. That is the `contract-exists` bug again: a
- * gate one transport cannot satisfy, failing silently.
- *
- * Named `ask` rather than folded into `claim`, because the CLI is a
- * command-per-action surface — `ct task create`, `ct dm`, `ct phase` — and
- * burying the operator's own question under a verb the brief calls "court only"
- * is how it stayed invisible on the MCP tier for this long.
- */
-async function cmdAsk(argv: string[]): Promise<number> {
-  return withClient(
-    argv,
-    {
-      question: { type: 'string' },
-      option: { type: 'string', multiple: true },
-      voter: { type: 'string', multiple: true },
-      method: { type: 'string' },
-    },
-    async (client, flags) => {
-      const options = (flags['option'] as string[] | undefined) ?? [];
-      if (options.length < 2) {
-        throw new CliError(
-          'a question needs at least two options',
-          EXIT.usage,
-          "Pass --option twice or more. The operator can still answer with something else.",
-        );
-      }
-      const voters = (flags['voter'] as string[] | undefined) ?? [HUMAN_ID];
-      const result = await client.post<WriteResult>('/decisions', {
-        question: require_(flags, 'question'),
-        options,
-        voters,
-        method: str(flags, 'method') ?? 'human',
-      });
-      const opened = result.events.find((event) => event.kind === 'decision_opened');
-      emit(result, flags['json'] === true, () =>
-        opened?.kind === 'decision_opened'
-          ? `asked ${voters.join(', ')} — ${bold(opened.decision.id)} is on the board with a button per option`
-          : `posted seq ${result.events[result.events.length - 1]!.seq}`,
-      );
-      return EXIT.ok;
-    },
-  );
-}
-
-/**
- * `ct answer D-01 --as @human --option 'sim first' --why '...'` — the other
- * half. The operator normally clicks in the hub; this is for the terminal, and
- * for any seat that is a voter.
- */
-async function cmdAnswer(argv: string[]): Promise<number> {
-  return withClient(argv, { option: { type: 'string' }, why: { type: 'string' } }, async (client, flags, rest) => {
-    const decisionId = rest[0];
-    if (decisionId === undefined) {
-      throw new CliError('which decision?', EXIT.usage, "ct answer D-01 --as '@human' --option '...'");
-    }
-    // `option` is a free string on the wire, so an answer that is not on the
-    // list is legal and always has been.
-    const result = await client.post<WriteResult>(`/decisions/${encodeURIComponent(decisionId)}/vote`, {
-      option: require_(flags, 'option'),
-      rationale: str(flags, 'why') ?? 'answered from the command line',
-    });
-    emit(result, flags['json'] === true, () => `answered ${bold(decisionId)}`);
-    return EXIT.ok;
-  });
-}
-
-/**
- * `crosstalk runs`, and what you can do to one.
- *
- * The hub's run picker and this are two spellings of one interface — the
- * repo's standing rule, and the reason it exists is that beacon-1 shipped a
- * CLI and a hub that had drifted. Everything here is a call to a route the
- * picker already uses; no rule is re-implemented, so there is no second answer
- * to give.
- *
- * One `HANDLERS` key with a sub-dispatch, like `ct task`: `main` looks up
- * `argv[0]` alone, so `'runs archive'` would be unreachable.
- */
-async function cmdRuns(argv: string[]): Promise<number> {
-  const subcommand = argv[0];
-  if (subcommand === undefined || subcommand.startsWith('--')) return cmdRunsList(argv);
-  if (subcommand === 'new') return cmdRunsNew(argv.slice(1));
-  if (subcommand === 'archive') return cmdRunsArchive(argv.slice(1));
-  if (subcommand === 'rm') return cmdRunsRemove(argv.slice(1));
-
-  throw new CliError(
-    `Unknown runs subcommand "${subcommand}"`,
-    EXIT.usage,
-    'Use `crosstalk runs` to list them, `runs new` to start one, `runs archive <id>` to put one away, or `runs rm <id>` to delete an archive.',
-  );
-}
-
-/**
- * Narrow a log to one run, or `undefined` if it does not hold that run.
- *
- * Three sources, and they need different handling. An **archive** is already
- * exactly one run — and the pre-boundary run has no marker at all, so looking
- * for one there would find nothing and report nothing. `--all` is asking for
- * no narrowing. The **live log** holds several, and is the only case that has
- * to search.
- *
- * The `undefined` return is the case worth having: asking for a run this
- * repository does not have used to fall through to "the whole log", reported
- * under that run's name. A confident wrong answer is the only kind worth
- * refusing over.
- *
- * A repository with no boundary anywhere has one unnamed run — everything — so
- * `crosstalk ledger` keeps working on a project that predates runs.
- */
-function scopeToRun(
-  events: CrosstalkEvent[],
-  wanted: string | undefined,
-  all: boolean,
-  fromArchive: boolean,
-): CrosstalkEvent[] | undefined {
-  if (all || fromArchive) return events;
-  const starts = events.filter((event) => isRunStart(event));
-  if (starts.length === 0) return wanted === undefined ? events : undefined;
-
-  const from =
-    wanted === undefined
-      ? starts[starts.length - 1]!
-      : starts.find((event) => runIdOf(event) === wanted);
-  if (from === undefined) return undefined;
-
-  const after = starts.find((event) => event.seq > from.seq);
-  const end = after?.seq ?? Number.POSITIVE_INFINITY;
-  return events.filter((event) => event.seq >= from.seq && event.seq < end);
-}
-
-/**
- * `2026-09-02 02:25` — the operator's own clock, not UTC.
- *
- * `startedAt.slice(0, 16)` would be five characters cheaper and three hours
- * wrong for anyone east of Greenwich. That exact slice was on every card in
- * the hub until it was caught by putting two labels for one run side by side;
- * writing it again here would reintroduce it in the one place nothing compares
- * it to anything.
- */
-function localStamp(iso: string): string {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return '';
-  const pad = (value: number): string => String(value).padStart(2, '0');
-  return (
-    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ` +
-    `${pad(at.getHours())}:${pad(at.getMinutes())}`
-  );
-}
-
-async function cmdRunsList(argv: string[]): Promise<number> {
-  return withClient(argv, {}, async (client, flags) => {
-    const result = await client.get<{ runs: RunSummary[] }>('/runs');
-    emit(result, flags['json'] === true, () =>
-      table(
-        result.runs.map((run) => [
-          run.id,
-          run.current ? 'live' : run.archived ? 'archived' : '',
-          `${run.events} event${run.events === 1 ? '' : 's'}`,
-          localStamp(run.startedAt),
-          // Clipped: a job is a paragraph and this is a column.
-          (run.job ?? '').slice(0, 48),
-        ]),
-      ),
-    );
-    return EXIT.ok;
-  }, HUMAN_ID);
-}
-
-async function cmdRunsNew(argv: string[]): Promise<number> {
-  return withClient(
-    argv,
-    { job: { type: 'string' }, end: { type: 'boolean', default: false } },
-    async (client, flags) => {
-      const job = typeof flags['job'] === 'string' ? flags['job'] : undefined;
-      const result = await client.post<{ events: { seq: number }[] }>('/runs', {
-        ...(job === undefined ? {} : { job }),
-        // Named on the command line for the same reason the hub names the
-        // seats on its button: stopping a live agent is destructive, and the
-        // daemon's refusal lists who it would stop.
-        ...(flags['end'] === true ? { end: true } : {}),
-      });
-      emit(result, flags['json'] === true, () => `${bold('new run')} — the board is clear`);
-      return EXIT.ok;
-    },
-    HUMAN_ID,
-  );
-}
-
-async function cmdRunsArchive(argv: string[]): Promise<number> {
-  const id = argv[0];
-  if (id === undefined || id.startsWith('--')) {
-    throw new CliError('runs archive needs a run id', EXIT.usage, 'Run `crosstalk runs` to list them.');
-  }
-  return withClient(argv.slice(1), {}, async (client, flags) => {
-    const result = await client.post<{ runs: RunSummary[] }>(`/runs/${encodeURIComponent(id)}/archive`, {});
-    emit(result, flags['json'] === true, () => `${bold(id)} archived to .crosstalk/runs/${id}.jsonl`);
-    return EXIT.ok;
-  }, HUMAN_ID);
-}
-
-async function cmdRunsRemove(argv: string[]): Promise<number> {
-  const id = argv[0];
-  if (id === undefined || id.startsWith('--')) {
-    throw new CliError('runs rm needs a run id', EXIT.usage, 'Run `crosstalk runs` to list them.');
-  }
-  return withClient(argv.slice(1), { yes: { type: 'boolean', default: false } }, async (client, flags) => {
-    // The one irreversible act in the product. The hub asks the operator to
-    // type the id; a terminal has no way to insist, so it insists on a flag —
-    // and says what would be lost rather than asking "are you sure?".
-    if (flags['yes'] !== true) {
-      throw new CliError(
-        `${id} would be deleted permanently, with the events in it`,
-        EXIT.usage,
-        `Nothing else in Crosstalk destroys history. Add --yes if that is what you mean: crosstalk runs rm ${id} --yes`,
-      );
-    }
-    const result = await client.delete<{ runs: RunSummary[] }>(`/runs/${encodeURIComponent(id)}`, { confirm: id });
-    emit(result, flags['json'] === true, () => `${bold(id)} deleted`);
-    return EXIT.ok;
-  }, HUMAN_ID);
-}
-
 const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   init: cmdInit,
-  compose: cmdCompose,
   up: cmdUp,
   down: cmdDown,
   doctor: cmdDoctor,
-  github: cmdGithub,
-  ledger: cmdLedger,
-  runs: cmdRuns,
-  inbox: cmdInbox,
   say: cmdSay,
-  act: cmdAct,
   claim: cmdClaim,
-  ask: cmdAsk,
-  answer: cmdAnswer,
   respond: cmdRespond,
   events: cmdEvents,
   await: cmdAwait,
@@ -1340,7 +693,6 @@ const HANDLERS: Record<string, (argv: string[]) => Promise<number>> = {
   mine: cmdMine,
   task: cmdTask,
   dm: cmdDm,
-  phase: cmdPhase,
 };
 
 export const CLI_COMMANDS: readonly string[] = Object.keys(HANDLERS);

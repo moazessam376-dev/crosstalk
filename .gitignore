@@ -3,21 +3,18 @@ dist/
 coverage/
 *.tsbuildinfo
 
-# Agent scratch at the repo root. Worktrees and probes belong under .crosstalk/,
-# but a stray `git add -A` should never be able to commit them either way.
-/_*
-
-# Crosstalk runtime state
 .crosstalk/
 
-# Agent instruction files are committed; personal overrides are not.
+# Agent context stays local.
+CLAUDE.md
 CLAUDE.local.md
+AGENTS.md
 AGENTS.local.md
-.claude/settings.local.json
+.claude/
+.superpowers/
 
 .env
 .env.*
-!.env.example
 
 .DS_Store
 Thumbs.db

@@ -2,7 +2,7 @@
 
 For any AI agent working in this repo. Canonical; `CLAUDE.md` points here.
 
-**Read first:** [design spec](docs/specs/2026-08-09-crosstalk-design.md) · [v1 plan](docs/plans/2026-08-09-crosstalk-v1.md) · [cross-platform rules](docs/CROSS-PLATFORM.md)
+**Read first:** [design spec](docs/specs/2026-09-22-message-board-design.md) · [plan](docs/plans/2026-09-22-message-board.md) · [cross-platform rules](docs/CROSS-PLATFORM.md)
 
 Your task brief names which plan tasks are yours. The plan holds the context — this file holds only what you must not get wrong.
 
@@ -21,15 +21,14 @@ Everything is an npm script. No `.sh`, no `.bat`, no `Makefile` — PowerShell a
 
 ## Hard rules
 
-1. **Two runtime dependencies, total** — `@modelcontextprotocol/sdk` and `yaml`. Dev deps are free.
-2. **No native modules.** They break `npx` on machines without build tools.
-3. **The log is append-only.** Corrections are new events, never edits.
-4. **Order by `seq`, never `ts`.** Replay must be deterministic.
-5. **`falsifier` is required** on every claim, on `contest`, and on `amend`. **`uphold` requires new evidence, not a falsifier** — it restates a claim whose falsifier is already on the record; `amend` is the verdict for a changed argument, and it does require one.
+1. **One runtime dependency** — `@modelcontextprotocol/sdk`. Dev deps are free.
+2. **No native modules.** They break installs on machines without build tools.
+3. **One writer per file.** A sender appends only to its own messages file; an agent writes only its own cursor; hooks write only notified files. Anything that needs a lock is a design change.
+4. **Hooks notify, never carry messages, and never fail the agent.**
+5. **Every board answer is plain text and bounded.** No tool returns history or unbounded output.
 6. **`node:path` always, `execFile` never `exec`.** Details in `docs/CROSS-PLATFORM.md`.
 7. **Green on one platform is not done.** CI is Windows, macOS and Linux.
-8. **Don't edit `src/contracts/` or `tests/fixtures/`** — frozen. Raise a claim instead.
-9. **Scratch worktrees and probe files go under `.crosstalk/`**, never the repo root and never outside the repo. Anything you create, `crosstalk down` has to be able to find and remove — and a reviewer shouldn't have to guess whether a stray directory is yours or abandoned.
+8. **Scratch files go under `.crosstalk/` or the OS temp directory**, never the repo root.
 
 ## Testing
 

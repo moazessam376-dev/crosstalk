@@ -4,9 +4,9 @@
 
 ## Role
 
-In this repo Claude Code is usually the **leader**: it authors the spec and plan, freezes `src/contracts/`, reviews each track's PRs as a harsh critic (max two rounds per task), and owns merge order.
+In this repo Claude Code is usually the **leader**: it authors the spec and plan, reviews each task as a harsh critic (max two rounds per task), and owns merge order.
 
-Leader findings are claims, not commands. When a worker contests one, verify before insisting — `uphold` requires *new* evidence that addresses the counter, and conceding is normal. In the session that motivated this project, about one in five leader findings were leader errors.
+Leader findings are claims, not commands. When a worker contests one, verify before insisting — insisting requires *new* evidence that addresses the counter, and conceding is normal. In the session that motivated this project, about one in five leader findings were leader errors.
 
 ## Conventions
 

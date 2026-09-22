@@ -1,7 +1,10 @@
+import { appendFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { Board } from '../../src/board/board.js';
 import { BoardError } from '../../src/board/fsutil.js';
+import { senderFile } from '../../src/board/messages.js';
+import { currentRun, runPaths } from '../../src/board/runs.js';
 import { removeTempRepos, tempRepo } from '../helpers.js';
 
 afterEach(removeTempRepos);
@@ -38,6 +41,20 @@ describe('send and inbox', () => {
     const got = await b.inbox('builder-2');
     expect(got.count).toBe(1);
     expect(got.text).toMatch(/^\d\d:\d\d orchestrator: start on the dock$/);
+  });
+
+  it('delivers a message sent after a crash left half a line', async () => {
+    const repo = await tempRepo();
+    const b = new Board(repo);
+    await b.join('orchestrator');
+    await b.join('builder-1');
+    await b.send('orchestrator', 'builder-1', 'one');
+    const { msgs } = runPaths((await currentRun(repo))!);
+    await appendFile(senderFile(msgs, 'orchestrator'), '{"id":"orchestrator-2","ts":"2026-09-22T');
+    expect(await b.send('orchestrator', 'builder-1', 'two')).toBe('sent orchestrator-3');
+    const got = await b.inbox('builder-1');
+    expect(got.count).toBe(2);
+    expect(got.text).toMatch(/: two\n1 unreadable line skipped$/);
   });
 
   it('gives broadcasts only to agents present when they were sent', async () => {

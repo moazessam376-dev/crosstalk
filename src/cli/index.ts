@@ -55,6 +55,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
         return await hook(rest, io);
       case 'setup':
         return await setup(rest, io);
+      case 'hub':
+        return await hub(rest, io);
       case 'mcp':
         return await mcp(rest);
       case undefined:
@@ -167,6 +169,20 @@ async function setup(args: string[], io: Io): Promise<number> {
   const cli = realpathSync(fileURLToPath(import.meta.url));
   const result = await setupClaude(rootOf(values), cli);
   io.out([...result.changes, '', ...result.notes].join('\n'));
+  return EXIT.ok;
+}
+
+async function hub(args: string[], io: Io): Promise<number> {
+  const { values } = parse(args, { port: { type: 'string' }, host: { type: 'string' } });
+  const port = values['port'] === undefined ? 0 : Number(values['port']);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError('--port must be a port number');
+  const host = typeof values['host'] === 'string' ? values['host'] : '127.0.0.1';
+  const { startHub } = await import('../hub/server.js');
+  const started = await startHub(rootOf(values), { port, host });
+  io.out(`Crosstalk hub: ${started.url}`);
+  if (host !== '127.0.0.1' && host !== 'localhost') {
+    io.out(`Listening on ${host}. The token in that URL is the only thing guarding it.`);
+  }
   return EXIT.ok;
 }
 

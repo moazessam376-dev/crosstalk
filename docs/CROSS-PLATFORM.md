@@ -8,11 +8,11 @@ The guiding constraint: **a contributor on Windows with no build tools, no bash,
 
 ## 1. The install promise
 
-`npx crosstalk-ai init` behaves the same on all three platforms. That promise is why:
+`npm ci`, `npm run build` and `ct setup claude` behave the same on all three platforms. That promise is why:
 
 - **No native modules.** Not `better-sqlite3`, not `node-pty`, not anything requiring `node-gyp`. A native module means Visual Studio Build Tools on Windows and Xcode Command Line Tools on macOS, and the first user without them files an issue about a compiler error. This is the single most important rule in this document.
 - **No Python, no Docker, no `make`.** Node ≥ 20 and git ≥ 2.5 are the entire prerequisite list.
-- **The hub UI ships pre-built.** Installing users never run a bundler.
+- **The hub is one HTML page served from a string.** There is no front-end build, and no bundler for anyone to run.
 
 If you are about to add a dependency, check its transitive tree for native bindings first. A dependency that is pure JS today and adds a native optional dependency tomorrow is still a break.
 
@@ -40,21 +40,21 @@ If you are about to add a dependency, check its transitive tree for native bindi
   ```
 
   A `.cmd` resolved to its full path still needs `shell: true` to run on Windows. Where that is unavoidable, pass the argv array — never build a command string.
-- **Signals differ.** `SIGTERM` is not delivered on Windows the way it is elsewhere. Daemon shutdown must handle `SIGINT`, `SIGTERM` *and* a clean HTTP shutdown endpoint, and must not rely on a signal arriving at all.
+- **Signals differ.** `SIGTERM` is not delivered on Windows the way it is elsewhere. Nothing may depend on a signal arriving: the board keeps no state in memory that a killed process would lose, and `ct hub` can be closed at any moment.
 
 ## 4. Paths
 
 - **`node:path` for every join, resolve and relative.** Never concatenate with `/` or `\`.
 - **Store paths repo-relative in anything committed; resolve at runtime.** A committed config containing `D:\Opensource\...` is a bug and will break the next contributor. (`ct setup claude` writes absolute paths on purpose, into `.claude/settings.local.json`, which is not committed, and `.mcp.json`, which it warns about if tracked.)
-- **Windows `MAX_PATH` is 260 characters** unless long paths are enabled, which we cannot assume. `.crosstalk/worktrees/<id>` already spends 25 characters before the repo path; participant ids are therefore limited to `[a-z0-9-]{1,24}`, validated by `doctor`.
-- **Windows and macOS are case-insensitive by default.** Two participants named `Codex` and `codex` resolve to one worktree directory. `doctor` rejects ids that differ only by case.
+- **Windows `MAX_PATH` is 260 characters** unless long paths are enabled, which we cannot assume. Every agent name becomes a file name under `.crosstalk/runs/<run>/`, so names are limited to 24 characters, `^[a-z][a-z0-9-]{0,23}$`, checked by `join`.
+- **Windows and macOS are case-insensitive by default.** `Codex` and `codex` would be one file. Names are lowercase only, so two agents can never collide that way.
 
 ## 5. Files, locking and permissions
 
 - **Windows will not let you delete or rename a file another process has open.** Renaming a cursor into place while another process is reading it fails with `EBUSY` or `EPERM`. Retry with backoff (`writeAtomic` does), and if it still fails, report *which* file is held rather than leaving a half-written one.
-- **`chmod 0o600` is a no-op on Windows.** The daemon token file is not protected there. Say so in `doctor` output. Claiming a permission we do not have is worse than the missing permission.
+- **`chmod 0o600` is a no-op on Windows.** Do not rely on file permissions to protect anything. The board has no secrets on disk; the hub's token lives only in memory and in the URL it prints.
 - **Writes that must not tear use temp-plus-rename.** `rename` is atomic on all three platforms when source and destination are on the same volume — which is why the temp file goes in the same directory, not in the OS temp dir.
-- **Line endings.** `.gitattributes` normalises the repo to LF. The event log is opened in binary append mode so no translation occurs; a test asserts the written bytes contain no `\r`.
+- **Line endings.** `.gitattributes` normalises the repo to LF. Message files are appended as UTF-8 and split on the newline byte, so no translation occurs and a stray `\r` never changes where a line ends.
 
 ## 6. Watching the filesystem
 
@@ -66,7 +66,7 @@ If you are about to add a dependency, check its transitive tree for native bindi
 | macOS | FSEvents; coalesces rapid changes, so two writes can surface as one event |
 | Windows | ReadDirectoryChangesW; generally fine, but reports renames as delete+create |
 
-Therefore: **`fs.watch` is an optimisation, never the mechanism.** Anything that must not miss a change polls at a documented interval, with `fs.watch` used only to shorten the latency between polls. This applies to the tier-3 file inbox.
+Therefore: **`fs.watch` is an optimisation, never the mechanism.** Anything that must not miss a change polls at a documented interval, with `fs.watch` used only to shorten the latency between polls. `inbox --wait` rechecks every second and the hub's live stream every 15 seconds, whatever `fs.watch` reports.
 
 ## 7. Terminal output
 
@@ -78,7 +78,7 @@ Therefore: **`fs.watch` is an optimisation, never the mechanism.** Anything that
     || process.env.TERM_PROGRAM === 'vscode';
   ```
 - **Do not assume colour.** Respect `NO_COLOR` and `process.stdout.isTTY`.
-- Keep `doctor` output readable when piped to a file: no cursor movement, no spinners in non-TTY mode.
+- Keep `ct` output readable when piped to a file: no cursor movement, no spinners, plain lines.
 
 ## 8. State locations
 
@@ -90,18 +90,18 @@ Crosstalk keeps **all** state inside the repo at `.crosstalk/`. There is deliber
 - **Tests that touch git build a real throwaway repository** under `os.tmpdir()` via `mkdtemp`. Do not mock git: the failures worth catching here are git's actual behaviour per platform.
 - **Never assert on absolute paths.** Compare with `path.relative` or match on the basename.
 - **Never assert on line-ending-sensitive string equality** for anything read from disk without normalising first.
-- Temp directories must be cleaned up even when a test fails, or Windows CI runners accumulate locked worktrees across runs.
+- Temp directories must be cleaned up even when a test fails, or Windows CI runners accumulate locked temp directories across runs.
 
 ## 10. The end-user journey, per platform
 
-What a new user actually experiences. `doctor` is responsible for making each of these true.
+What a new user actually experiences.
 
-**All platforms** — `npx crosstalk-ai init`, answer the harness prompts, paste the printed kickoff line into each agent. No compiler, no admin rights, no PATH surgery.
+**All platforms** — clone, `npm ci`, `npm run build`, then `node <crosstalk>/dist/cli/index.js setup claude` in the project. No compiler, no admin rights, no PATH surgery beyond having `node` on it.
 
-**Windows** — runs in PowerShell or Windows Terminal with no extra setup. `doctor` warns that the daemon token file is world-readable, and warns early if the repository path is long enough that worktree paths risk `MAX_PATH`.
+**Windows** — runs in PowerShell or Windows Terminal with no extra setup. Keep the project path short: the longest board file adds up to about 110 characters under the project folder.
 
-**macOS** — no Xcode Command Line Tools needed, because nothing compiles. If git itself is missing, macOS prompts to install the CLT; `doctor` names that as the remedy rather than printing a raw `ENOENT`.
+**macOS** — no Xcode Command Line Tools needed, because nothing compiles.
 
-**Linux** — no `node-gyp`, no `python3`, no distro packages. If the tier-3 file inbox is in use and inotify watches are exhausted, `doctor` names `fs.inotify.max_user_watches` explicitly, because the raw `ENOSPC` from `fs.watch` is one of the most confusing errors in Node.
+**Linux** — no `node-gyp`, no `python3`, no distro packages. If inotify watches run out, `fs.watch` fails with `ENOSPC`; waits fall back to their timed recheck, so the board still works, only slower to notice.
 
 **Every failure message names the remedy, not just the condition.** "git not found" is a bad error. "git not found on PATH — install from https://git-scm.com and reopen your terminal" is the standard.

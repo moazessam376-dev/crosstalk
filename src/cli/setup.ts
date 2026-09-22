@@ -49,16 +49,20 @@ export async function setupClaude(root: string, cliPath: string): Promise<SetupR
 }
 
 function setHook(hooks: Record<string, unknown>, event: string, command: string, ours: string, matcher?: string): void {
-  const existing: unknown[] = Array.isArray(hooks[event]) ? [...(hooks[event] as unknown[])] : [];
-  // Drop an earlier Crosstalk hook for this repository, which may point at another checkout.
-  const kept = existing.filter(
-    (entry) =>
-      !(
-        isRecord(entry) &&
-        Array.isArray(entry['hooks']) &&
-        entry['hooks'].some((hook) => isRecord(hook) && typeof hook['command'] === 'string' && hook['command'].endsWith(ours))
-      ),
-  );
+  const existing: unknown[] = Array.isArray(hooks[event]) ? (hooks[event] as unknown[]) : [];
+  const isOurs = (hook: unknown): boolean =>
+    isRecord(hook) && typeof hook['command'] === 'string' && hook['command'].endsWith(ours);
+  // Drop an earlier Crosstalk hook for this repository, which may point at another checkout,
+  // but keep any hook the project added beside it in the same entry.
+  const kept: unknown[] = [];
+  for (const entry of existing) {
+    if (!isRecord(entry) || !Array.isArray(entry['hooks']) || !entry['hooks'].some(isOurs)) {
+      kept.push(entry);
+      continue;
+    }
+    const theirs = entry['hooks'].filter((hook) => !isOurs(hook));
+    if (theirs.length > 0) kept.push({ ...entry, hooks: theirs });
+  }
   kept.push({ ...(matcher === undefined ? {} : { matcher }), hooks: [{ type: 'command', command }] });
   hooks[event] = kept;
 }

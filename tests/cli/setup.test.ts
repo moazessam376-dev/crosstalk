@@ -64,6 +64,20 @@ describe('setupClaude', () => {
     expect(settings.hooks.Stop[0].hooks[0].command).toContain(CLI);
   });
 
+  it('keeps project hooks that share an entry with its old one', async () => {
+    const root = await tempRepo();
+    await setupClaude(root, '/old/place/dist/cli/index.js');
+    const path = join(root, '.claude', 'settings.local.json');
+    const before = await json(path);
+    before.hooks.PostToolUse[0].hooks.unshift({ type: 'command', command: 'npm run lint' });
+    await writeFile(path, JSON.stringify(before));
+    await setupClaude(root, CLI);
+    const commands = (await json(path)).hooks.PostToolUse.flatMap((entry: any) => entry.hooks.map((hook: any) => hook.command));
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toBe('npm run lint');
+    expect(commands[1]).toContain(CLI);
+  });
+
   it('refuses a broken .mcp.json before writing anything', async () => {
     const root = await tempRepo();
     await writeFile(join(root, '.mcp.json'), '{ oops');

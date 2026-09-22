@@ -32,6 +32,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      # Build before test: the hook timing test runs the built CLI.
+      # Build before test: the hook startup test reads the built CLI.
       - run: npm run build
       - run: npm test

@@ -63,4 +63,25 @@ describe('ct', () => {
     });
     expect(output.trim()).toBe('no run yet');
   }, 30_000);
+
+  it('hook reads stdin, prints a notice, and never fails', async () => {
+    const repo = await tempRepo();
+    const quiet = capture();
+    await run(['join', 'orchestrator', '--repo', repo], quiet);
+    await run(['join', 'builder-1', '--repo', repo], quiet);
+    const join = JSON.stringify({
+      hook_event_name: 'PostToolUse',
+      session_id: 's1',
+      agent_id: 'a1',
+      tool_name: 'mcp__crosstalk__join',
+      tool_input: { name: 'builder-1' },
+      tool_response: 'joined as builder-1',
+    });
+    expect(await run(['hook', '--repo', repo], capture(join))).toBe(EXIT.ok);
+    await run(['send', '--as', 'orchestrator', '--to', 'builder-1', 'hi', '--repo', repo], quiet);
+    const io = capture(JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's1', agent_id: 'a1', tool_name: 'Bash' }));
+    expect(await run(['hook', '--repo', repo], io)).toBe(EXIT.ok);
+    expect(JSON.parse(io.stdout[0]!)).toMatchObject({ hookSpecificOutput: { additionalContext: expect.stringContaining('builder-1') } });
+    expect(await run(['hook', '--repo', repo], capture('not json'))).toBe(EXIT.ok);
+  });
 });

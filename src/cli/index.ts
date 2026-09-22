@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 
 import { Board } from '../board/board.js';
 import { BoardError } from '../board/fsutil.js';
 import { findRoot } from '../board/runs.js';
+import { runHook, type HookInput } from '../hooks/hook.js';
+import { setupClaude } from './setup.js';
 
 export interface Io {
   out(text: string): void;
@@ -49,6 +51,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
         return await simple(rest, io, (board, positionals) => board.newRun(positionals[0]));
       case 'stats':
         return await simple(rest, io, (board, positionals) => board.stats(positionals[0]));
+      case 'hook':
+        return await hook(rest, io);
+      case 'setup':
+        return await setup(rest, io);
       case 'mcp':
         return await mcp(rest);
       case undefined:
@@ -130,6 +136,37 @@ async function mcp(args: string[]): Promise<number> {
   // Loaded here so every other command, the hook above all, starts without the SDK.
   const { serveStdio } = await import('../mcp/server.js');
   await serveStdio(new Board(rootOf(values)));
+  return EXIT.ok;
+}
+
+async function hook(args: string[], io: Io): Promise<number> {
+  const { values } = parse(args, {});
+  let input: HookInput;
+  try {
+    input = JSON.parse(await io.stdin()) as HookInput;
+  } catch {
+    return EXIT.ok;
+  }
+  const root =
+    typeof values['repo'] === 'string'
+      ? resolve(values['repo'])
+      : findRoot(typeof input.cwd === 'string' ? input.cwd : process.cwd());
+  try {
+    const output = await runHook(root, input);
+    if (output !== undefined) io.out(JSON.stringify(output));
+  } catch (error) {
+    // A hook must never stop the agent it serves.
+    io.err(`crosstalk hook: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return EXIT.ok;
+}
+
+async function setup(args: string[], io: Io): Promise<number> {
+  const { values, positionals } = parse(args, {});
+  if (positionals[0] !== 'claude') throw new UsageError('setup supports one harness so far: ct setup claude');
+  const cli = realpathSync(fileURLToPath(import.meta.url));
+  const result = await setupClaude(rootOf(values), cli);
+  io.out([...result.changes, '', ...result.notes].join('\n'));
   return EXIT.ok;
 }
 

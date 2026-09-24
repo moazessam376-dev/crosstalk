@@ -272,20 +272,27 @@ describe('mirroring a seat over HTTP', () => {
 describe('deciding whether to re-staff', () => {
   const running = [
     { id: '@human', role: 'human', harness: 'human' },
-    { id: 'opus', role: 'peer', harness: 'claude-code-live' },
+    { id: 'opus', role: 'peer', harness: 'claude-code-live', model: 'claude-opus-5', effort: 'high' },
   ];
 
   it('leaves the roster alone when it is already the one seated', () => {
     expect(rosterDiffers(running, ['opus:peer:claude-code-live'])).toBe(false);
-    // Model and effort re-spawn a seat differently; they do not change who it
-    // is, so they are not grounds for rewriting the roster and re-minting.
-    expect(rosterDiffers(running, ['opus:peer:claude-code-live:claude-sonnet-5:low'])).toBe(false);
+    // Its own model and effort, spelled out, are not a change either.
+    expect(rosterDiffers(running, ['opus:peer:claude-code-live:claude-opus-5:high'])).toBe(false);
     // No seats named means "use the roster you have".
     expect(rosterDiffers(running, [])).toBe(false);
   });
 
   it('re-staffs for a seat that is not seated', () => {
     expect(rosterDiffers(running, ['peer-1:peer:claude-code-live'])).toBe(true);
+  });
+
+  it('re-staffs when a seat changes model or effort', () => {
+    // The argv is read from the roster on disk, so a model chosen in the hub
+    // against a seated roster was accepted, shown, and never used: picking sol
+    // got luna. This used to be pinned the other way round.
+    expect(rosterDiffers(running, ['opus:peer:claude-code-live:claude-sonnet-5:high'])).toBe(true);
+    expect(rosterDiffers(running, ['opus:peer:claude-code-live:claude-opus-5:low'])).toBe(true);
   });
 
   it('re-staffs when a seat changes role or harness', () => {

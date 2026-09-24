@@ -34,7 +34,7 @@ export interface ShapeSummary {
    * run with a planner and a number of agents?" and the answer was that the
    * field never left the daemon.
    */
-  seats: Array<{ role: string; count: number; varies?: boolean }>;
+  seats: Array<{ role: string; count: number; varies?: boolean; hired?: boolean }>;
   phases: ShapePhase[];
 }
 

@@ -21,8 +21,8 @@ Everything is an npm script. No `.sh`, no `.bat`, no `Makefile` — PowerShell a
 
 ## Hard rules
 
-1. **Two runtime dependencies, total** — `@modelcontextprotocol/sdk` and `yaml`. Dev deps are free.
-2. **No native modules.** They break `npx` on machines without build tools.
+1. **Three runtime dependencies, total** — `@modelcontextprotocol/sdk`, `yaml` and `node-pty`. Dev deps are free.
+2. **No new native modules.** `node-pty` is the one exception, for the mirrored terminal; it ships prebuilds and `src/harness/pty.ts` loads it lazily so nothing else breaks when it is absent. Anything else native breaks `npx` on machines without build tools.
 3. **The log is append-only.** Corrections are new events, never edits.
 4. **Order by `seq`, never `ts`.** Replay must be deterministic.
 5. **`falsifier` is required** on every claim, on `contest`, and on `amend`. **`uphold` requires new evidence, not a falsifier** — it restates a claim whose falsifier is already on the record; `amend` is the verdict for a changed argument, and it does require one.

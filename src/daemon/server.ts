@@ -12,14 +12,16 @@ import type { CrosstalkConfig } from '../contracts/config.js';
 import type { CrosstalkEvent, DraftEvent, EventKind, MessageAttachment } from '../contracts/events.js';
 import { refuseOversizeBody } from '../contracts/events.js';
 import { ProtocolError } from '../contracts/errors.js';
-import type { ParticipantId } from '../contracts/participant.js';
+import { PARTICIPANT_ID_PATTERN, type ParticipantId } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import { EventLog } from '../core/log.js';
 import { renderInbox, type Inbox } from '../core/inbox.js';
 import { phaseStatus, type PhaseStatus } from '../core/phase.js';
 import { SHAPES, shapeNamed } from '../core/shape.js';
 import { workspaceGates } from '../workspace/gates.js';
-import { seatBranches } from '../workspace/git.js';
+import { seatBranches, uncommittedAt } from '../workspace/git.js';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { renderWatchAction, watchSeats, type WatchMemory } from './watch.js';
 import { applyEvent, project, type HubState } from '../core/projection.js';
 import { LadderTimers, SYSTEM_ID, expireRung, testRungReason } from './ladder.js';
 import { STALENESS_POLL_MS, checkStaleness } from './staleness.js';
@@ -69,6 +71,11 @@ import { isBlockedPort, NoUsablePortError, pickUsablePort } from './ports.js';
 import { DaemonError } from './errors.js';
 import { probeCliHarnesses } from '../harness/path.js';
 import { loadRegistry } from '../harness/registry.js';
+
+/** How often the quiet-seat watchdog looks. Nothing a seat does is on this clock. */
+export const WATCH_TICK_MS = 60_000;
+/** Non-human seats a roster may hold. Six builders and a lead; coordination is net-negative well before. */
+export const MAX_SEATS = 7;
 
 /**
  * The default interface. Never `localhost`: it resolves to `::1` first on
@@ -474,6 +481,14 @@ class Daemon {
     void this.#expireRung(decisionId, reason);
   });
   #stalenessPoll: ReturnType<typeof setInterval> | undefined;
+  #watchTimer: ReturnType<typeof setInterval> | undefined;
+  #watching: Promise<void> | undefined;
+  /** What the watchdog has already said, per seat, so an episode is reported once. */
+  readonly #watchMemory = new Map<ParticipantId, WatchMemory>();
+  /** When each seat last wrote to the log. Silence is measured from here or from presence, whichever is later. */
+  readonly #spokeAt = new Map<ParticipantId, number>();
+  /** Staffing runs one at a time: two hires racing `runInit` would race `git worktree add`. */
+  #staffTail: Promise<unknown> = Promise.resolve();
   /** One sweep at a time: two overlapping ones both read state before either's
    *  marks land, and emit the same `evidence_stale` twice. */
   #sweeping: Promise<void> | undefined;
@@ -577,6 +592,70 @@ class Daemon {
       void this.#sweepStaleness();
     }, STALENESS_POLL_MS);
     if (typeof this.#stalenessPoll.unref === 'function') this.#stalenessPoll.unref();
+    this.#watchTimer = setInterval(() => {
+      void this.#watchTick();
+    }, WATCH_TICK_MS);
+    if (typeof this.#watchTimer.unref === 'function') this.#watchTimer.unref();
+  }
+
+  /**
+   * One look at who has gone quiet. See `watch.ts` for the rule.
+   *
+   * Every card it writes goes through `#append`, so it wakes the seat it is
+   * for and reaches the hub like anything else on the board — in a side room
+   * with `@crosstalk`, because a nudge is between the daemon and one seat and
+   * the rest of the team has no reason to read it.
+   */
+  async #watchTick(): Promise<void> {
+    if (this.#watching !== undefined) return this.#watching;
+    const tick = (async () => {
+      try {
+        const seats = this.#config.participants
+          .filter((participant) => participant.id !== HUMAN_ID && participant.role !== 'human')
+          .map((participant) => {
+            const activity = this.#presence.lastActivity(participant.id);
+            const session = this.#sessions.get(participant.id);
+            const spokeAt = this.#spokeAt.get(participant.id);
+            return {
+              id: participant.id,
+              role: participant.role,
+              ...(activity === undefined ? {} : { activity: { working: activity.working, at: activity.at } }),
+              ...(session === undefined ? {} : { running: session.running }),
+              ...(spokeAt === undefined ? {} : { spokeAt }),
+            };
+          });
+        const actions = watchSeats({
+          now: Date.now(),
+          seats,
+          tasks: this.#state.tasks.values(),
+          memory: this.#watchMemory,
+        });
+        for (const action of actions) {
+          const card = renderWatchAction(action);
+          await this.#append({
+            kind: 'message',
+            room: dmId(SYSTEM_ID, card.to),
+            from: SYSTEM_ID,
+            to: card.to,
+            tag: 'note',
+            head: card.head,
+            body: card.body,
+          });
+        }
+      } catch {
+        // A tick that cannot read the repository or write the log is a tick
+        // skipped, not a daemon down. The next one is a minute away.
+      } finally {
+        this.#watching = undefined;
+      }
+    })();
+    this.#watching = tick;
+    return tick;
+  }
+
+  /** Exposed for tests, which cannot wait a minute. */
+  async watchNow(): Promise<void> {
+    await this.#watchTick();
   }
 
   /**
@@ -679,6 +758,10 @@ class Daemon {
   async close(): Promise<void> {
     this.#ladderTimers.stop();
     if (this.#stalenessPoll !== undefined) clearInterval(this.#stalenessPoll);
+    if (this.#watchTimer !== undefined) clearInterval(this.#watchTimer);
+    // A hire in flight is a `git worktree add` and a spawn; let it land rather
+    // than closing the log under it.
+    await this.#staffTail.catch(() => {});
     await this.#writeTail.catch(() => {});
     await this.#log.close();
   }
@@ -937,6 +1020,7 @@ class Daemon {
             role: seat.role,
             count: seat.count,
             ...(seat.varies === true ? { varies: true } : {}),
+            ...(seat.hired === true ? { hired: true } : {}),
           })),
           phases: shape.phases.map((phase) => ({
             id: phase.id,
@@ -1198,7 +1282,11 @@ class Daemon {
     if (path === '/compose') return (ctx, body) => this.#composeJob(ctx, body);
     if (path === '/launch') return (ctx, body) => this.#launch(ctx, body);
     if (path === '/runs') return (ctx, body) => this.#startRun(ctx, body);
+    if (path === '/seats') return (ctx, body) => this.#hire(ctx, body);
     if (path === '/decisions') return openDecision;
+
+    const stopSeat = matchPath(path, '/seats/:id/stop');
+    if (stopSeat) return (ctx) => this.#release(ctx, stopSeat[0]!);
 
     const claimResponse = matchPath(path, '/claims/:id/response');
     if (claimResponse) return (ctx, body) => respondToClaim(ctx, claimResponse[0]!, body);
@@ -1449,10 +1537,13 @@ class Daemon {
       }),
     );
     if (stubborn.length > 0) {
-      await this.#log.append({
+      // Through `#append`, not the log directly: written straight to the log
+      // it reached neither the projection nor the hub's open stream, so the
+      // one operator watching was the one who never saw it.
+      await this.#append({
         kind: 'message',
         room: FLOOR,
-        from: HUMAN_ID,
+        from: SYSTEM_ID,
         body: `still running after ${STOP_GRACE_MS / 1000}s and left alone: ${stubborn.join(', ')}`,
       });
     }
@@ -1517,6 +1608,8 @@ class Daemon {
 
     this.#releaseWaiters();
     this.#presence.reset();
+    this.#watchMemory.clear();
+    this.#spokeAt.clear();
     this.#delivered.clear();
     // Suppresses a repeated status line, so a stale entry swallows the first
     // real status of the new run — silently, and only sometimes.
@@ -1797,6 +1890,142 @@ class Daemon {
    * Begin a run without staffing anyone — "put this away and give me a clean
    * board". The launcher's path is `/launch`, which does this *and* spawns.
    */
+  /** Staffing is the lead's or the operator's. A builder does not hire its own peers. */
+  #requireLeadOrOperator(ctx: HandlerContext, what: string): void {
+    const role = this.#config.participants.find((participant) => participant.id === ctx.who)?.role;
+    if (ctx.who !== HUMAN_ID && role !== 'human' && role !== 'leader') {
+      throw new DaemonError('ROLE_NOT_PERMITTED', `${what} requires the lead or the human seat`);
+    }
+  }
+
+  /**
+   * Seat one more builder, mid-run.
+   *
+   * The whole of "the lead decides how big the crew is". The roster on disk
+   * gains a participant, `runInit --force` builds its worktree, brief, token
+   * and settings exactly as it would at launch, this daemon reloads so the
+   * seat can authenticate, and `runCompose` spawns that one seat with an
+   * opening turn that sends it to its inbox. Everything after the validation
+   * runs detached and serialised: `git worktree add` takes seconds, and the
+   * write queue is not the place to spend them.
+   *
+   * One mechanical refusal beyond the obvious ones: the shape's spec exists
+   * and is not committed. A hired seat's worktree is cut from the main
+   * branch, so a spec only the lead's working tree holds is a spec the new
+   * builder cannot read — the seam bug, arriving as a file.
+   */
+  async #hire(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
+    this.#requireLeadOrOperator(ctx, 'POST /seats');
+    const id = body['id'];
+    if (typeof id !== 'string' || !PARTICIPANT_ID_PATTERN.test(id)) {
+      throw new DaemonError('MALFORMED_BODY', '`id` is required: lowercase letters, digits and dashes, e.g. builder-1');
+    }
+    const harness = body['harness'];
+    if (typeof harness !== 'string' || harness === '') {
+      throw new DaemonError('MALFORMED_BODY', '`harness` is required, e.g. claude-code-live or codex-cli');
+    }
+    const registry = await loadRegistry();
+    const descriptor = registry.get(harness);
+    if (descriptor === undefined) {
+      throw new DaemonError('MALFORMED_BODY', `no harness named ${harness}. Known: ${[...registry.keys()].join(', ')}`);
+    }
+    if (!descriptor.supervisable || descriptor.spawn === undefined) {
+      throw new DaemonError('MALFORMED_BODY', `${harness} cannot be spawned; hire a CLI harness, e.g. claude-code-live or codex-cli`);
+    }
+    const role = body['role'] ?? 'worker';
+    if (role !== 'worker') {
+      throw new DaemonError('MALFORMED_BODY', 'a hired seat is a `worker`; the roster is led and stays led');
+    }
+    const optional = (field: 'model' | 'effort' | 'permissionMode'): string | undefined => {
+      const value = body[field];
+      if (value === undefined || value === '') return undefined;
+      if (typeof value !== 'string') throw new DaemonError('MALFORMED_BODY', `\`${field}\` must be a string`);
+      return value;
+    };
+    const model = optional('model');
+    const effort = optional('effort');
+    const permissionMode = optional('permissionMode');
+
+    const seated = this.#config.participants.filter((p) => p.id !== HUMAN_ID && p.role !== 'human');
+    if (seated.some((p) => p.id.toLowerCase() === id.toLowerCase())) {
+      throw new DaemonError('SEAT_EXISTS', `${id} is already on the roster`);
+    }
+    if (seated.length >= MAX_SEATS) {
+      throw new DaemonError('SEAT_CAP', `the roster holds ${MAX_SEATS} seats and has ${seated.length}; release one before hiring`);
+    }
+    const shape = shapeNamed(this.#config.shape);
+    const contractPath = this.#config.contractPath ?? shape?.contract;
+    if (contractPath !== undefined && (await uncommittedAt(this.#repo, contractPath)) === true) {
+      throw new DaemonError(
+        'SPEC_UNCOMMITTED',
+        `${contractPath} is written but not committed. A hired seat's worktree is cut from ${this.#config.project.mainBranch}; commit the spec there first, then hire.`,
+      );
+    }
+
+    // The roster on disk, read and appended rather than rebuilt: a hand-edited
+    // participant with `owns:` in it has to survive a hire.
+    const yamlPath = join(resolve(this.#repo), 'crosstalk.yaml');
+    const raw = parseYaml(await readFile(yamlPath, 'utf8')) as { participants?: Record<string, unknown>[] };
+    if (!Array.isArray(raw.participants)) throw new DaemonError('MALFORMED_CONFIG', 'crosstalk.yaml has no participants');
+    raw.participants.push({
+      id,
+      role: 'worker',
+      harness,
+      ...(model === undefined ? {} : { model }),
+      ...(effort === undefined ? {} : { effort }),
+      ...(permissionMode === undefined ? {} : { permissionMode }),
+      lifecycle: 'supervised',
+      workspace: `.crosstalk/worktrees/${id}`,
+    });
+    await writeFile(yamlPath, stringifyYaml(raw), 'utf8');
+
+    const opening =
+      `You are "${id}" on Crosstalk, hired by ${ctx.who}. Read the brief in your checkout, then call inbox(): ` +
+      'your task is there, or arriving. Do nothing else first.';
+    const staff = this.#staffTail.then(async () => {
+      const { runInit } = await import('../cli/init.js');
+      await runInit({ repo: this.#repo, participants: [], force: true });
+      await this.reload();
+      const { runCompose } = await import('../cli/compose.js');
+      const result = await runCompose({
+        repo: this.#repo,
+        job: opening,
+        participants: [],
+        sessions: this.#sessions,
+        postJob: async () => {},
+        only: [id],
+      });
+      void result.supervise();
+    });
+    this.#staffTail = staff.catch(() => {});
+    void staff.catch(async (error: unknown) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      // The log may already be closed if the daemon went down mid-hire; a
+      // failure to report a failure is not worth an unhandled rejection.
+      await this.#append({ kind: 'message', room: FLOOR, from: SYSTEM_ID, body: `hiring ${id} failed: ${reason}` }).catch(() => {});
+    });
+    return [];
+  }
+
+  /**
+   * Stop one seat's process. Nothing else — see `SessionHandle.stop`.
+   *
+   * The lead releases a builder whose work it has accepted, because a seat
+   * with nothing to do is a process the operator is paying for. The roster
+   * entry stays: the id keeps its token and its worktree, and can be seated
+   * again by the next run.
+   */
+  async #release(ctx: HandlerContext, id: string): Promise<CrosstalkEvent[]> {
+    this.#requireLeadOrOperator(ctx, 'POST /seats/:id/stop');
+    const session = this.#sessions.get(id);
+    if (session === undefined || !session.running) {
+      throw new DaemonError('NO_SUCH_SEAT', `${id} is not a seat this daemon is running`);
+    }
+    session.stop();
+    this.#presence.note(id, { verb: 'released', working: false, blocked: `released by ${ctx.who}` }, Date.now());
+    return [];
+  }
+
   async #startRun(ctx: HandlerContext, body: Record<string, unknown>): Promise<CrosstalkEvent[]> {
     this.#requireOperator(ctx, 'POST /runs');
     const job = body['job'];
@@ -1952,7 +2181,7 @@ class Daemon {
       // A launch that dies silently looks exactly like a team that joined and
       // said nothing, which is the failure this whole project exists to stop.
       const reason = error instanceof Error ? error.message : String(error);
-      await this.#log.append({ kind: 'message', room: FLOOR, from: HUMAN_ID, body: `launch failed: ${reason}` });
+      await this.#append({ kind: 'message', room: FLOOR, from: SYSTEM_ID, body: `launch failed: ${reason}` });
     });
 
     return posted;
@@ -2072,6 +2301,7 @@ class Daemon {
       // first cut passed only `messages` and `operator-questioned` could
       // therefore never be met through the daemon at all.
       decisions: this.#state.decisions.values(),
+      tasks: this.#state.tasks.values(),
       // A gate can be owed by some seats and not others: `slice-done` is the
       // builders', and counting the planner in it held build shut forever.
       roles: new Map(seats.map((seat) => [seat.id, seat.role])),
@@ -2418,6 +2648,8 @@ class Daemon {
       const event = await this.#log.append(draft);
       this.#state = applyEvent(this.#state, event);
       this.#ladderTimers.observe(event, this.#state, this.#config);
+      const at = Date.parse(event.ts);
+      this.#spokeAt.set(event.from, Number.isNaN(at) ? Date.now() : at);
       return event;
     });
     this.#writeTail = queued.catch(() => {});
@@ -2488,7 +2720,7 @@ function requireShutdownAuthority(config: CrosstalkConfig, who: ParticipantId): 
  * operator to go and edit YAML.
  */
 export function rosterDiffers(
-  running: readonly { id: string; role: string; harness: string }[],
+  running: readonly { id: string; role: string; harness: string; model?: string; effort?: string }[],
   requested: readonly string[],
 ): boolean {
   if (requested.length === 0) return false;
@@ -2500,10 +2732,16 @@ export function rosterDiffers(
   if (seated.size !== requested.length) return true;
 
   return requested.some((spec) => {
-    const [id, role, harness] = spec.split(':');
+    const [id, role, harness, model, effort] = spec.split(':');
     if (id === undefined) return true;
     const participant = seated.get(id);
-    return participant === undefined || participant.role !== role || participant.harness !== harness;
+    if (participant === undefined || participant.role !== role || participant.harness !== harness) return true;
+    // Model and effort too. They are per-seat argv, but the argv is read from
+    // the roster on disk — so a model chosen in the hub against a seated
+    // roster was accepted, shown, and never used. Picking sol got luna.
+    if (model !== undefined && model !== '' && model !== (participant.model ?? '')) return true;
+    if (effort !== undefined && effort !== '' && effort !== (participant.effort ?? '')) return true;
+    return false;
   });
 }
 

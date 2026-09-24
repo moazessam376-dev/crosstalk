@@ -68,6 +68,12 @@ const FALLBACK_HARNESSES: NonNullable<LauncherProps['catalog']> = [
  * worth offering.
  */
 const WORKER_CHOICES = [1, 2, 3, 4, 5, 6] as const;
+/**
+ * Zero as well, for a seat the lead hires itself. "How many builders" is the
+ * question `lead-crew` exists to hand to the seat that has read the job, so
+ * the launcher's answer is allowed to be "none yet".
+ */
+const HIRED_CHOICES = [0, ...WORKER_CHOICES] as const;
 
 const EFFORTS = ['high', 'medium', 'low'];
 
@@ -92,7 +98,7 @@ const EFFORTS = ['high', 'medium', 'low'];
  * stepper on a shape that means exactly three peers would be a control that
  * produces a roster the shape does not describe.
  */
-export function varyingSeat(shape: ShapeSummary | undefined): { role: string; count: number } | undefined {
+export function varyingSeat(shape: ShapeSummary | undefined): { role: string; count: number; hired?: boolean } | undefined {
   return shape?.seats.find((seat) => seat.varies === true);
 }
 
@@ -459,7 +465,7 @@ export function Launcher({ shapes, launching, onLaunch, running = [], catalog }:
               'div',
               { className: 'seat-count', 'data-testid': 'seat-count' },
               h('span', { className: 'seat-count-label' }, `${varying.role}s`),
-              ...WORKER_CHOICES.map((count) =>
+              ...(varying.hired === true ? HIRED_CHOICES : WORKER_CHOICES).map((count) =>
                 h(
                   'button',
                   {

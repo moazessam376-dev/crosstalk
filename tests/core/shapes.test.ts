@@ -77,9 +77,22 @@ describe('every registered shape', () => {
         for (const phase of shape.phases) expect(phase.exit.length).toBeGreaterThan(0);
       });
 
-      it('staffs every seat it describes', () => {
+      it('staffs every seat it describes, unless the lead hires it during the run', () => {
         expect(shape.seats.length).toBeGreaterThan(0);
-        for (const seat of shape.seats) expect(seat.count).toBeGreaterThan(0);
+        for (const seat of shape.seats) {
+          if (seat.hired === true) {
+            // Zero is the point: the operator leaves the count blank and the
+            // seat that has read the job decides. But a hired seat has to be
+            // one the launcher can vary, or nobody could ever pre-staff it.
+            expect(seat.varies, `${name}: a hired seat must vary`).toBe(true);
+            continue;
+          }
+          expect(seat.count).toBeGreaterThan(0);
+        }
+      });
+
+      it('always seats somebody at launch', () => {
+        expect(shape.seats.some((seat) => seat.count > 0)).toBe(true);
       });
     });
   }

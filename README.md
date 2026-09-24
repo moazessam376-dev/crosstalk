@@ -60,15 +60,15 @@ What runs today:
 | **The hub** | Loopback web UI, live over SSE, both sides' falsifiers side by side, the ladder's climb with skipped and failed rungs distinct. The human can post and vote. |
 | **The GitHub mirror** | One PR per task, one comment per claim edited in place, the ladder published rather than flattened, and repository-owner comments pulled back in as `@human`. |
 | **`doctor`** | Checks Node, git, the repo, harnesses, worktrees, briefs and the ladder's shape, and names the remedy for each. |
+| **Team shapes** | `lead-crew` — one lead plans with you, hires as many builders as the job needs, and accepts nothing it has not run; `planner-integrator`; `trio-contract`; `solo`. Phases with mechanical gates, chosen in the hub. [docs/specs/2026-09-02-lead-crew.md](docs/specs/2026-09-02-lead-crew.md). |
+| **The quiet-seat watchdog** | A builder that ends its turn with a task open is nudged after ten minutes and the lead is told after ten more. Nothing polls a model. |
 
 Known gaps, so you find them here rather than at the wrong moment:
 
 - **`taskAcceptance.method` only works as `leader` or `human`.** `majority` and `unanimous` are now refused with `NOT_TASK_AUTHORITY` rather than stranding silently, but the remedy that refusal names — open a decision and let its outcome carry — does not exist yet: nothing maps a resolved decision onto a task state. `doctor` still does not refuse the config. Use `leader`.
-- **Supervised lifecycle is not implemented.** Every agent is `attached`: you start it and paste the line `init` prints. The harness descriptors mark three CLI harnesses `supervisable` and `doctor` rejects pairing that with a GUI app, but nothing spawns, resumes or restarts anything.
 - **The tier-3 file inbox is not built.** Agents participate over MCP or the CLI.
-- **The ledger (§12) is not built.** The data is all in the log; nothing renders it yet.
-- **The brief names entry points that do not exist, on both transports.** MCP agents are told to call `acknowledge(...)` and `submit(...)`; the tools are `ack_task` and `submit_task`. CLI agents are told to run `crosstalk acknowledge` and `crosstalk submit`, which do not exist, and `crosstalk claim raise`/`claim respond`, which are `claim` and `respond` with different arguments. Both times it is the two task gates that are wrong, so an agent following its brief fails at exactly the points the protocol will not let it skip. [docs/RUNNING.md](docs/RUNNING.md) lists the real tools and commands.
-- **A refused hub looks like a working, idle one.** It renders the full interface — channel list, composer, live Send button — over an empty log. The banner says `offline` and the Participants panel is empty; the event count does not distinguish the two, because a healthy new hub also reads `0 events`.
+- **The GitHub mirror needs three things and says so for two.** `crosstalk github <url>` writes the config and repoints `origin`; `up` starts the mirror only if `gh` is on PATH, and reports nothing when it is not; configuring from the hub does not start it until `up` is restarted. `--mode off` turns off only the inbound half.
+- **Nothing stops a spawned seat when `up` stops.** Ctrl-C on `up` leaves a piped seat running in its worktree; `crosstalk runs new --end` or the hub's end button is what kills seats.
 - **Used in anger once, on somebody else's project.** Crosstalk was used to build itself, and then run by a user bringing up an unrelated repository. That second run is where most of the entries above come from — see [#23](https://github.com/moazessam376-dev/crosstalk/issues/23). It is no longer only self-hosted, and it is still not a long project with a full agent roster.
 
 - [Running Crosstalk](docs/RUNNING.md) — setup, the hub, where to start each agent, and what the errors mean
@@ -88,7 +88,7 @@ Crosstalk brings no agents with it — it's orchestration, not a model provider.
   dispute ladder — with one, the `third_agent` rung has nobody to call and is
   skipped, which `doctor` warns about at setup rather than at the first dispute.
 
-No compiler, no Python, no Docker, no native modules — on Windows, macOS and Linux alike. Two runtime dependencies, total. `crosstalk doctor` checks all of it and names the remedy for anything missing.
+No compiler, no Python, no Docker — on Windows, macOS and Linux alike. Three runtime dependencies, one of them `node-pty` with prebuilt binaries for the mirrored terminal. `crosstalk doctor` checks all of it and names the remedy for anything missing.
 
 ### The agents it knows about
 
@@ -103,8 +103,9 @@ Crosstalk can write that agent's MCP config for you.
 | `claude-code-cli` | `CLAUDE.md` | `.mcp.json`, written for you | you |
 | `cursor-app` | `.cursor/rules/crosstalk.mdc` | `.cursor/mcp.json`, written for you | you |
 | `cursor-cli` | `.cursor/rules/crosstalk.mdc` | `.cursor/mcp.json`, written for you | you |
-| `codex-cli` | `AGENTS.md` | **you paste it** — lives at `~/.codex/config.toml`, outside the repo | you |
-| `codex-app` | `AGENTS.md` | **you paste it** — declares no config path, and its MCP support is unverified | you |
+| `codex-cli` | `AGENTS.override.md` | passed on the command line when Crosstalk spawns it; **you paste it** into `~/.codex/config.toml` if you start it yourself | Crosstalk, or you |
+| `codex-app` | `AGENTS.override.md` | **you paste it** — declares no config path, and its MCP support is unverified | you |
+| `claude-code-live` | `CLAUDE.md` | `.mcp.json`, written for you | Crosstalk — interactive, mirrored in the hub |
 
 `init` prints a complete, ready-to-paste JSON block for the two it cannot
 configure. Skip that block and those agents fall back to the CLI transport
@@ -123,10 +124,9 @@ not a yes. [docs/RUNNING.md](docs/RUNNING.md) has both cases.
 renamed over those paths, not appended to, and the leader's goes to the
 repository root. If either is a file you wrote and care about, commit first.
 
-**Every agent is started by you**, whichever harness it is. The descriptors mark
-the three CLI harnesses `supervisable`, but supervised lifecycle is not
-implemented: nothing spawns, resumes or restarts an agent. In practice all six
-are `attached` — you open the agent and paste the line `init` printed.
+**The hub starts the CLI harnesses for you** — `claude-code-live`,
+`claude-code-cli`, `codex-cli`, `cursor-cli` — and mirrors the interactive
+ones. The desktop apps you open yourself and paste the line `init` printed.
 
 ### Running it
 

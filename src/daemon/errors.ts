@@ -22,6 +22,14 @@ export type DaemonErrorCode =
   | 'NO_MIRRORED_SESSION'
   /** The seat's harness reads its prompt once and cannot be handed another. */
   | 'SESSION_CANNOT_TAKE_TURN'
+  /** `POST /seats` naming an id the roster already has. */
+  | 'SEAT_EXISTS'
+  /** `POST /seats` past the roster cap. */
+  | 'SEAT_CAP'
+  /** `POST /seats` while the shape's spec is written but not committed, so no hired seat could read it. */
+  | 'SPEC_UNCOMMITTED'
+  /** `POST /seats/:id/stop` for a seat this daemon is not running. */
+  | 'NO_SUCH_SEAT'
   | 'DAEMON_ALREADY_RUNNING'
   | 'PORT_IN_USE'
   | 'PORT_BLOCKED'

@@ -443,7 +443,7 @@ async function checkParticipant(
   // `briefPathFor` rather than `localBriefFile` — `init` writes through the
   // same function, and the two computing it differently would be a permanent
   // BRIEF_STALE on a brief that is correct.
-  const briefFile = briefPathFor(participant, descriptor.briefFile, repoRoot);
+  const briefFile = briefPathFor(participant, descriptor.briefFile, repoRoot, descriptor.briefSuffix);
   const briefPath = resolve(workspace, briefFile);
   if (!isWithin(workspace, briefPath)) {
     findings.push(finding(

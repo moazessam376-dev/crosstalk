@@ -279,11 +279,11 @@ function shapeFragment(participant: Participant, name: string | undefined): stri
  * unshared case is left exactly as it was: renaming those would strand a
  * correct brief at the old path on every existing project.
  */
-export function localBriefFile(briefFile: string, participantId?: string): string {
+export function localBriefFile(briefFile: string, participantId?: string, suffix = 'local'): string {
   const extension = extname(briefFile);
   const stem = extension === '' ? briefFile : briefFile.slice(0, -extension.length);
   const scope = participantId === undefined ? '' : `.${participantId}`;
-  return `${stem}${scope}.local${extension}`;
+  return `${stem}${scope}.${suffix}${extension}`;
 }
 
 /**
@@ -297,6 +297,8 @@ export function briefPathFor(
   participant: Participant,
   briefFile: string,
   repo: string,
+  /** The harness's own word for a beside-the-tracked-file brief. See `HarnessDescriptor.briefSuffix`. */
+  suffix?: string,
 ): string {
   // The leader keeps the unscoped name, and not for neatness. Its workspace is
   // the repository root in *every* configuration, shared or not, so scoping it
@@ -307,7 +309,7 @@ export function briefPathFor(
   // them is enough for the names to be unique.
   const shared = resolve(repo, participant.workspace) === resolve(repo);
   const scoped = shared && participant.role !== 'leader';
-  return localBriefFile(briefFile, scoped ? participant.id : undefined);
+  return localBriefFile(briefFile, scoped ? participant.id : undefined, suffix);
 }
 
 export async function writeBrief(
@@ -319,7 +321,11 @@ export async function writeBrief(
   shape?: string,
 ): Promise<void> {
   const content = renderBrief(participant, descriptor, policy, tier, repo, shape);
-  const destination = resolve(repo, participant.workspace, briefPathFor(participant, descriptor.briefFile, repo));
+  const destination = resolve(
+    repo,
+    participant.workspace,
+    briefPathFor(participant, descriptor.briefFile, repo, descriptor.briefSuffix),
+  );
   const directory = dirname(destination);
   await mkdir(directory, { recursive: true });
 

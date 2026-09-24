@@ -25,13 +25,38 @@ harnesses:
     # binary is present. This list is what to say when it is not.
     models: [gpt-5.6-luna, gpt-5.6-terra, gpt-5.6-sol]
     briefFile: AGENTS.md
+    # Codex reads AGENTS.md and AGENTS.override.md; it has never read a
+    # `.local` file, so the brief goes to the name the binary actually opens.
+    briefSuffix: override
     mcp: stdio
     mcpConfigPath: "~/.codex/config.toml"
+    # The registration is passed as `-c mcp_servers.crosstalk.*` on spawn, so a
+    # Codex seat Crosstalk starts has MCP without anyone editing config.toml.
+    mcpInject: codex-config
     supervisable: true
-    spawn: [codex, exec, --json]
+    # `codex exec` reads its prompt once and exits when the turn is done, so a
+    # seat that has to be woken again is driven by `codex exec resume <thread>`
+    # — one process per turn, on the thread the first turn opened. That is what
+    # lets a Codex seat lead a run for hours without polling anything.
+    # `workspace-write` because a seat has to edit its checkout; `approval_policy`
+    # is pinned to `never` because nobody is at this terminal to answer, and a
+    # refused command is a `blocked` on the board rather than a hung process.
+    # Network is on so the lead can push and open pull requests.
+    spawn:
+      - codex
+      - exec
+      - --json
+      - --sandbox
+      - workspace-write
+      - -c
+      - approval_policy="never"
+      - -c
+      - sandbox_workspace_write.network_access=true
+    turnFormat: resume
   codex-app:
     label: Codex · app
     briefFile: AGENTS.md
+    briefSuffix: override
     mcp: unverified
     supervisable: false
   cursor-cli:

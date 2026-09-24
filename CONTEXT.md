@@ -26,7 +26,7 @@ A change is wrong if it does not improve at least one of:
 
 ## Constraints that survive
 
-Two runtime dependencies. No native modules. Append-only log. Order by `seq`. Windows, macOS, Linux.
+Three runtime dependencies, `node-pty` the one native module and it ships prebuilds. Append-only log. Order by `seq`. Windows, macOS, Linux.
 
 ## Coordination
 
@@ -85,6 +85,10 @@ Two runtime dependencies. No native modules. Append-only log. Order by `seq`. Wi
 **A run boundary abandons open work, and this is intended.** Tasks, claims, decisions and phase progress do not cross it: a new run is a new team, and inheriting a dispute nobody present remembers raising is worse than starting clean. The events stay in the log, readable by opening the old run. Archiving moves a finished run's lines whole, in order, to `.crosstalk/runs/<id>.jsonl`; not a byte is edited or reordered, and `lastSeq` means "highest ever assigned", never "highest still in the file".
 
 **One run at a time.** Starting a run over live seats is refused, naming them, until the operator says `end`. Ending a run **kills the seats' processes and nothing else** — no `checkout`, no `clean`, no worktree removal. Uncommitted work in a seat's tree is the operator's; `down --purge` is where discarding it is spelled out.
+
+**Lead-crew.** One lead, a crew it hires itself with `act({kind:"hire"})`, and a `tasks-accepted` gate: a builder's `done` is a claim until the lead has run it and accepted. The lead releases a builder it is finished with. Nothing polls — a `done`, a `blocked` or a `reject` is the wake — and the daemon's watchdog turns "a builder ended its turn with the task open" into one card to the seat and, ten minutes later, one to the lead. Spec: `docs/specs/2026-09-02-lead-crew.md`.
+
+**A Codex seat is a thread.** `codex exec` exits when the turn ends; `codex exec resume <thread>` continues it. One process per turn, on one conversation, is how a Codex seat leads a run for hours. Its brief is `AGENTS.override.md` — the file the binary reads — and its MCP server travels on its command line as `-c mcp_servers.crosstalk.*`.
 
 **Message tags.** `status` · `result` · `ask` · `answer` · `blocked` · `gate` · `plan` · `note`. Authored once in `src/core/says.ts`; the brief, the tool schema and every refusal render from that record. A shape's `SeatSpec.tags` decides which a seat has, and whether the daemon enforces the schema at all — a project with no shape writes what it always wrote.
 

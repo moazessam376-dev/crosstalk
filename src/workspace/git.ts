@@ -360,3 +360,26 @@ export async function changedFiles(cwd: string, base: string, branch: string): P
     return undefined;
   }
 }
+
+/**
+ * Whether a path in the primary checkout is committed and clean.
+ *
+ * The hire gate. A builder's worktree is cut from the main branch, so a spec
+ * the lead has written but not committed is a spec no builder can read —
+ * exactly the seam beacon-1 shipped its bugs into, arriving as a file that
+ * only one seat can see. `undefined` when the path does not exist: that is a
+ * different fact, and the plan phase already names it.
+ */
+export async function uncommittedAt(cwd: string, path: string): Promise<boolean | undefined> {
+  try {
+    await access(join(resolve(cwd), path));
+  } catch {
+    return undefined;
+  }
+  try {
+    const out = await runGit(cwd, ['status', '--porcelain', '--', path]);
+    return out !== '';
+  } catch {
+    return undefined;
+  }
+}

@@ -35,6 +35,30 @@ export interface HarnessDescriptor {
   /** How this harness is named in the hub. Falls back to its key. */
   label?: string;
   /**
+   * How a spawned seat is told about its MCP server when the harness reads
+   * its config from outside the repository.
+   *
+   * `codex-cli` keeps its servers in `~/.codex/config.toml`, which `init`
+   * refuses to write, so every Codex seat used to fall to the shell tier and be
+   * briefed to run `crosstalk inbox` from a binary that may not be on PATH.
+   * Codex takes `-c key=value` overrides on its command line, so a seat
+   * Crosstalk spawns can be handed its own server, with its own token, without
+   * touching the operator's config at all. `probeTier` reads this: a harness
+   * that can be handed a registration is an MCP harness.
+   */
+  mcpInject?: 'codex-config';
+  /**
+   * The word between a brief's stem and its extension when it is written
+   * beside the tracked file, e.g. `override` for `AGENTS.override.md`.
+   *
+   * Defaults to `local`, which is what Claude Code reads (`CLAUDE.local.md`).
+   * Codex reads `AGENTS.md` and `AGENTS.override.md` and nothing else — the
+   * binary names both and no `.local` variant — so every Codex seat briefed
+   * at `AGENTS.local.md` ran unbriefed. Declared per harness because it is a
+   * fact about the binary.
+   */
+  briefSuffix?: string;
+  /**
    * The models a seat on this harness can be put on.
    *
    * Declared here rather than in the hub because it is a property of the
@@ -85,13 +109,22 @@ function descriptorFrom(key: string, raw: unknown): HarnessDescriptor {
   }
 
   const turnFormat = raw.turnFormat;
-  if (turnFormat !== undefined && turnFormat !== 'stream-json' && turnFormat !== 'interactive') {
+  if (turnFormat !== undefined && turnFormat !== 'stream-json' && turnFormat !== 'interactive' && turnFormat !== 'resume') {
     throw new Error(`Harness ${key} has an invalid turnFormat`);
   }
 
   const label = raw.label;
   if (label !== undefined && typeof label !== 'string') {
     throw new Error(`Harness ${key} has an invalid label`);
+  }
+
+  const mcpInject = raw.mcpInject;
+  if (mcpInject !== undefined && mcpInject !== 'codex-config') {
+    throw new Error(`Harness ${key} has an invalid mcpInject`);
+  }
+  const briefSuffix = raw.briefSuffix;
+  if (briefSuffix !== undefined && (typeof briefSuffix !== 'string' || !/^[a-z]+$/.test(briefSuffix))) {
+    throw new Error(`Harness ${key} has an invalid briefSuffix`);
   }
 
   const models = raw.models;
@@ -109,6 +142,8 @@ function descriptorFrom(key: string, raw: unknown): HarnessDescriptor {
     ...(turnFormat === undefined ? {} : { turnFormat }),
     ...(label === undefined ? {} : { label }),
     ...(models === undefined ? {} : { models: [...models] as string[] }),
+    ...(mcpInject === undefined ? {} : { mcpInject }),
+    ...(briefSuffix === undefined ? {} : { briefSuffix }),
     ...(typeof raw.settings === 'string' ? { settings: raw.settings as 'claude-code' } : {}),
   };
 }
@@ -178,6 +213,8 @@ export function resolveConfigPath(configPath: string, cwd: string): string {
  * before and after `init` runs, or it is describing us and not the harness.
  */
 export async function probeTier(descriptor: HarnessDescriptor, cwd: string): Promise<Tier> {
+  // A registration handed over on the command line needs no file at all.
+  if (descriptor.mcp === 'stdio' && descriptor.mcpInject !== undefined) return 'mcp';
   if (descriptor.mcp !== 'stdio' || descriptor.mcpConfigPath === undefined) return 'shell';
 
   const configPath = resolveConfigPath(descriptor.mcpConfigPath, cwd);

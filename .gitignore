@@ -36,3 +36,6 @@ Thumbs.db
 # Bench run artifacts: each cell is its own checkout, and several are
 # embedded git repositories. They are evidence, not source.
 .crosstalk/bench/
+
+# Crosstalk writes this participant's bearer token here
+.mcp.json

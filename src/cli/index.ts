@@ -555,6 +555,10 @@ async function cmdAct(argv: string[]): Promise<number> {
       brief: { type: 'string' },
       assignee: { type: 'string' },
       branch: { type: 'string' },
+      harness: { type: 'string' },
+      model: { type: 'string' },
+      effort: { type: 'string' },
+      finding: { type: 'string', multiple: true },
     },
     async (client, flags) => {
       const kind = require_(flags, 'kind');
@@ -579,7 +583,17 @@ async function cmdAct(argv: string[]): Promise<number> {
       }
       if (kind === 'done') {
         const taskId = require_(flags, 'task');
-        const submit = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/submit`, {});
+        // The critique record the gate requires. Shell seats had no way to
+        // send one, so `act --kind done` was refused every time it was run and
+        // the task sat in `in_progress` for good. `--finding` repeats; none is
+        // legal, and means the review happened and found nothing.
+        const findings = flags['finding'];
+        const critique = {
+          rounds: 1,
+          critic: str(flags, 'as') ?? 'self',
+          findings: (Array.isArray(findings) ? findings : []).map((assertion) => ({ assertion: String(assertion), closedBy: [] })),
+        };
+        const submit = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/submit`, { critique });
         const submitted = await client.post<WriteResult>(`/tasks/${encodeURIComponent(taskId)}/state`, {
           state: 'submitted',
         });
@@ -604,7 +618,24 @@ async function cmdAct(argv: string[]): Promise<number> {
         emit(result, flags['json'] === true, () => `${taskId} rejected`);
         return EXIT.ok;
       }
-      throw new CliError(`Unknown act kind "${kind}"`, EXIT.usage, 'Use ack, assign, done, accept, or reject.');
+      if (kind === 'hire') {
+        const id = require_(flags, 'id');
+        const result = await client.post<WriteResult>('/seats', {
+          id,
+          harness: require_(flags, 'harness'),
+          ...(str(flags, 'model') === undefined ? {} : { model: str(flags, 'model') }),
+          ...(str(flags, 'effort') === undefined ? {} : { effort: str(flags, 'effort') }),
+        });
+        emit(result, flags['json'] === true, () => `hiring ${id}`);
+        return EXIT.ok;
+      }
+      if (kind === 'release') {
+        const id = require_(flags, 'id');
+        const result = await client.post<WriteResult>(`/seats/${encodeURIComponent(id)}/stop`, {});
+        emit(result, flags['json'] === true, () => `released ${id}`);
+        return EXIT.ok;
+      }
+      throw new CliError(`Unknown act kind "${kind}"`, EXIT.usage, 'Use ack, assign, done, accept, reject, hire, or release.');
     },
   );
 }

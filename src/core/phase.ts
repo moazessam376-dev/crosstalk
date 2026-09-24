@@ -2,6 +2,7 @@ import type { CrosstalkEvent } from '../contracts/events.js';
 import type { ParticipantId, Role } from '../contracts/participant.js';
 import { FLOOR, HUMAN_ID } from '../contracts/room.js';
 import type { Decision } from '../contracts/decision.js';
+import type { Task } from '../contracts/task.js';
 import { gateOfRef, type GateId, type Phase, type PhaseId, type TeamShape, type WriteScope } from './shape.js';
 
 export interface GateStatus {
@@ -50,7 +51,7 @@ export function assertedGates(events: readonly CrosstalkEvent[]): Map<GateId, Se
 }
 
 /** The gates this module derives, so a shape naming an unimplemented one fails a test. */
-export const LOG_GATES: readonly GateId[] = ['operator-questioned'];
+export const LOG_GATES: readonly GateId[] = ['operator-questioned', 'crew-hired', 'tasks-accepted'];
 
 /**
  * Has the planner put a real choice to the operator and had it answered?
@@ -68,6 +69,22 @@ export const LOG_GATES: readonly GateId[] = ['operator-questioned'];
  * That seam is the one AGENTS.md names: a test that supplies its own props
  * proves the function works *given* data, never that anything hands it any.
  */
+/**
+ * Has every task the lead cut been accepted?
+ *
+ * At least one, and all of them: a run with no tasks has nothing to accept,
+ * and "nothing outstanding" over nothing is the vacuous green AGENTS.md warns
+ * about. `merged` counts — it is past `accepted`, not short of it.
+ */
+export function allTasksAccepted(tasks: Iterable<Task>): boolean {
+  let any = false;
+  for (const task of tasks) {
+    any = true;
+    if (task.state !== 'accepted' && task.state !== 'merged') return false;
+  }
+  return any;
+}
+
 export function operatorWasAsked(decisions: Iterable<Decision>): boolean {
   for (const decision of decisions) {
     if (decision.method !== 'human') continue;
@@ -140,6 +157,8 @@ export function phaseStatus(
     decisions?: Iterable<Decision>;
     /** Each seat's role, so a gate can be owed by some seats and not others. */
     roles?: ReadonlyMap<ParticipantId, Role>;
+    /** The projected tasks. Absent means none have been cut. */
+    tasks?: Iterable<Task>;
   },
 ): PhaseStatus {
   const asserted = assertedGates(args.events);
@@ -147,6 +166,11 @@ export function phaseStatus(
   const workspace = args.workspace ?? new Map();
   const log = new Set<GateId>();
   if (operatorWasAsked(args.decisions ?? [])) log.add('operator-questioned');
+  if (allTasksAccepted(args.tasks ?? [])) log.add('tasks-accepted');
+  // Hired means seated in the roster with a building role. The roster is what
+  // the daemon authenticates against, so a builder that is there can be woken;
+  // one that is merely intended cannot.
+  if (seats.some((seat) => args.roles?.get(seat) === 'worker')) log.add('crew-hired');
 
   /**
    * Who an all-quorum gate is actually waiting on.

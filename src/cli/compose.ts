@@ -15,7 +15,7 @@ import type { SpawnPty } from '../harness/pty.js';
 import { trustWorkspaces } from '../harness/trust.js';
 import type { Inbox } from '../core/inbox.js';
 import { CliError, DaemonClient, EXIT, type WriteResult } from './client.js';
-import { runInit } from './init.js';
+import { registrationFor, runInit, type McpServerEntry } from './init.js';
 
 export interface ComposeOptions {
   repo: string;
@@ -43,6 +43,12 @@ export interface ComposeOptions {
    * mirroring existed.
    */
   sessions?: SessionRegistry;
+  /**
+   * Spawn only these seats. The lead hiring a builder mid-run adds one seat
+   * to a roster whose other seats are already up, and re-spawning those would
+   * be refused by the registry — correctly, as a second process on a live pty.
+   */
+  only?: readonly string[];
 }
 
 export interface ComposeResult {
@@ -100,7 +106,9 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
   requireSomeoneToWork(config.participants.map((participant) => participant.role));
 
   const registry = await loadRegistry();
-  const { spawn, attach } = selectSpawnTargets(config.participants, registry);
+  const targets = selectSpawnTargets(config.participants, registry);
+  const spawn = options.only === undefined ? targets.spawn : targets.spawn.filter((p) => options.only!.includes(p.id));
+  const attach = options.only === undefined ? targets.attach : targets.attach.filter((p) => options.only!.includes(p.id));
   const harnesses = await probeCliHarnesses();
 
   // Trust before spawn, never after. An interactive seat opening a worktree
@@ -144,9 +152,23 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
       continue;
     }
 
-    const seatArgv = withFreshSession(
-      withPermissionMode(withSeatModel(nameRemoteControl(argv, participant.id), participant), participant.permissionMode),
+    const seatArgv = withMcpRegistration(
+      withFreshSession(
+        withPermissionMode(withSeatModel(nameRemoteControl(argv, participant.id), participant), participant.permissionMode),
+      ),
+      descriptor.mcpInject === undefined ? undefined : registrationFor(repo, participant.id),
     );
+    // A seat driven one process per turn has no hook to report through, so
+    // the turn boundary is the presence signal: working when a turn starts,
+    // idle when it ends. The watchdog reads exactly this.
+    const presence = async (working: boolean): Promise<void> => {
+      try {
+        const seat = await DaemonClient.open(repo, participant.id);
+        await seat.post('/presence', { verb: working ? 'working' : 'idle', working });
+      } catch {
+        // Presence is a convenience; a turn is not.
+      }
+    };
     const session = openSession({
       argv: seatArgv,
       cwd,
@@ -163,6 +185,9 @@ export async function runCompose(options: ComposeOptions): Promise<ComposeResult
       },
       ...(options.spawnProcess === undefined ? {} : { spawn: options.spawnProcess }),
       ...(options.spawnPty === undefined ? {} : { spawnPty: options.spawnPty }),
+      ...(descriptor.turnFormat === 'resume'
+        ? { onTurnStart: () => void presence(true), onTurnEnd: () => void presence(false) }
+        : {}),
       // Only when somebody is there to look. Capture is a parse per chunk, and
       // a seat nobody is watching should not pay for a screen nobody reads.
       ...(options.sessions === undefined ? {} : { capture: {} }),
@@ -265,15 +290,54 @@ export function withPermissionMode(argv: readonly string[], mode: string | undef
   return [...argv.slice(0, at + 1), mode, ...argv.slice(at + 2)];
 }
 
-/** Per-seat model and effort, which the roster carries and the spawn never did. */
+/**
+ * Per-seat model and effort, which the roster carries and the spawn never did.
+ *
+ * In each binary's own words. `codex exec` has `-m` and no `--effort` at all —
+ * effort is a config key — so `--effort high` on a Codex seat was an argument
+ * parse error and the seat died before its first line of output. Keyed on the
+ * binary, as `withFreshSession` is, because the flag belongs to it.
+ */
 export function withSeatModel(
   argv: readonly string[],
   participant: { model?: string; effort?: string },
 ): string[] {
   const out = [...argv];
+  if (out[0] === 'codex') {
+    if (participant.model !== undefined && !out.includes('-m') && !out.includes('--model')) out.push('-m', participant.model);
+    if (participant.effort !== undefined && !out.some((part) => part.startsWith('model_reasoning_effort='))) {
+      out.push('-c', `model_reasoning_effort=${JSON.stringify(participant.effort)}`);
+    }
+    return out;
+  }
   if (participant.model !== undefined && !out.includes('--model')) out.push('--model', participant.model);
   if (participant.effort !== undefined && !out.includes('--effort')) out.push('--effort', participant.effort);
   return out;
+}
+
+/**
+ * Hand a Codex seat its MCP server on the command line.
+ *
+ * `~/.codex/config.toml` is the operator's, and `init` refuses to write it.
+ * `-c key=value` takes a TOML value, so the same registration `.mcp.json`
+ * carries is spelled here as three overrides under `mcp_servers.crosstalk`.
+ * Strings go through `JSON.stringify`, whose escapes TOML basic strings
+ * accept — which is what keeps a Windows path with backslashes intact.
+ */
+export function withMcpRegistration(argv: readonly string[], entry: McpServerEntry | undefined): string[] {
+  if (entry === undefined || argv[0] !== 'codex') return [...argv];
+  const env = Object.entries(entry.env)
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join(',');
+  return [
+    ...argv,
+    '-c',
+    `mcp_servers.crosstalk.command=${JSON.stringify(entry.command)}`,
+    '-c',
+    `mcp_servers.crosstalk.args=[${entry.args.map((part) => JSON.stringify(part)).join(',')}]`,
+    '-c',
+    `mcp_servers.crosstalk.env={${env}}`,
+  ];
 }
 
 /**

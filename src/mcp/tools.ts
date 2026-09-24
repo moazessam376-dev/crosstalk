@@ -112,11 +112,11 @@ export const TOOLS: ToolDefinition[] = [
 
   {
     name: 'act',
-    description: 'Task lifecycle: ack, assign, done, accept, or reject. Court is claim, not this.',
+    description: 'Task lifecycle: ack, assign, done, accept, reject. Staffing: hire, release. Court is claim, not this.',
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['ack', 'assign', 'done', 'accept', 'reject'] },
+        kind: { type: 'string', enum: ['ack', 'assign', 'done', 'accept', 'reject', 'hire', 'release'] },
         taskId: { type: 'string' },
         restatement: { type: 'string', description: 'One line is enough. Required for ack.' },
         ambiguities: { type: 'array', items: { type: 'string' } },
@@ -132,6 +132,9 @@ export const TOOLS: ToolDefinition[] = [
           type: 'object',
           description: 'Required for done: {rounds, critic, findings}. findings may be [].',
         },
+        harness: { type: 'string', description: 'hire only: the CLI to seat, e.g. claude-code-live or codex-cli.' },
+        model: { type: 'string', description: 'hire only.' },
+        effort: { type: 'string', description: 'hire only.' },
       },
       required: ['kind'],
     },
@@ -280,6 +283,15 @@ async function invokeAct(client: DaemonClient, args: Record<string, unknown>): P
       state: 'in_progress',
       reason: typeof restatement === 'string' && restatement !== '' ? restatement : 'rejected',
     });
+  }
+  // Staffing. `id` is the seat, as it is the task on `assign`: one field name
+  // per kind of thing, and a seat is the thing being made here.
+  if (kind === 'hire') {
+    const { id, harness, model, effort } = args;
+    return client.post<WriteResponse>('/seats', { id, harness, model, effort });
+  }
+  if (kind === 'release') {
+    return client.post<WriteResponse>(`/seats/${encodeURIComponent(String(args['id']))}/stop`, {});
   }
   throw new Error(`Unknown act kind: ${String(kind)}`);
 }

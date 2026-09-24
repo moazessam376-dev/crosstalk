@@ -38,6 +38,16 @@ const TRIO: ShapeSummary = {
   ],
 };
 
+const LEAD_CREW: ShapeSummary = {
+  name: 'lead-crew',
+  summary: 'One lead plans with you, hires as many builders as the job needs.',
+  seats: [
+    { role: 'leader', count: 1 },
+    { role: 'worker', count: 0, varies: true, hired: true },
+  ],
+  phases: [{ id: 'plan', intent: 'Plan.', writes: 'no-source', gates: [{ id: 'crew-hired', by: 'log', quorum: 'any' }] }],
+};
+
 const SOLO: ShapeSummary = {
   name: 'solo',
   summary: 'One builder, verifying its own work.',
@@ -353,6 +363,22 @@ describe('a planner and a number of builders', () => {
     expect(seatsFor(PLANNER, [], 1).map((seat) => seat.id)).toEqual(['leader', 'worker']);
     // And the count only touches the seat that varies.
     expect(seatsFor(TRIO, [], 5).map((seat) => seat.id)).toEqual(['peer-1', 'peer-2', 'peer-3']);
+  });
+
+  it('lays out only the lead for a crew the lead hires, and offers zero on the stepper', () => {
+    expect(seatsFor(LEAD_CREW).map((seat) => seat.id)).toEqual(['leader']);
+    render(createElement(Launcher, { shapes: [LEAD_CREW, PLANNER], launching: false, onLaunch: vi.fn() }));
+    fireEvent.click(screen.getByText('lead-crew'));
+    expect(screen.getByLabelText('0 workers')).toHaveAttribute('aria-pressed', 'true');
+    // The operator can still pre-staff.
+    fireEvent.click(screen.getByLabelText('2 workers'));
+    expect(screen.getAllByLabelText(/seat \d+ name/)).toHaveLength(3);
+  });
+
+  it('does not offer zero where every seat is fixed', () => {
+    render(createElement(Launcher, { shapes: [PLANNER], launching: false, onLaunch: vi.fn() }));
+    fireEvent.click(screen.getByText('planner-integrator'));
+    expect(screen.queryByLabelText('0 workers')).not.toBeInTheDocument();
   });
 
   it('offers the stepper only where the shape says the count varies', () => {

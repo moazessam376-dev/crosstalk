@@ -40,7 +40,15 @@ export type GateId =
   // One gate in place of `tests-green` and `self-verified`. Two all-quorum
   // gates cost 2N board messages to say one thing; the requirement survives
   // whole in the gate's own text.
-  | 'slice-done';
+  | 'slice-done'
+  // The lead has seated at least one builder. Derived from the roster: a shape
+  // whose crew is hired at runtime cannot leave plan with nobody to build.
+  | 'crew-hired'
+  // Every task the lead cut has been accepted by the lead. Derived from the
+  // task projection, so a builder's "done" is a claim the lead has to check —
+  // `act({kind:"accept"})` after running the thing — not a message that
+  // counts itself.
+  | 'tasks-accepted';
 
 export interface Gate {
   id: GateId;
@@ -97,6 +105,13 @@ export interface SeatSpec {
   tags?: readonly MessageTag[];
   /** True when the operator may staff more or fewer of these. */
   varies?: boolean;
+  /**
+   * True when the lead seats these itself, during the run, with
+   * `act({kind:"hire"})`. `count` is then the launcher's starting number — zero
+   * is legal and is the point: the operator leaves the crew size blank and
+   * the seat that has read the job decides it.
+   */
+  hired?: boolean;
   /** What this seat must have posted to be finished. */
   done?: GateId;
   /** Appended to this seat's brief. The shape's own voice, not the role's. */
@@ -231,7 +246,7 @@ const TRIO_CONTRACT: TeamShape = {
         'The work moves through four phases and you can see the current one in `inbox()`.',
         'Only the transitions are gated — inside a phase, work however you like.',
         '',
-        '- **plan** — agree the shared contract file and a split where no two seats own the same file. Post your slice with `say({room:"#floor", body:"...", ref:"gate:split-agreed"})`. Write no source yet.',
+        '- **plan** — agree the shared contract file and a split where no two seats own the same file. Post your slice with `say({tag:"gate", head:"...", ref:"gate:split-agreed"})`. Write no source yet.',
         '- **build** — your own files only. The contract is frozen: if it has to change, say so on the board instead of editing around it. Post your green run with `ref:"gate:tests-green"`, and then verify your own surface first-hand and post that with `ref:"gate:self-verified"`.',
         '- **verify** — one of you merges every branch and plays the whole thing. Post what is broken with `ref:"gate:bug-list-posted"` *before* fixing anything, so the list is on the record.',
         '- **repair** — that same seat fixes the list, posts the clean run with `ref:"gate:run-clean"`, and then re-runs the first-hand verification on the assembled build with `ref:"gate:integration-verified"`.',
@@ -407,6 +422,166 @@ const PLANNER_INTEGRATOR: TeamShape = {
   ],
 };
 
+/**
+ * One lead, a crew it hires itself, and the lead holds every builder to
+ * evidence until the job is done.
+ *
+ * Built for the operator's own loop: a strong planning model (the SPOC they
+ * used to talk to) plans *with* them, writes the spec, decides how big the job
+ * is and how many builders it needs, seats them from the harness it was told
+ * to use, and then does not go quiet. Every task a builder finishes comes back
+ * to the lead as `submitted`, and the lead runs it before `accept` — a builder
+ * that says "done" over a surface nobody has watched is the failure this
+ * shape exists to catch, and `tasks-accepted` is the gate that makes the
+ * check mechanical rather than a habit.
+ *
+ * The crew is `worker`s with `count: 0` and `hired: true`: the launcher lays
+ * out only the lead, and `act({kind:"hire"})` adds a builder mid-run. Nothing
+ * here is a new role; the lead is the `leader` and everything that already
+ * knows what a leader may do — assign, accept, reject, sit at the repo root —
+ * comes for free.
+ *
+ * Wall-clock is the other thing this shape is about. The operator's previous
+ * runs went nine to twelve hours, mostly silence: a builder that stopped at a
+ * checkpoint nobody asked for, and a supervisor polling on a timer to find
+ * out. Here nothing polls. A builder's `done` wakes the lead; a builder that
+ * goes quiet with a task open is nudged by the daemon and, if it stays quiet,
+ * the lead is told — see `src/daemon/watch.ts`. An accepted builder is
+ * released, so it stops costing anything.
+ */
+const LEAD_CREW: TeamShape = {
+  name: 'lead-crew',
+  summary: 'One lead plans with you, hires as many builders as the job needs, and holds each one to evidence until it is done.',
+  contract: 'docs/crosstalk/SPEC.md',
+  seats: [
+    {
+      role: 'leader',
+      count: 1,
+      job: 'floor',
+      tags: ['plan', 'ask', 'answer', 'gate', 'status', 'blocked', 'note'],
+      done: 'integration-verified',
+      brief: [
+        'You are the lead. You plan with the operator, you hire the crew, you check every piece of work, and at the end you integrate. You do not write a slice yourself.',
+        '',
+        '**Plan with the operator first.** Read `inbox().job`, then ask the operator the questions whose answers change what gets built — scope, the trade you are unsure about, what "done" looks like to them. Ask with',
+        '`claim({kind:"open", question, options, voters:["@human"], method:"human"})`: it puts a real multiple choice on their board. One question per decision, and you cannot leave **plan** until one has been answered.',
+        '',
+        '**Write the spec at `docs/crosstalk/SPEC.md`** — what is being built, what done means per slice, how each slice is verified, and the interfaces between slices. Commit it to the main branch before you hire: a builder\'s worktree is cut from main at the moment it is hired, and a spec that is only in your working tree is a spec no builder can read.',
+        '',
+        '**Decide the crew size yourself.** Cut the work into slices with no two in the same file; one builder per slice, and no more builders than slices. One builder is a fine answer for a small job. Then, for each: `act({kind:"hire", id:"builder-1", harness:"claude-code-live", model:"...", effort:"..."})` — the harness and model are what the operator asked for in the job, or the ones you were started on. Then `act({kind:"assign", id:"T-01", assignee:"builder-1", title, brief, branch:"ct/T-01"})` with the *whole* brief for that slice in `brief`: builders never see the floor. Post the split with `say({tag:"plan", head:"...", ref:"gate:slices-posted"})`.',
+        '',
+        '**Through build you check, you do not build.** Each builder\'s `done` reaches you as a `submitted` card. Go to its branch, run it, watch it work, and only then `act({kind:"accept", taskId})`. If it is not done — a test that proves nothing, a claim you cannot reproduce, a regression — `act({kind:"reject", taskId, restatement:"<exactly what is wrong and what would show it fixed>"})`. Reject as often as it takes; do not accept to move on. A builder that goes quiet with a task open is nudged by Crosstalk and then reported to you: decide whether to wait, reassign the slice, or release the seat.',
+        '',
+        '**Release a builder when its work is accepted:** `act({kind:"release", id})`. A seat with nothing to do costs the operator every minute it sits there.',
+        '',
+        'In **verify** you merge every accepted branch and play the whole thing yourself. Post what is broken with `say({tag:"gate", head:"...", ref:"gate:bug-list-posted"})` *before* fixing any of it. Then repair, post the clean run with `ref:"gate:run-clean"`, and re-verify the assembled build with `ref:"gate:integration-verified"`. Then tell the operator what shipped and what you did not check, and stop.',
+        '',
+        'You merge. Nobody else does, and nobody force-pushes.',
+      ].join('\n'),
+    },
+    {
+      role: 'worker',
+      count: 0,
+      varies: true,
+      hired: true,
+      job: 'assigned',
+      tags: ['status', 'result', 'ask', 'answer', 'blocked', 'note'],
+      brief: [
+        'You own one slice. `inbox().job` is yours and it is the whole of your work. The spec is at `docs/crosstalk/SPEC.md` in your checkout.',
+        '',
+        'Write only your own files, on the branch your task names. If the slice needs a file or an interface the spec does not give you, `say({tag:"blocked", to:"<the lead>", head:"..."})` — do not widen your slice to get past it.',
+        '',
+        '**Finish means: it runs, you watched it, and you said so.** `act({kind:"done", taskId, critique:{rounds:1, critic:"<you>", findings:[]}})` — put what you ran and what you saw in `findings` (empty is legal only if you actually looked and found nothing). Then wait. The lead runs it too; if the task comes back `in_progress` with a reason, that reason is your next job, not an opinion to argue with — unless it is wrong, in which case `claim` it with a falsifier.',
+        '',
+        '**Do not stop early.** A turn that ends with the task still open is read as you having gone quiet, and you will be nudged. If you are stuck, say `blocked` and to whom. If you are done, say `done`. There is no third state.',
+        '',
+        'When the lead accepts, you are finished. Do not polish, do not start another slice, do not review anyone else. Done means stop.',
+      ].join('\n'),
+    },
+  ],
+  phases: [
+    {
+      id: 'plan',
+      intent: 'Ask the operator what you cannot decide for them, write and commit the spec, hire the crew, cut the slices.',
+      writes: 'no-source',
+      actors: 'one',
+      owner: 'leader',
+      exit: [
+        {
+          id: 'operator-questioned',
+          need: 'The operator has answered a decision you opened for them.',
+          by: 'log',
+        },
+        {
+          id: 'contract-exists',
+          need: 'The spec exists at docs/crosstalk/SPEC.md and is not empty.',
+          by: 'workspace',
+        },
+        {
+          id: 'crew-hired',
+          need: 'At least one builder has been hired with `act({kind:"hire"})`.',
+          by: 'log',
+        },
+        {
+          id: 'slices-posted',
+          need: 'The split is posted, with `ref: gate:slices-posted`.',
+          by: 'asserted',
+          quorum: 'any',
+        },
+      ],
+    },
+    {
+      id: 'build',
+      intent: 'Builders build their slices; the lead runs each one and accepts or rejects it. Nothing is accepted unwatched.',
+      writes: 'own-files',
+      actors: 'all',
+      exit: [
+        {
+          id: 'no-shared-files',
+          need: 'No two seat branches touch the same file.',
+          by: 'workspace',
+        },
+        {
+          id: 'tasks-accepted',
+          need: 'Every task has been run by the lead and accepted with `act({kind:"accept"})`.',
+          by: 'log',
+        },
+      ],
+    },
+    {
+      id: 'verify',
+      intent: 'The lead merges every accepted branch and plays the whole thing. Builders are done.',
+      writes: 'anything',
+      actors: 'one',
+      owner: 'leader',
+      exit: [
+        {
+          id: 'bug-list-posted',
+          need: 'What is broken is posted before anything is fixed, with `ref: gate:bug-list-posted`.',
+          by: 'asserted',
+          quorum: 'any',
+        },
+      ],
+    },
+    {
+      id: 'repair',
+      intent: 'Fix the list, then verify the assembled build again.',
+      writes: 'anything',
+      actors: 'one',
+      owner: 'leader',
+      exit: [
+        { id: 'run-clean', need: 'A full run is clean, posted with `ref: gate:run-clean`.', by: 'asserted', quorum: 'any' },
+        {
+          id: 'integration-verified',
+          need: 'The assembled build was watched, not inferred, with `ref: gate:integration-verified`.',
+          by: 'asserted',
+          quorum: 'any',
+        },
+      ],
+    },
+  ],
+};
+
 /** One seat, no board. The control the team is measured against. */
 const SOLO: TeamShape = {
   name: 'solo',
@@ -446,6 +621,7 @@ const SOLO: TeamShape = {
 };
 
 export const SHAPES: ReadonlyMap<string, TeamShape> = new Map([
+  [LEAD_CREW.name, LEAD_CREW],
   [PLANNER_INTEGRATOR.name, PLANNER_INTEGRATOR],
   [TRIO_CONTRACT.name, TRIO_CONTRACT],
   [SOLO.name, SOLO],

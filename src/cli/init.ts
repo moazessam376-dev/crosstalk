@@ -48,6 +48,13 @@ export interface InitOptions {
 
 const DEFAULT_ROSTER = ['leader:leader:claude-code-app', 'codex:worker:codex-app'];
 
+/** One MCP server entry, as every harness config spells it. */
+export interface McpServerEntry {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
 export interface McpRegistration {
   participantId: ParticipantId;
   /** Where it was written. Empty when the harness names no config path. */
@@ -555,13 +562,13 @@ async function untrackedArtifacts(): Promise<string[]> {
     SKILL_FILE.replace(/\\/g, '/'),
   ]);
   for (const descriptor of registry.values()) {
-    patterns.add(basename(localBriefFile(descriptor.briefFile)));
+    patterns.add(basename(localBriefFile(descriptor.briefFile, undefined, descriptor.briefSuffix)));
     // CT-20. A shared-root participant's brief carries its id — `CLAUDE.md`
     // becomes `CLAUDE.metrics.local.md` — and the unscoped entry above does not
     // match it. Without the glob, git follows every shared-root brief, which is
     // CT-4 arriving again by the new route: a worker committing with
     // `git add -A` would commit its own brief into the project.
-    patterns.add(basename(localBriefFile(descriptor.briefFile, '*')));
+    patterns.add(basename(localBriefFile(descriptor.briefFile, '*', descriptor.briefSuffix)));
 
     // Every registration B3 writes carries a participant's bearer token, and
     // `.mcp.json` is only the one at the root: `cursor-*` registers at
@@ -645,7 +652,7 @@ async function writeBriefs(
  * file is worth removing on its own merits, and a missing token file fails
  * loudly where an empty string would 401 with nothing to explain it.
  */
-function registrationFor(root: string, participantId: ParticipantId): unknown {
+export function registrationFor(root: string, participantId: ParticipantId): McpServerEntry {
   return {
     command: 'node',
     // Interfaces spec §1: absolute, because the package is unpublished.

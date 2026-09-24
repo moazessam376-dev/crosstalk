@@ -97,6 +97,15 @@ export class Presence {
     return found;
   }
 
+  /**
+   * The last report whatever its age. The watchdog wants exactly the stale
+   * entry `activityOf` drops: "turn ended forty minutes ago" is the fact it
+   * exists to notice.
+   */
+  lastActivity(who: ParticipantId): Activity | undefined {
+    return this.#activity.get(who);
+  }
+
   /** For ranking: the ladder wants recency, not a boolean, so there is no cliff. */
   seenAt(): ReadonlyMap<ParticipantId, number> {
     return this.#lastSeen;

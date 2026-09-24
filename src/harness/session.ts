@@ -14,12 +14,19 @@ import { spawnPty as defaultSpawnPty, type SpawnPty } from './pty.js';
  * for all of them.
  *
  * A harness with no `turnFormat` reads its prompt once and cannot be handed
- * another. `codex exec` is that shape: it takes stdin as a single block. So the
- * capability is declared in the registry and read here, and Delivery falls back
- * to pull for the seats that lack it — rather than every seat paying for the
- * weakest harness, which is what a single spawn path would have forced.
+ * another. `codex exec` was that shape — it takes stdin as a single block — so
+ * the capability is declared in the registry and read here, and Delivery falls
+ * back to pull for the seats that lack it, rather than every seat paying for
+ * the weakest harness.
+ *
+ * `resume` is the third way, and it is what makes a Codex seat able to lead a
+ * run: `codex exec --json` prints `{"type":"thread.started","thread_id":…}`
+ * as its first line and exits when the turn is done, and `codex exec resume
+ * <thread_id> <prompt>` picks the same conversation up. So a turn is a
+ * process, the seat is the thread, and a wake spawns one more process on it —
+ * verified against codex-cli 0.151.0 before this was written.
  */
-export type TurnFormat = 'stream-json' | 'interactive';
+export type TurnFormat = 'stream-json' | 'interactive' | 'resume';
 
 export interface HarnessSession {
   /** Hand the harness one more turn. Rejects when this harness cannot take one. */
@@ -226,6 +233,9 @@ export function openSession(args: {
   readyTimeoutMs?: number;
   /** Told when the opening job could not be delivered, so nothing is silent. */
   onStuck?: (message: string) => void;
+  /** `resume` only: a turn's process has started / exited. Presence reads these. */
+  onTurnStart?: () => void;
+  onTurnEnd?: (code: number | null) => void;
   /**
    * Reconstruct the seat's terminal from its output, so the hub can mirror it.
    *
@@ -236,7 +246,8 @@ export function openSession(args: {
   capture?: { rows?: number; cols?: number } | false;
 }): HarnessSession {
   const interactive = args.turnFormat === 'interactive';
-  const push = args.turnFormat === 'stream-json' || interactive;
+  const resumes = args.turnFormat === 'resume';
+  const push = args.turnFormat === 'stream-json' || interactive || resumes;
 
   const screen = args.capture === false || args.capture === undefined
     ? undefined
@@ -265,7 +276,9 @@ export function openSession(args: {
 
   const transport = interactive
     ? interactiveTransport(args, sink)
-    : pipeTransport(args, push, sink);
+    : resumes
+      ? resumeTransport(args, sink)
+      : pipeTransport(args, push, sink);
 
   // Exiting is a change a watcher has to hear, and it is the one change the
   // version cannot carry: the screen a seat died on is usually identical to the
@@ -274,6 +287,10 @@ export function openSession(args: {
 
   const send = async (turn: string): Promise<void> => {
     if (!push) throw new Error(`${args.argv[0]} cannot take a turn after it starts`);
+    if (resumes) {
+      await transport.turn!(turn);
+      return;
+    }
     if (!interactive) {
       transport.write(frame(turn));
       return;
@@ -328,7 +345,7 @@ export function openSession(args: {
         }
       }
     })();
-  } else if (push) {
+  } else if (push && !resumes) {
     void send(args.first);
   }
 
@@ -376,6 +393,8 @@ interface Transport {
   write(data: string): void;
   /** Absent for a transport with no terminal to re-shape. */
   resize?(cols: number, rows: number): void;
+  /** A whole turn, for a transport that runs one process per turn. Resolves when the turn's process exits. */
+  turn?(text: string): Promise<void>;
   exited: Promise<number | null>;
   stop(): void;
 }
@@ -454,6 +473,125 @@ function pipeTransport(
     stop: () => {
       child.stdin?.end();
       child.kill();
+    },
+  };
+}
+
+/**
+ * One process per turn, on one conversation.
+ *
+ * The first process is `argv + first`. Its stdout is read for the thread id;
+ * every later turn is `argv + ['resume', thread, text]`, serialised so a wake
+ * that lands mid-turn waits rather than opening a second process on the same
+ * thread. `exited` settles only when the seat is stopped or a turn cannot be
+ * started at all — a turn's process exiting is the *end of a turn*, which is
+ * `onTurnEnd`'s to report, not the seat going away.
+ *
+ * What reaches the mirror is the agent's own messages and the name of each
+ * item it completed, not the raw JSON: a screen of `{"type":"item.completed"…}`
+ * is not a screen anyone can read.
+ */
+function resumeTransport(
+  args: {
+    argv: string[];
+    cwd: string;
+    first: string;
+    env?: NodeJS.ProcessEnv;
+    spawn?: SpawnProcess;
+    onTurnStart?: () => void;
+    onTurnEnd?: (code: number | null) => void;
+  },
+  sink: Sink | undefined,
+): Transport {
+  const spawn = args.spawn ?? defaultSpawn;
+  const [file, ...base] = args.argv;
+  if (file === undefined) throw new Error('session argv is empty');
+
+  let thread: string | undefined;
+  let current: ChildProcess | undefined;
+  let stopped = false;
+  let tail: Promise<void> = Promise.resolve();
+  let settleExit: (code: number | null) => void = () => {};
+  const exited = new Promise<number | null>((settle) => {
+    settleExit = settle;
+  });
+
+  const run = (argv: string[]): Promise<number | null> =>
+    new Promise((settle) => {
+      const child = spawn(file, argv, {
+        cwd: args.cwd,
+        ...(args.env === undefined ? {} : { env: args.env }),
+      });
+      current = child;
+      // Nothing is ever written to stdin; closing it is what stops the binary
+      // from waiting on it ("Reading additional input from stdin...").
+      child.stdin?.end();
+      let buffer = '';
+      const line = (text: string): void => {
+        let parsed: { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string } };
+        try {
+          parsed = JSON.parse(text) as typeof parsed;
+        } catch {
+          sink?.write(`${text}\r\n`);
+          return;
+        }
+        if (parsed.type === 'thread.started' && typeof parsed.thread_id === 'string') thread = parsed.thread_id;
+        if (parsed.type === 'item.completed' && parsed.item !== undefined) {
+          const item = parsed.item;
+          if (item.type === 'agent_message' && typeof item.text === 'string') {
+            sink?.write(`${item.text.replace(/\n/g, '\r\n')}\r\n`);
+          } else if (typeof item.command === 'string') {
+            sink?.write(`$ ${item.command}\r\n`);
+          } else if (typeof item.type === 'string') {
+            sink?.write(`[${item.type}]\r\n`);
+          }
+        }
+      };
+      child.stdout?.on('data', (chunk: Buffer | string) => {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const text of lines) if (text.trim() !== '') line(text);
+      });
+      child.stderr?.on('data', (chunk: Buffer | string) => sink?.write(chunk.toString().replace(/\n/g, '\r\n')));
+      const done = (code: number | null): void => {
+        if (buffer.trim() !== '') line(buffer);
+        buffer = '';
+        current = undefined;
+        settle(code);
+      };
+      child.once('close', done);
+      child.once('error', () => done(null));
+    });
+
+  const turn = (text: string): Promise<void> => {
+    const queued = tail.then(async () => {
+      if (stopped) return;
+      const argv = thread === undefined ? [...base, text] : [...base, 'resume', thread, text];
+      args.onTurnStart?.();
+      const code = await run(argv);
+      args.onTurnEnd?.(code);
+      // The opening turn never produced a thread: the binary is missing, or
+      // refused to start. There is nothing to resume, so the seat is gone.
+      if (thread === undefined) {
+        stopped = true;
+        settleExit(code);
+      }
+    });
+    tail = queued.catch(() => {});
+    return queued;
+  };
+
+  void turn(args.first);
+
+  return {
+    write: () => {},
+    turn,
+    exited,
+    stop: () => {
+      stopped = true;
+      current?.kill();
+      settleExit(current === undefined ? 0 : null);
     },
   };
 }

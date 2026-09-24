@@ -218,6 +218,19 @@ is why it wants the flag.
 older one — including an archived one, whose events are no longer in the live
 log at all — or `--all` for every run the repository has had.
 
+### Lead and crew
+
+Pick the `lead-crew` shape in the launcher to run the loop where one strong
+model plans with you, decides how many builders it needs, hires them, and
+accepts nothing it has not run itself. Leave the builder count at 0; put the
+lead on `codex-cli` or `claude-code-live`; say in the job which harness and
+model the builders should be on. The lead will put a question to you on the
+board before it writes anything — answer it there. After that, read the hub
+when a card arrives; nothing polls you or the builders.
+
+`docs/specs/2026-09-02-lead-crew.md` has the gates, the hire refusals, and
+what the watchdog does with a builder that goes quiet.
+
 ### Sending a screenshot
 
 ⌘V into the composer, drag a file onto it, or the paperclip beside `Send`.

@@ -349,7 +349,7 @@ describe('the kickoff line an agent is actually given', () => {
     const repo = await gitRepo();
     const { kickoff } = await runInit({
       repo,
-      participants: ['leader:leader:claude-code-app', 'binding:worker:cursor-app', 'codex:worker:codex-cli'],
+      participants: ['leader:leader:claude-code-app', 'binding:worker:cursor-app', 'codex:worker:codex-app', 'luna:worker:codex-cli'],
       force: false,
     });
     const lineFor = (id: string): string => kickoff.find((entry) => entry.id === id)!.line;
@@ -361,10 +361,15 @@ describe('the kickoff line an agent is actually given', () => {
     expect(lineFor('binding')).not.toContain('--as binding');
     expect(lineFor('binding')).not.toContain('await_turn()');
 
-    // codex-cli registers at ~/.codex/config.toml, outside the repo, so it is
-    // genuinely shell tier — the neighbouring case that must still get the CLI.
+    // codex-app declares an unverified MCP transport and no config path, so it
+    // is genuinely shell tier — the neighbouring case that must still get the CLI.
     expect(lineFor('codex')).toContain('--as codex');
     expect(lineFor('codex')).not.toContain('await_turn()');
+    // codex-cli is handed its registration on the command line when Crosstalk
+    // spawns it, so it is briefed for MCP — the shell line would send it to a
+    // `crosstalk` binary that is on nobody's PATH.
+    expect(lineFor('luna')).toContain('inbox()');
+    expect(lineFor('luna')).not.toContain('--as luna');
   }, GIT_TEST_TIMEOUT);
 
   it('sends a shell-tier worker to its own checkout, not the leader\'s', async () => {
@@ -375,7 +380,7 @@ describe('the kickoff line an agent is actually given', () => {
     const repo = await gitRepo();
     const { kickoff } = await runInit({
       repo,
-      participants: ['leader:leader:claude-code-app', 'codex:worker:codex-cli'],
+      participants: ['leader:leader:claude-code-app', 'codex:worker:codex-app'],
       force: false,
     });
     const line = kickoff.find((entry) => entry.id === 'codex')!.line;
@@ -396,7 +401,7 @@ describe('the kickoff line an agent is actually given', () => {
     const repo = await gitRepo();
     const { kickoff } = await runInit({
       repo,
-      participants: ['leader:leader:claude-code-app', 'codex:worker:codex-cli'],
+      participants: ['leader:leader:claude-code-app', 'codex:worker:codex-app'],
       force: false,
     });
     const line = kickoff.find((entry) => entry.id === 'codex')!.line;
